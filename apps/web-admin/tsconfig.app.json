@@ -1,0 +1,2 @@
+{"compilerOptions":{"target":"ES2022","module":"ESNext","lib":["ES2022","DOM","DOM.Iterable"],"skipLibCheck":true,"moduleResolution":"bundler","verbatimModuleSyntax":true,"moduleDetection":"force","noEmit":true,"strict":true,"jsx":"preserve","isolatedModules":true},"include":["src/**/*.ts","src/**/*.vue"]}
+

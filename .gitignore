@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
+node_modules/
+dist/
+local-data/*
+!local-data/.gitkeep
+
+# Python package metadata
+*.egg-info/
+
+# TypeScript incremental build
+*.tsbuildinfo

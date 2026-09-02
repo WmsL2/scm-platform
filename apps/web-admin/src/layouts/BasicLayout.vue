@@ -1,0 +1,2 @@
+<template><el-container class="shell"><el-aside width="220px"><h2>众诚智链</h2><el-menu default-active="home"><el-menu-item index="home">工作台</el-menu-item></el-menu></el-aside><el-container><el-header>商品管理平台</el-header><el-main><RouterView /></el-main></el-container></el-container></template><style scoped>.shell{min-height:100vh}.el-aside{background:#001529;color:white;padding:16px}.el-header{border-bottom:1px solid #eee;display:flex;align-items:center}.el-main{background:#f5f7fa}</style>
+

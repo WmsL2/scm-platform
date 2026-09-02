@@ -1,0 +1,4 @@
+# 正式团队 GitHub 账号确定后替换。
+# /apps/api-server/app/core/ @platform-owner
+# /apps/web-admin/src/shared/ @frontend-owner
+# /project-control/ @project-owner
