@@ -8,6 +8,8 @@ node_modules/
 dist/
 local-data/*
 !local-data/.gitkeep
+.idea/
+*.iml
 
 # Python package metadata
 *.egg-info/
