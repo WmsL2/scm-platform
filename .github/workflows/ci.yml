@@ -7,6 +7,19 @@ on:
     branches: [main]
 
 jobs:
+  project-control:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: >-
+          python scripts/check_project_control.py
+          "${{ github.event.pull_request.base.sha }}"
+          "${{ github.event.pull_request.head.sha }}"
   backend:
     runs-on: ubuntu-latest
     defaults:

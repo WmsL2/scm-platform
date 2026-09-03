@@ -31,3 +31,17 @@
 - ADR（如重要决策）
 
 文档未同步不算完成。
+
+## Project Control Gate / 项目控制门禁
+
+Definition of Done = Code + Database + Tests + Documentation + Project Status。
+
+任何修改 `project-control/` 之外内容的 PR，必须同时包含：
+
+1. `project-control/changes/**` 下的 Change Record（变更记录）；
+2. `project-control/CURRENT_STATUS.md`、`project-control/modules/**` 或
+   `project-control/sprints/**` 中至少一项状态更新。
+
+GitHub Actions 的 `project-control` Job 会自动检查上述要求；不满足即禁止 Merge。
+GitHub 是 Merge SHA、合入时间等仓库事实的 Source of Truth（事实来源），无需为每次
+变更人工抄写这些信息。
