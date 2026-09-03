@@ -2,7 +2,7 @@
 
 | Sprint | 天数 | 状态 | 目标 |
 |---|---:|---|---|
-| Sprint 0 | 3 | READY_TO_START | Local-First工程底座 |
+| Sprint 0 | 3 | COMPLETED | Local-First工程底座 |
 | Sprint 1 | 5 | NOT_STARTED | Auth/RBAC + Supplier |
 | Sprint 2 | 5 | NOT_STARTED | Supplier Product Quote |
 | Sprint 3 | 5 | NOT_STARTED | Product Master |

@@ -2,8 +2,15 @@
 
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
-Baseline：V1.3.2 Fresh Starter
-日期：2026-09-02
+Baseline：Sprint 0 stable baseline
+日期：2026-09-03
+
+## Repository
+
+- Remote：Gitee
+- Branch：`main`
+- main：Sprint 0 stable baseline
+- Gitee CI：GITEE_CI_PENDING_CONFIGURATION（GitHub Actions 仅保留镜像兼容）
 
 ## 当前 Sprint
 
@@ -40,4 +47,4 @@ Async SQLAlchemy 连接、`alembic upgrade head` 与 health readiness 验收。
 
 ## Active Branches
 
-无（当前目录尚未初始化 Git 仓库）。
+无。

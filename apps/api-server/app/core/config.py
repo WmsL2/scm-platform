@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", enable_decoding=False)
     app_env: str = "development"
     app_name: str = "Zhongcheng SCM Platform"
-    database_url: str = "mysql+asyncmy://root:password@127.0.0.1:3306/zhongcheng_scm_dev"
+    database_url: str
     cors_origins: list[str] = ["http://localhost:5173"]
     task_mode: str = "inline"
     storage_mode: str = "local"
@@ -27,4 +27,4 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    return Settings()  # type: ignore[call-arg]
