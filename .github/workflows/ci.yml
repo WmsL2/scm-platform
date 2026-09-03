@@ -1,9 +1,37 @@
 name: CI
-on: [push, pull_request]
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
 jobs:
   backend:
     runs-on: ubuntu-latest
-    defaults: { run: { working-directory: apps/api-server } }
+    defaults:
+      run:
+        working-directory: apps/api-server
+    env:
+      DATABASE_URL: mysql+asyncmy://scm_ci:scm_ci_password@127.0.0.1:3306/scm_ci
+      APP_ENV: test
+      REDIS_ENABLED: false
+      MINIO_ENABLED: false
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: scm_ci
+          MYSQL_USER: scm_ci
+          MYSQL_PASSWORD: scm_ci_password
+          MYSQL_ROOT_PASSWORD: root_ci_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot_ci_password"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -11,15 +39,17 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check .
       - run: mypy app
+      - run: alembic upgrade head
       - run: pytest
   frontend:
     runs-on: ubuntu-latest
-    defaults: { run: { working-directory: apps/web-admin } }
+    defaults:
+      run:
+        working-directory: apps/web-admin
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - run: npm install
+      - run: npm ci
       - run: npm run typecheck
       - run: npm run build
-
