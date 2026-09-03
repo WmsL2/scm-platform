@@ -15,10 +15,10 @@ Baseline：Sprint 0 stable baseline
 
 ## 当前 Sprint
 
-Sprint 1 Pre-Parallel — Design Freeze
+Sprint 1 — Auth/RBAC + Supplier
 
-状态：DESIGN_FROZEN_WITH_GATES
-进度：0%（尚未进入业务开发）
+状态：IN_PROGRESS
+进度：Auth Kernel READY_FOR_PR（最终复验：30 passed / Warnings 0）；Supplier Master 仍受字段 Gate 限制
 
 ## 已冻结
 
@@ -39,8 +39,7 @@ Sprint 1 Pre-Parallel — Design Freeze
 
 ## 下一步
 
-等待 SUPPLIER_FIELD_DICTIONARY_PENDING_SOURCE_CONFIRMATION 解除，并在独立
-Feature Branch 按 docs/09、10、11 的冻结契约实施 Sprint 1。
+Business Sequence 是 Auth Kernel 后的下一数据库 Revision；Supplier Master 仍受字段 Gate 限制。
 
 ## Blocker
 

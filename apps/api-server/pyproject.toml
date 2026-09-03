@@ -5,13 +5,14 @@ build-backend = "setuptools.build_meta"
 name = "zhongcheng-scm-api"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["alembic>=1.14,<2", "asyncmy>=0.2.10,<1", "cryptography>=44,<46", "fastapi>=0.115,<1", "pydantic-settings>=2.6,<3", "sqlalchemy>=2.0,<3", "uvicorn[standard]>=0.32,<1"]
+dependencies = ["alembic>=1.14,<2", "asyncmy>=0.2.10,<1", "cryptography>=44,<46", "fastapi>=0.115,<1", "pwdlib[argon2]>=0.2,<1", "PyJWT>=2.10,<3", "pydantic-settings>=2.6,<3", "sqlalchemy>=2.0,<3", "uvicorn[standard]>=0.32,<1"]
 [project.optional-dependencies]
 dev = ["httpx>=0.27,<1", "mypy>=1.13,<2", "pytest>=8.3,<9", "pytest-asyncio>=0.24,<1", "ruff>=0.8,<1"]
 [tool.setuptools.packages.find]
 include = ["app*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 [tool.ruff]
 target-version = "py312"

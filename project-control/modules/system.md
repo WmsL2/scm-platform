@@ -38,4 +38,4 @@ Last Updated：2026-09-03（Sprint 1 design freeze）
   不使用本机、开发或生产 Secret。
 
 ## Next Step
-Auth/RBAC 设计已冻结，等待 feat/auth-rbac 按 docs/09 实施；尚未创建任何 Auth 表或 API。
+Auth Kernel 已在 feat/auth-kernel 实现并等待 PR；Supplier 仍未开始。
