@@ -48,6 +48,9 @@ class LocalFileStorage:
 
 
 class MinioStorage:
+    async def healthcheck(self) -> None:
+        raise RuntimeError("MinIO storage is not configured")
+
     async def save(self, name: str, content: bytes) -> str:
         del name, content
         raise RuntimeError("MinIO storage is not configured")
@@ -72,6 +75,9 @@ class NoopCache:
 
 
 class RedisCache:
+    async def healthcheck(self) -> None:
+        raise RuntimeError("Redis cache is not configured")
+
     async def get(self, key: str) -> str | None:
         del key
         raise RuntimeError("Redis cache is not configured")

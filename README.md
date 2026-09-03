@@ -106,13 +106,14 @@ Redis / ARQ / MinIO 在需要开发相关功能时再启用。
 
 代码完成但文档未同步，不视为完成。
 
-## 7. 开始开发
+## 7. 后续开发
 
 新 Codex 首先读取：
 
 `prompts/00-create-project-foundation.md`
 
-然后执行 Sprint 0。
+Sprint 0 已稳定完成。开始新任务前请先阅读 `AGENTS.md`、
+`project-control/START_HERE.md` 与当前 Sprint 文档；不要重复执行 Sprint 0。
 
 ## 8. 本机启动（无需 Docker）
 

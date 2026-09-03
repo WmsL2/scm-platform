@@ -4,7 +4,7 @@
 
 正式数据库 Schema：
 
-> 必须由 `apps/api-server/migrations/` 中的 Alembic Revision 管理。
+> 必须由 `apps/api-server/alembic/versions/` 中的 Alembic Revision 管理。
 
 当前不提供“一次性全量业务DDL”，原因：
 
