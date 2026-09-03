@@ -2,7 +2,7 @@
 
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
-Baseline：Sprint 0 stable baseline
+Baseline：Sprint 1 Auth Kernel merged
 日期：2026-09-03
 
 ## Repository
@@ -10,7 +10,7 @@ Baseline：Sprint 0 stable baseline
 - Remote：GitHub
 - GitHub Repository：WmsL2/scm-platform
 - Branch：`main`
-- main：Sprint 0 stable baseline
+- main：Auth Kernel 已通过 PR #6 合入；Sprint 1 继续进行
 - GitHub Actions：正式 CI（PR -> main 与 push -> main）
 
 ## 当前 Sprint
@@ -18,7 +18,7 @@ Baseline：Sprint 0 stable baseline
 Sprint 1 — Auth/RBAC + Supplier
 
 状态：IN_PROGRESS
-进度：Auth Kernel READY_FOR_PR（最终复验：30 passed / Warnings 0）；Supplier Master 仍受字段 Gate 限制
+进度：Auth Kernel MERGED / DONE（PR #6，Merge Commit `6f229e75`）；下一任务为 Business Sequence；Supplier Master 仍受字段 Gate 限制
 
 ## 已冻结
 
@@ -39,7 +39,7 @@ Sprint 1 — Auth/RBAC + Supplier
 
 ## 下一步
 
-Business Sequence 是 Auth Kernel 后的下一数据库 Revision；Supplier Master 仍受字段 Gate 限制。
+Business Sequence 是下一任务；Supplier Master 仍受字段 Gate 限制。
 
 ## Blocker
 
