@@ -2,7 +2,7 @@
 
 状态：COMPLETED
 Owner：Sprint 0 / Sprint 0.5
-Last Updated：2026-09-03
+Last Updated：2026-09-03（Sprint 1 design freeze）
 
 ## Database
 - [x] Alembic Async 基线 Revision（无业务表）
@@ -37,4 +37,4 @@ Last Updated：2026-09-03
 - Gitee CI：GITEE_CI_PENDING_CONFIGURATION。
 
 ## Next Step
-Sprint 1 单独跟踪并实现 Auth/RBAC、审计和业务编号的正式持久化能力。
+Auth/RBAC 设计已冻结，等待 feat/auth-rbac 按 docs/09 实施；尚未创建任何 Auth 表或 API。

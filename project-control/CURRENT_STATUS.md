@@ -14,10 +14,10 @@ Baseline：Sprint 0 stable baseline
 
 ## 当前 Sprint
 
-Sprint 0 — Local-First 企业项目底座
+Sprint 1 Pre-Parallel — Design Freeze
 
-状态：COMPLETED
-进度：100%
+状态：DESIGN_FROZEN_WITH_GATES
+进度：0%（尚未进入业务开发）
 
 ## 已冻结
 
@@ -38,7 +38,8 @@ Sprint 0 — Local-First 企业项目底座
 
 ## 下一步
 
-Sprint 1 — Auth/RBAC + Supplier（在新的 Feature Branch 上执行）。
+等待 SUPPLIER_FIELD_DICTIONARY_PENDING_SOURCE_CONFIRMATION 解除，并在独立
+Feature Branch 按 docs/09、10、11 的冻结契约实施 Sprint 1。
 
 ## Blocker
 
@@ -47,4 +48,4 @@ Async SQLAlchemy 连接、`alembic upgrade head` 与 health readiness 验收。
 
 ## Active Branches
 
-无。
+Supplier 字段资料 Gate 尚未解除；Gitee CI 仍为 GITEE_CI_PENDING_CONFIGURATION。
