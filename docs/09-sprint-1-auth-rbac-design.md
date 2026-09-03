@@ -4,6 +4,8 @@ Status: FROZEN except listed PENDING items. Auth stays inside the FastAPI Modula
 
 ## Shared contract
 
+Implementation clarification: UUID is MySQL CHAR(36) through UUIDChar36 (ADR-0006); sys_user includes token_version. Phase 1 logout is stateless.
+
 UUID primary keys and ID foreign keys only. Audit actor fields store user_id, never username or real name. CurrentUser is built only by Router/permission dependency; services receive an actor and never parse tokens. No cascade deletion of historical records.
 
 ## Data dictionary
@@ -37,4 +39,3 @@ Login is POST /api/v1/auth/login; current user is GET /api/v1/auth/me; logout is
 ## PENDING
 
 Refresh Token, server-side session persistence and multi-device logout are not frozen and must not expand Sprint 1 without confirmation.
-

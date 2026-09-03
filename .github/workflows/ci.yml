@@ -15,6 +15,7 @@ jobs:
     env:
       DATABASE_URL: mysql+asyncmy://scm_ci:scm_ci_password@127.0.0.1:3306/scm_ci
       APP_ENV: test
+      AUTH_JWT_SECRET: ci-only-not-a-real-production-secret
       REDIS_ENABLED: false
       MINIO_ENABLED: false
     services:

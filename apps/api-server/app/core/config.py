@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_name: str = "Zhongcheng SCM Platform"
     database_url: str
+    auth_jwt_secret: SecretStr
+    auth_access_token_minutes: int = 30
     cors_origins: list[str] = ["http://localhost:5173"]
     task_mode: str = "inline"
     storage_mode: str = "local"
@@ -23,6 +25,13 @@ class Settings(BaseSettings):
         return (
             [x.strip() for x in value.split(",") if x.strip()] if isinstance(value, str) else value
         )
+
+    @field_validator("auth_access_token_minutes")
+    @classmethod
+    def positive_access_token_minutes(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("auth_access_token_minutes must be positive")
+        return value
 
 
 @lru_cache
