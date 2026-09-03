@@ -7,10 +7,11 @@ Baseline：Sprint 0 stable baseline
 
 ## Repository
 
-- Remote：Gitee
+- Remote：GitHub
+- GitHub Repository：WmsL2/scm-platform
 - Branch：`main`
 - main：Sprint 0 stable baseline
-- Gitee CI：GITEE_CI_PENDING_CONFIGURATION（GitHub Actions 仅保留镜像兼容）
+- GitHub Actions：正式 CI（PR -> main 与 push -> main）
 
 ## 当前 Sprint
 
@@ -48,4 +49,4 @@ Async SQLAlchemy 连接、`alembic upgrade head` 与 health readiness 验收。
 
 ## Active Branches
 
-Supplier 字段资料 Gate 尚未解除；Gitee CI 仍为 GITEE_CI_PENDING_CONFIGURATION。
+Supplier 字段资料 Gate 尚未解除。

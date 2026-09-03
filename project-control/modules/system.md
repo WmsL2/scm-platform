@@ -33,8 +33,9 @@ Last Updated：2026-09-03（Sprint 1 design freeze）
 
 ## CI
 
-- GitHub Actions：保留为未来镜像兼容配置，未等同于 Gitee CI。
-- Gitee CI：GITEE_CI_PENDING_CONFIGURATION。
+- GitHub Actions：正式 CI，运行 PR -> main 与 push -> main。
+- Backend CI 使用 GitHub Runner 生命周期内临时 MySQL 8 服务和临时凭据；
+  不使用本机、开发或生产 Secret。
 
 ## Next Step
 Auth/RBAC 设计已冻结，等待 feat/auth-rbac 按 docs/09 实施；尚未创建任何 Auth 表或 API。
