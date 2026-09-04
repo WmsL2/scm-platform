@@ -25,29 +25,81 @@ export interface HttpClientOptions {
   onForbidden?: () => void
 }
 
+export interface RequestOptions {
+  authenticated?: boolean
+  headers?: HeadersInit
+  requestId?: string
+}
+
 export class HttpClient {
   constructor(private readonly options: HttpClientOptions = {}) {}
 
-  async get<T>(path: string, requestId = crypto.randomUUID()): Promise<T> {
+  private async request<T>(
+    method: "GET" | "POST" | "PATCH" | "DELETE",
+    path: string,
+    body?: unknown,
+    requestOptions: RequestOptions = {},
+  ): Promise<T> {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 10_000)
     try {
-      const authorization = this.options.getAuthorization?.()
-      const response = await fetch(`${this.options.baseUrl ?? import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000"}${path}`, {
-        headers: { Accept: "application/json", ...(authorization ? { Authorization: authorization } : {}), "X-Request-ID": requestId },
+      const authorization = requestOptions.authenticated === false
+        ? undefined
+        : this.options.getAuthorization?.()
+      const baseUrl = (this.options.baseUrl ?? import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")
+      const response = await fetch(`${baseUrl}${path}`, {
+        method,
+        headers: {
+          Accept: "application/json",
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+          ...(authorization ? { Authorization: authorization } : {}),
+          "X-Request-ID": requestOptions.requestId ?? crypto.randomUUID(),
+          ...requestOptions.headers,
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
       })
-      const body = (await response.json()) as ApiResponse<T> | ErrorResponse
+
+      const rawBody = await response.text()
+      let parsedBody: ApiResponse<T> | ErrorResponse
+      try {
+        parsedBody = rawBody
+          ? JSON.parse(rawBody) as ApiResponse<T> | ErrorResponse
+          : { code: response.ok ? "OK" : "HTTP_ERROR", message: response.statusText }
+      } catch {
+        parsedBody = {
+          code: "INVALID_RESPONSE",
+          message: "服务返回了无法识别的数据",
+        }
+      }
+
       if (response.status === 401) this.options.onUnauthorized?.()
       if (response.status === 403) this.options.onForbidden?.()
-      if (!response.ok) throw new HttpError(response.status, body as ErrorResponse)
-      const envelope = body as ApiResponse<T>
-      if (envelope.code !== "OK") throw new HttpError(400, envelope)
+      if (!response.ok) throw new HttpError(response.status, parsedBody as ErrorResponse)
+
+      const envelope = parsedBody as ApiResponse<T>
+      if (envelope.code !== "OK") {
+        throw new HttpError(response.status, envelope)
+      }
       return envelope.data
     } finally {
       clearTimeout(timeout)
     }
   }
-}
 
-export const http = new HttpClient()
+  get<T>(path: string, options?: RequestOptions): Promise<T> {
+    return this.request<T>("GET", path, undefined, options)
+  }
+
+  post<T, TBody = unknown>(path: string, body?: TBody, options?: RequestOptions): Promise<T> {
+    return this.request<T>("POST", path, body, options)
+  }
+
+  patch<T, TBody = unknown>(path: string, body?: TBody, options?: RequestOptions): Promise<T> {
+    return this.request<T>("PATCH", path, body, options)
+  }
+
+  delete<T>(path: string, options?: RequestOptions): Promise<T> {
+    return this.request<T>("DELETE", path, undefined, options)
+  }
+}

@@ -2,14 +2,14 @@
 
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
-Baseline：Sprint 1 Auth Kernel merged
-日期：2026-09-03
+Baseline：Sprint 1 Auth Kernel merged / Web Admin Auth Shell implemented
+日期：2026-09-04
 
 ## Repository
 
 - Remote：GitHub
 - GitHub Repository：WmsL2/scm-platform
-- Branch：`main`
+- Main Branch：`main`
 - main：Auth Kernel 已通过 PR #6 合入；Sprint 1 继续进行
 - GitHub Actions：正式 CI（PR -> main 与 push -> main）
 
@@ -18,7 +18,7 @@ Baseline：Sprint 1 Auth Kernel merged
 Sprint 1 — Auth/RBAC + Supplier
 
 状态：IN_PROGRESS
-进度：Auth Kernel MERGED / DONE（PR #6，Merge Commit `6f229e75`）；下一任务为 Business Sequence；Supplier Master 仍受字段 Gate 限制
+进度：Auth Kernel MERGED / DONE（PR #6，Merge Commit `6f229e75`）；Web Admin Auth Shell 已完成，真实 Auth API 联调待完成；后端下一任务为 Business Sequence；Supplier Master 仍受字段 Gate 限制
 
 ## 已冻结
 
@@ -39,13 +39,18 @@ Sprint 1 — Auth/RBAC + Supplier
 
 ## 下一步
 
-Business Sequence 是下一任务；Supplier Master 仍受字段 Gate 限制。
+- 前端：数据库基线恢复后关闭 Mock，验收 login / me / logout 真实接口。
+- 后端：Business Sequence 是下一任务。
+- Supplier Master：继续等待真实供应商字段资料解除 Gate。
 
 ## Blocker
 
-无。2026-09-02 已在本机 MySQL 8 开发库 `zhongcheng_scm_dev` 完成
-Async SQLAlchemy 连接、`alembic upgrade head` 与 health readiness 验收。
+- Repository：无代码合并 Blocker。
+- 本机真实 Auth 联调：当前开发库迁移状态和 Auth Schema 需由后端/数据库负责人恢复后再验收；前端 Mock 验收不等于真实 API 验收。
+- Supplier：`SUPPLIER_FIELD_DICTIONARY_PENDING_SOURCE_CONFIRMATION` 仍有效。
 
-## Active Branches
+## Workstreams / Implementation Context
 
-Supplier 字段资料 Gate 尚未解除。
+- `feat/web-admin-auth-shell`：前端认证与后台壳层的功能实现分支。
+- Business Sequence：由后端负责人继续推进，分支状态待同步。
+- Supplier 字段资料 Gate 尚未解除。
