@@ -1,6 +1,6 @@
 <template>
   <main class="result-page">
-    <el-result icon="warning" title="404" sub-title="你访问的页面不存在或已经移动">
+    <el-result icon="error" title="403" sub-title="当前账号没有访问该页面的权限">
       <template #extra><el-button type="primary" @click="$router.push('/')">返回工作台</el-button></template>
     </el-result>
   </main>
