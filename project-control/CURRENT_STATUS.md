@@ -2,8 +2,8 @@
 
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
-Baseline：Sprint 1 Auth Kernel merged / Web Admin Auth Shell implemented
-日期：2026-09-04
+Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration completed
+日期：2026-09-07
 
 ## Repository
 
@@ -18,7 +18,7 @@ Baseline：Sprint 1 Auth Kernel merged / Web Admin Auth Shell implemented
 Sprint 1 — Auth/RBAC + Supplier
 
 状态：IN_PROGRESS
-进度：Auth Kernel MERGED / DONE（PR #6，Merge Commit `6f229e75`）；Web Admin Auth Shell 已完成，真实 Auth API 联调待完成；后端下一任务为 Business Sequence；Supplier Master 仍受字段 Gate 限制
+进度：Auth Kernel MERGED / DONE（PR #6，Merge Commit `6f229e75`）；Web Admin Auth Shell 已完成并通过真实 API 联调；后端下一任务为 Business Sequence；Supplier Master 仍受字段 Gate 限制
 
 ## 已冻结
 
@@ -39,18 +39,16 @@ Sprint 1 — Auth/RBAC + Supplier
 
 ## 下一步
 
-- 前端：数据库基线恢复后关闭 Mock，验收 login / me / logout 真实接口。
 - 后端：Business Sequence 是下一任务。
 - Supplier Master：继续等待真实供应商字段资料解除 Gate。
 
 ## Blocker
 
 - Repository：无代码合并 Blocker。
-- 本机真实 Auth 联调：当前开发库迁移状态和 Auth Schema 需由后端/数据库负责人恢复后再验收；前端 Mock 验收不等于真实 API 验收。
 - Supplier：`SUPPLIER_FIELD_DICTIONARY_PENDING_SOURCE_CONFIRMATION` 仍有效。
 
 ## Workstreams / Implementation Context
 
-- `feat/web-admin-auth-shell`：前端认证与后台壳层的功能实现分支。
+- `feat/auth-real-api-integration`：关闭 Mock 并完成真实 Auth API 联调，待合入。
 - Business Sequence：由后端负责人继续推进，分支状态待同步。
 - Supplier 字段资料 Gate 尚未解除。

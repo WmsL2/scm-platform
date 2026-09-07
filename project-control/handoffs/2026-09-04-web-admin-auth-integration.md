@@ -1,5 +1,7 @@
 # Handoff: Web Admin Auth Real API Integration
 
+状态：COMPLETED
+
 日期：2026-09-04
 来源分支：`feat/web-admin-auth-shell`
 接收范围：Auth/Database 后端负责人完成开发库基线后，由前端继续真实接口验收。
@@ -10,13 +12,16 @@
 - authApi 已按冻结契约封装 login、me、logout；
 - 本地 Mock 模式和浏览器流程已验收；
 - Mock 与真实 API 共用 Pydantic 对应的 TypeScript Schema。
+- 开发环境明确设置 `VITE_USE_MOCK=false`；前端认证客户端已验证使用真实
+  `/api/v1/auth/login`、`/me`、`/logout`。
+- MySQL Revision `20260903_0002` 上完成真实 HTTP 验证：login、me、logout、错误密码、
+  过期 Token、DISABLED 与 deleted；临时用户已清理。
+- 权限拒绝及权限撤销通过 MySQL 集成测试验证；前端权限路由守卫测试通过。
 
-## Pending
+## Remaining Scope
 
-- 在 Alembic Revision `20260903_0002` 完整落库后设置 `VITE_USE_MOCK=false`；
-- 创建受控开发账号，验证 login -> me -> logout；
-- 验证错误密码、Token 失效、用户 DISABLED/deleted 和权限撤销后的前端行为；
-- 完成后更新本 Handoff、Auth Module Status 和 Change Record，不把 Mock 结果作为真实接口结果。
+Refresh Token、server-side Session、multi-device Logout 均不在已冻结的 Sprint 1
+Auth Kernel 范围内，留待后续正式授权。
 
 ## Constraints
 
