@@ -1,6 +1,6 @@
 # Product / Category / Pricing Schema Review
 
-状态：SCHEMA REVIEW READY  
+状态：SCHEMA REVIEW READY
 范围：一期商品、三级类目与当前价格快照的数据库结构评审稿；不包含 Migration、ORM、API、UI 或 Pricing Service。
 
 ## 术语与评审结论
