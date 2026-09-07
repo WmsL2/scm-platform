@@ -1,6 +1,6 @@
 # Sprint 1 Supplier Design Freeze
 
-Status: system relationship, lifecycle and confirmed field dictionary are FROZEN; ready for Schema Design.
+Status: system relationship, lifecycle and confirmed field dictionary are FROZEN. Backend implementation is documented in `docs/14-sprint-1-supplier-master-backend-implementation.md`.
 
 Supplier Master answers who supplies. It is independent from Product Master and Supplier Product Quote. Every future relation uses supplier_id, never supplier_name.
 
@@ -17,7 +17,7 @@ Supplier code is generated only through BusinessSequence with key SUPPLIER, form
 
 真实供应商来源资料已确认，详见 `docs/data-gates/supplier-field-dictionary.md`。`supplier_name`、`main_brands`、`advantage`、`contact_name`、`contact_phone` 的来源语义与已确认规则可用于 Schema Design；其中联系人与电话为 nullable。`supplier_code` 继续仅由系统生成，来源旧编码不能作为正式系统编码。
 
-未在资料中确认的企业、税务、地址、银行、资质及合作等级字段仍为 GATED：不得自行添加，也不得由样例推断 nullable 或 UNIQUE 规则。Supplier Migration 尚未授权；本冻结只解除字段设计门禁。
+未在资料中确认的企业、税务、地址、银行、资质及合作等级字段仍为 GATED：不得自行添加，也不得由样例推断 nullable 或 UNIQUE 规则。后端 Migration 只能使用本文件和字段字典已确认的字段；资质业务字段仍不得设计或暴露 API。
 
 ## State matrix
 
