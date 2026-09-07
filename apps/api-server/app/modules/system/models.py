@@ -1,7 +1,16 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.models import Base
@@ -97,3 +106,23 @@ class RolePermission(Base):
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+
+
+class BusinessSequence(Base):
+    __tablename__ = "sys_biz_sequence"
+    __table_args__ = (CheckConstraint("next_value >= 1", name="ck_sys_biz_sequence_next_value"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
+    sequence_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    prefix: Mapped[str] = mapped_column(String(16), nullable=False)
+    next_value: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
+    )

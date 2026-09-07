@@ -4,7 +4,14 @@ from typing import cast
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.system.models import Permission, Role, RolePermission, User, UserRole
+from app.modules.system.models import (
+    BusinessSequence,
+    Permission,
+    Role,
+    RolePermission,
+    User,
+    UserRole,
+)
 
 
 class UserRepository:
@@ -49,3 +56,18 @@ class UserRepository:
             )
         ).all()
         return sorted(set(roles)), sorted(set(permissions))
+
+
+class BusinessSequenceRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def by_key_for_update(self, sequence_key: str) -> BusinessSequence | None:
+        return cast(
+            BusinessSequence | None,
+            await self.session.scalar(
+                select(BusinessSequence)
+                .where(BusinessSequence.sequence_key == sequence_key)
+                .with_for_update()
+            ),
+        )

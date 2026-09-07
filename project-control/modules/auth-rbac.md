@@ -1,6 +1,6 @@
 # Auth/RBAC
 
-状态：BACKEND MERGED / FRONTEND IMPLEMENTED / REAL API VERIFICATION PENDING
+状态：BACKEND MERGED / FRONTEND MERGED / REAL API VERIFIED
 
 ## Backend
 
@@ -22,6 +22,8 @@
 - [x] 企业后台 Layout、工作台、工作区 Tab、403、404。
 - [x] HTTP GET/POST/PATCH/DELETE、request ID、Bearer Token 和统一错误处理。
 - [x] 前端单元测试、typecheck 和 build。
+- [x] 开发环境显式设置 `VITE_USE_MOCK=false`，并验证真实 API 路径调用
+  `/api/v1/auth/login`、`/me`、`/logout`。
 
 ## Boundaries
 
@@ -30,12 +32,18 @@
 - 未创建供应商业务表单，Supplier Field Gate 保持有效。
 - 前端权限只控制路由和显示，后端 `require_permission` 仍是安全边界。
 
+## Verification
+
+- 本机 MySQL 已升级至 Revision `20260903_0002`；真实 HTTP 已验证 login、me、
+  stateless logout、错误密码、过期 Token、DISABLED 与 deleted 用户。
+- 权限拒绝与权限撤销通过 MySQL 集成测试验证；前端权限路由守卫测试已通过。
+- 临时联调用户在验证结束后删除；未新增默认账号或硬编码密码。
+
 ## Pending
 
-- 使用迁移完整的 MySQL 开发库完成 login/me/logout 真实接口联调。
-- Refresh Token、Session、Multi-device Logout。
+- Refresh Token、Session、Multi-device Logout（冻结合同外，不在本任务范围）。
 - Business Sequence 由后端任务继续推进。
 
 ## Next Step
 
-数据库基线恢复后切换 `VITE_USE_MOCK=false` 做真实接口验收；Supplier Gate 保持有效。
+继续 Business Sequence；Supplier Gate 保持有效。
