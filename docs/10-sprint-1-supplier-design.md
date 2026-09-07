@@ -1,6 +1,6 @@
 # Sprint 1 Supplier Design Freeze
 
-Status: system relationship and lifecycle are FROZEN. Field dictionary is GATED.
+Status: system relationship, lifecycle and confirmed field dictionary are FROZEN; ready for Schema Design.
 
 Supplier Master answers who supplies. It is independent from Product Master and Supplier Product Quote. Every future relation uses supplier_id, never supplier_name.
 
@@ -15,7 +15,9 @@ Supplier code is generated only through BusinessSequence with key SUPPLIER, form
 
 ## Field Gate
 
-SUPPLIER_FIELD_DICTIONARY_PENDING_SOURCE_CONFIRMATION is active: no supplier archive/template exists in the repository. Enterprise name, tax ID, address, banking, contact details and cooperation-level fields are GATED; their nullable/UNIQUE rules must not be invented. Supplier Migration is prohibited until this gate is removed.
+真实供应商来源资料已确认，详见 `docs/data-gates/supplier-field-dictionary.md`。`supplier_name`、`main_brands`、`advantage`、`contact_name`、`contact_phone` 的来源语义与已确认规则可用于 Schema Design；其中联系人与电话为 nullable。`supplier_code` 继续仅由系统生成，来源旧编码不能作为正式系统编码。
+
+未在资料中确认的企业、税务、地址、银行、资质及合作等级字段仍为 GATED：不得自行添加，也不得由样例推断 nullable 或 UNIQUE 规则。Supplier Migration 尚未授权；本冻结只解除字段设计门禁。
 
 ## State matrix
 
@@ -43,4 +45,3 @@ All business APIs use /api/v1 and the shared response/error envelope. Command en
 | POST /api/v1/suppliers/{id}/commands/submit, archive, stop, blacklist | matching action code |
 
 Page designs only: /suppliers, /suppliers/new, /suppliers/:id, /suppliers/:id/edit. UI permission control is not the security boundary; backend require_permission is.
-

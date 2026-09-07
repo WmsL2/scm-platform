@@ -2,7 +2,7 @@
 
 状态：NOT_STARTED
 Owner：TBD
-Last Updated：2026-09-02
+Last Updated：2026-09-07
 
 ## Database
 - [ ] 未开始
@@ -32,4 +32,4 @@ Last Updated：2026-09-02
 - 不自动创建供应商产品报价；
 - Import表只做Staging；
 - 确认后写正式 `scm_product`。
-
+- 类目、商品字段与价格规则以 `docs/data-gates/` 冻结文档为准；导入先执行模板、字段、字典及重复/冲突校验，再错误预览与人工确认；错误行不得静默入库。
