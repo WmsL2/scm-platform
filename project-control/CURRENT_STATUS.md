@@ -2,7 +2,7 @@
 
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
-Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration completed
+Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Business Sequence implemented
 日期：2026-09-07
 
 ## Repository
@@ -10,15 +10,16 @@ Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration completed
 - Remote：GitHub
 - GitHub Repository：WmsL2/scm-platform
 - Main Branch：`main`
-- main：Auth Kernel 已通过 PR #6 合入；Sprint 1 继续进行
+- main：Sprint 1 已包含 Auth Kernel 与 Web Admin Auth Real API Integration；后续开发继续进行
 - GitHub Actions：正式 CI（PR -> main 与 push -> main）
+- Feature Branch、PR、Merge SHA 与合入时间以 GitHub / `main` 历史为事实来源，不在状态文档中重复维护。
 
 ## 当前 Sprint
 
 Sprint 1 — Auth/RBAC + Supplier
 
 状态：IN_PROGRESS
-进度：Auth Kernel MERGED / DONE（PR #6，Merge Commit `6f229e75`）；Web Admin Auth Shell 已完成并通过真实 API 联调；后端下一任务为 Business Sequence；Supplier Master 仍受字段 Gate 限制
+进度：Auth Kernel MERGED / DONE；Web Admin Auth Shell 已完成并通过真实 API 联调；Business Sequence 已实现并完成本机验证；Supplier Master 仍受字段 Gate 限制。分支与合入状态以 GitHub / `main` 历史为准。
 
 ## 已冻结
 
@@ -39,7 +40,7 @@ Sprint 1 — Auth/RBAC + Supplier
 
 ## 下一步
 
-- 后端：Business Sequence 是下一任务。
+- 后端：Business Sequence 已可供后续 Supplier Master 使用；分支与合入状态以 GitHub / `main` 历史为准。
 - Supplier Master：继续等待真实供应商字段资料解除 Gate。
 
 ## Blocker
@@ -49,6 +50,6 @@ Sprint 1 — Auth/RBAC + Supplier
 
 ## Workstreams / Implementation Context
 
-- `feat/auth-real-api-integration`：关闭 Mock 并完成真实 Auth API 联调，待合入。
-- Business Sequence：由后端负责人继续推进，分支状态待同步。
+- Auth Real API Integration：已完成真实 Auth API 联调；分支与合入状态以 GitHub / `main` 历史为准。
+- Business Sequence：`sys_biz_sequence` Migration、并发安全取号服务与 MySQL 并发测试已完成；分支与合入状态以 GitHub / `main` 历史为准。
 - Supplier 字段资料 Gate 尚未解除。
