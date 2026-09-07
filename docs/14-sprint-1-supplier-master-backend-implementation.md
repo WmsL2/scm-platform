@@ -1,6 +1,6 @@
 # Sprint 1 Supplier Master Backend
 
-Status: IMPLEMENTED on feature branch `feat/supplier-master-backend`; not a `main` fact until PR merge.
+Status: MERGED into `main` via PR #13. Supplier Frontend integration is implemented on `feat/supplier-master-frontend`.
 
 ## Scope and field boundary
 
