@@ -6,6 +6,6 @@ Status: IN_PROGRESS.
 - Web Admin Auth: DONE / REAL API VERIFIED.
 - Business Sequence: DONE / IMPLEMENTED; Revision `20260907_0003`, available for Supplier Master `supplier_code` generation.
 - Supplier Field Dictionary: FROZEN / READY FOR SCHEMA DESIGN.
-- Supplier Master Backend: IMPLEMENTED on `feat/supplier-master-backend`; Revision `20260907_0004` adds the frozen Supplier schema, permission directory, API, lifecycle and tests. It is not a `main` fact until merged.
-- Supplier Master Frontend: NEXT — integrate the frozen Supplier API without adding unconfirmed fields.
+- Supplier Master Backend: DONE / MERGED via PR #13; Revision `20260907_0004` adds the frozen Supplier schema, permission directory, API, lifecycle and tests.
+- Supplier Master Frontend: IMPLEMENTED — real list/detail/create/update/status API integration; browser acceptance requires a locally authorized account.
 - PENDING: Refresh Token policy is future Auth scope and does not block Supplier / Product development. Enterprise, tax, address, banking and qualification fields not confirmed by supplier source material remain locally GATED and must not be invented.

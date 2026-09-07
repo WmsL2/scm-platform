@@ -6,6 +6,7 @@ import {
   Expand,
   Fold,
   House,
+  OfficeBuilding,
   SwitchButton,
   UserFilled,
 } from "@element-plus/icons-vue"
@@ -60,6 +61,10 @@ async function handleUserCommand(command: string): Promise<void> {
         <el-menu-item index="/dashboard">
           <el-icon><House /></el-icon>
           <template #title>工作台</template>
+        </el-menu-item>
+        <el-menu-item v-if="auth.hasPermission('supplier:list')" index="/suppliers">
+          <el-icon><OfficeBuilding /></el-icon>
+          <template #title>供应商管理</template>
         </el-menu-item>
       </el-menu>
 

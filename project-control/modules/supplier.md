@@ -1,7 +1,7 @@
 # 供应商
 
-状态：BACKEND_IMPLEMENTED_FRONTEND_PENDING
-Owner：人员 A（Backend）
+状态：BACKEND_MERGED_FRONTEND_REAL_API_IMPLEMENTED
+Owner：人员 A（Backend）/ 人员 B（Frontend）
 Last Updated：2026-09-07
 
 ## Database
@@ -14,20 +14,25 @@ Last Updated：2026-09-07
 - [x] 创建/编辑/归档 Actor 与时间审计；停用/拉黑写合作状态历史
 
 ## Frontend
-- [ ] 未开始
+- [x] 供应商列表：真实分页、关键字/双状态筛选、详情跳转
+- [x] 新增、详情、编辑：真实 Supplier API 调用与错误反馈
+- [x] 多联系人表单：符合 `contacts` 请求契约；联系人可空且每条至少姓名或电话
+- [x] 提交归档、归档、停用、黑名单：按实时权限和状态机显示，停用/黑名单收集原因
 
 ## Permissions
 - [x] `supplier:list/detail/create/update/submit/archive/stop/blacklist` 已入权限目录并由后端强制校验
 
 ## Tests
 - [x] MySQL Schema、API 生命周期、401/403、状态机、状态历史覆盖
+- [x] 前端 Supplier API 路径、请求体、字段规范化、路由权限单元测试
 
 ## Known Issues
 - 资质业务字段仍未确认；当前 `scm_supplier_qualification` 只保留已冻结的关系、逻辑删除和审计列，未暴露资质写入 API。
 - 联系人字段可空，但一条联系人记录至少要有姓名或电话；`contacts: []` 可用于编辑时清空联系人。
+- Migration 仅创建权限目录，不分配用户角色；本机浏览器验收需要使用已经拥有 Supplier 权限的账号。
 
 ## Next Step
-由人员 B 在独立前端分支实现供应商列表、新增、详情、编辑及状态操作页面，并接入已冻结 API；不要新增或猜测未确认供应商字段。
+使用具备 Supplier 权限的本机账号完成浏览器验收；不要新增或猜测未确认供应商字段。
 
 ## Design Freeze
 
@@ -41,4 +46,4 @@ Last Updated：2026-09-07
 
 ## Current Gate
 
-后端实施已完成，Supplier 模块整体不能标为 COMPLETED：前端尚未实施，且资质业务字段仍需后续资料确认。未确认字段不得自行加入。
+Supplier 主数据的后端与前端真实 API 接入均已完成；资质业务字段仍需后续资料确认，模块整体不标为 COMPLETED。未确认字段不得自行加入。
