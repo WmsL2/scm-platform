@@ -19,7 +19,7 @@ Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Bu
 Sprint 1 — Auth/RBAC + Supplier
 
 状态：IN_PROGRESS
-进度：Auth Kernel MERGED / DONE；Web Admin Auth Shell 已完成并通过真实 API 联调；Business Sequence 已实现并完成本机验证；Supplier Master 仍受字段 Gate 限制。分支与合入状态以 GitHub / `main` 历史为准。
+进度：Auth Kernel DONE；Web Admin Auth DONE / REAL API VERIFIED；Business Sequence DONE / IMPLEMENTED（Revision `20260907_0003`），已可供 Supplier Master 使用；Supplier Field Dictionary 已冻结并可进入 Schema Design。分支与合入状态以 GitHub / `main` 历史为准。
 
 ## 已冻结
 
@@ -36,20 +36,24 @@ Sprint 1 — Auth/RBAC + Supplier
 - [x] 商品大表是正式商品主数据来源
 - [x] 大表一行 = 一条具体正式商品
 - [x] 一期不强制 SPU/SKU
-- [x] scm_product 最终字段等待真实大表数据字典冻结
+- [x] 真实供应商字段资料与 Supplier Field Dictionary 已冻结
+- [x] 真实整理后商品大表字段边界已冻结
+- [x] Product / Category / Pricing Schema Design Ready
 
 ## 下一步
 
-- 后端：Business Sequence 已可供后续 Supplier Master 使用；分支与合入状态以 GitHub / `main` 历史为准。
-- Supplier Master：继续等待真实供应商字段资料解除 Gate。
+- 主任务：Supplier Master Schema Design / Schema Review / Migration 与 Backend 实施。
+- 并行任务：Product / Category / Pricing Schema Design。
 
 ## Blocker
 
 - Repository：无代码合并 Blocker。
-- Supplier：`SUPPLIER_FIELD_DICTIONARY_PENDING_SOURCE_CONFIRMATION` 仍有效。
+- Supplier：无整体字段资料 Gate；未确认的企业、税务、地址、银行、资质等字段仍不得自行添加。Supplier Migration 必须在 Schema Review 后创建。
+- Product / Catalog：尚未创建 Product / Category Migration，需先完成 Schema Design。
 
 ## Workstreams / Implementation Context
 
 - Auth Real API Integration：已完成真实 Auth API 联调；分支与合入状态以 GitHub / `main` 历史为准。
 - Business Sequence：`sys_biz_sequence` Migration、并发安全取号服务与 MySQL 并发测试已完成；分支与合入状态以 GitHub / `main` 历史为准。
-- Supplier 字段资料 Gate 尚未解除。
+- Supplier：`FIELD_FREEZE_READY_FOR_SCHEMA_DESIGN`；Database / Backend / Frontend 尚未实施。
+- Catalog：`SCHEMA_DESIGN_READY`；Product / Category Migration 尚未创建。

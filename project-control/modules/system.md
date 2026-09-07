@@ -44,4 +44,4 @@ Last Updated：2026-09-07（Business Sequence）
   不使用本机、开发或生产 Secret。
 
 ## Next Step
-Business Sequence 已可供后续 Supplier Master 调用；分支与合入状态以 GitHub / `main` 历史为准。Supplier Field Gate 解除后再开始 Supplier Master 实现。
+Business Sequence 已可供 Supplier Master 使用。Supplier Master 在 Schema Review 后应使用 `BusinessSequenceService` 生成 `supplier_code`；分支与合入状态以 GitHub / `main` 历史为准。

@@ -29,7 +29,7 @@
 
 - Mock 仅在 Vite 开发模式下可启用，用于后端开发库不可用时的前端验收；生产构建始终调用真实 API，Mock 不代表真实接口联调通过。
 - 工作台无可信接口的数据保持 `--`，不填充虚构统计值。
-- 未创建供应商业务表单，Supplier Field Gate 保持有效。
+- 未创建供应商业务表单；Supplier Master 属于后续业务模块范围。
 - 前端权限只控制路由和显示，后端 `require_permission` 仍是安全边界。
 
 ## Verification
@@ -41,9 +41,8 @@
 
 ## Pending
 
-- Refresh Token、Session、Multi-device Logout（冻结合同外，不在本任务范围）。
-- Business Sequence 由后端任务继续推进。
+- Refresh Token、Session、Multi-device Logout 属于未来范围，不阻塞当前 Supplier / Product 开发。
 
 ## Next Step
 
-继续 Business Sequence；Supplier Gate 保持有效。
+Auth Sprint 1 scope completed；无当前 Auth 开发任务。后续业务模块继续使用 `CurrentUser` 与 `require_permission`，不在本模块扩展功能。
