@@ -40,7 +40,6 @@ async def test_auth_schema_contract_and_active_username_unique() -> None:
             .all()
         )
         assert AUTH_TABLES <= tables
-        assert not {table for table in tables if table.startswith("scm_supplier")}
 
         uuid_rows = (
             await session.execute(

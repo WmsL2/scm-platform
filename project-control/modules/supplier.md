@@ -1,29 +1,33 @@
 # 供应商
 
-状态：FIELD_FREEZE_READY_FOR_SCHEMA_DESIGN
-Owner：TBD
+状态：BACKEND_IMPLEMENTED_FRONTEND_PENDING
+Owner：人员 A（Backend）
 Last Updated：2026-09-07
 
 ## Database
-- [ ] 未开始
+- [x] Revision `20260907_0004`：`scm_supplier`、联系人、资质关系表、合作状态历史表
+- [x] `supplier_code` 使用 `sys_biz_sequence.SUPPLIER`，数据库全局 UNIQUE
 
 ## Backend
-- [ ] 未开始
+- [x] 创建、编辑、详情、分页列表 API
+- [x] DRAFT → PENDING → ARCHIVED；NORMAL → STOPPED / BLACKLIST 状态机
+- [x] 创建/编辑/归档 Actor 与时间审计；停用/拉黑写合作状态历史
 
 ## Frontend
 - [ ] 未开始
 
 ## Permissions
-- [ ] 未开始
+- [x] `supplier:list/detail/create/update/submit/archive/stop/blacklist` 已入权限目录并由后端强制校验
 
 ## Tests
-- [ ] 未开始
+- [x] MySQL Schema、API 生命周期、401/403、状态机、状态历史覆盖
 
 ## Known Issues
-无。
+- 资质业务字段仍未确认；当前 `scm_supplier_qualification` 只保留已冻结的关系、逻辑删除和审计列，未暴露资质写入 API。
+- 联系人字段可空，但一条联系人记录至少要有姓名或电话；`contacts: []` 可用于编辑时清空联系人。
 
 ## Next Step
-字段门禁已解除，可在独立 `feat/supplier` 分支进行 Supplier Master Schema Design；Database / Backend / Frontend 仍均未实施。
+由人员 B 在独立前端分支实现供应商列表、新增、详情、编辑及状态操作页面，并接入已冻结 API；不要新增或猜测未确认供应商字段。
 
 ## Design Freeze
 
@@ -37,4 +41,4 @@ Last Updated：2026-09-07
 
 ## Current Gate
 
-`FIELD_FREEZE_READY_FOR_SCHEMA_DESIGN`：已确认来源字段与系统字段边界，未确认字段不得自行加入。Supplier 的 Database、Backend、Frontend、Permission 与 Tests 尚未开始，禁止将本模块标为 COMPLETED。
+后端实施已完成，Supplier 模块整体不能标为 COMPLETED：前端尚未实施，且资质业务字段仍需后续资料确认。未确认字段不得自行加入。

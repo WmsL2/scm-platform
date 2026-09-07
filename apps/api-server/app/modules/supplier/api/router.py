@@ -1,0 +1,112 @@
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.common.contracts import ApiResponse, PageParams, PageResult, success
+from app.core.database import get_db_session
+from app.modules.auth.dependencies import require_permission
+from app.modules.auth.schemas import CurrentUser
+from app.modules.supplier.application.service import SupplierService
+from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
+from app.modules.supplier.schemas import (
+    CooperationCommand,
+    SupplierCreateRequest,
+    SupplierDetailResponse,
+    SupplierListItem,
+    SupplierUpdateRequest,
+)
+
+router = APIRouter(prefix="/suppliers", tags=["suppliers"])
+
+SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
+
+
+@router.get("", response_model=ApiResponse[PageResult[SupplierListItem]])
+async def list_suppliers(
+    _: Annotated[CurrentUser, Depends(require_permission("supplier:list"))],
+    session: SessionDep,
+    page_params: Annotated[PageParams, Depends()],
+    keyword: Annotated[str | None, Query(max_length=255)] = None,
+    archive_status: ArchiveStatus | None = None,
+    cooperation_status: CooperationStatus | None = None,
+) -> ApiResponse[PageResult[SupplierListItem]]:
+    result = await SupplierService(session).list(
+        page_params,
+        keyword=keyword,
+        archive_status=archive_status,
+        cooperation_status=cooperation_status,
+    )
+    return success(result)
+
+
+@router.get("/{supplier_id}", response_model=ApiResponse[SupplierDetailResponse])
+async def get_supplier(
+    supplier_id: str,
+    _: Annotated[CurrentUser, Depends(require_permission("supplier:detail"))],
+    session: SessionDep,
+) -> ApiResponse[SupplierDetailResponse]:
+    return success(await SupplierService(session).get(supplier_id))
+
+
+@router.post("", response_model=ApiResponse[SupplierDetailResponse], status_code=201)
+async def create_supplier(
+    payload: SupplierCreateRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("supplier:create"))],
+    session: SessionDep,
+) -> ApiResponse[SupplierDetailResponse]:
+    return success(await SupplierService(session).create(payload, current.user_id))
+
+
+@router.patch("/{supplier_id}", response_model=ApiResponse[SupplierDetailResponse])
+async def update_supplier(
+    supplier_id: str,
+    payload: SupplierUpdateRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("supplier:update"))],
+    session: SessionDep,
+) -> ApiResponse[SupplierDetailResponse]:
+    return success(await SupplierService(session).update(supplier_id, payload, current.user_id))
+
+
+@router.post("/{supplier_id}/commands/submit", response_model=ApiResponse[SupplierDetailResponse])
+async def submit_supplier(
+    supplier_id: str,
+    current: Annotated[CurrentUser, Depends(require_permission("supplier:submit"))],
+    session: SessionDep,
+) -> ApiResponse[SupplierDetailResponse]:
+    return success(await SupplierService(session).submit(supplier_id, current.user_id))
+
+
+@router.post("/{supplier_id}/commands/archive", response_model=ApiResponse[SupplierDetailResponse])
+async def archive_supplier(
+    supplier_id: str,
+    current: Annotated[CurrentUser, Depends(require_permission("supplier:archive"))],
+    session: SessionDep,
+) -> ApiResponse[SupplierDetailResponse]:
+    return success(await SupplierService(session).archive(supplier_id, current.user_id))
+
+
+@router.post("/{supplier_id}/commands/stop", response_model=ApiResponse[SupplierDetailResponse])
+async def stop_supplier(
+    supplier_id: str,
+    payload: CooperationCommand,
+    current: Annotated[CurrentUser, Depends(require_permission("supplier:stop"))],
+    session: SessionDep,
+) -> ApiResponse[SupplierDetailResponse]:
+    return success(
+        await SupplierService(session).stop(supplier_id, payload.reason, current.user_id)
+    )
+
+
+@router.post(
+    "/{supplier_id}/commands/blacklist", response_model=ApiResponse[SupplierDetailResponse]
+)
+async def blacklist_supplier(
+    supplier_id: str,
+    payload: CooperationCommand,
+    current: Annotated[CurrentUser, Depends(require_permission("supplier:blacklist"))],
+    session: SessionDep,
+) -> ApiResponse[SupplierDetailResponse]:
+    return success(
+        await SupplierService(session).blacklist(supplier_id, payload.reason, current.user_id)
+    )

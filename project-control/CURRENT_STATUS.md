@@ -19,7 +19,7 @@ Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Bu
 Sprint 1 — Auth/RBAC + Supplier
 
 状态：IN_PROGRESS
-进度：Auth Kernel DONE；Web Admin Auth DONE / REAL API VERIFIED；Business Sequence DONE / IMPLEMENTED（Revision `20260907_0003`），已可供 Supplier Master 使用；Supplier Field Dictionary 已冻结并可进入 Schema Design。分支与合入状态以 GitHub / `main` 历史为准。
+进度：Auth Kernel DONE；Web Admin Auth DONE / REAL API VERIFIED；Business Sequence DONE / IMPLEMENTED（Revision `20260907_0003`）；Supplier Master Backend IMPLEMENTED on `feat/supplier-master-backend`（Revision `20260907_0004`，待 PR/Merge 后才成为 main 事实）；Supplier Frontend 待实施。分支与合入状态以 GitHub / `main` 历史为准。
 
 ## 已冻结
 
@@ -42,18 +42,18 @@ Sprint 1 — Auth/RBAC + Supplier
 
 ## 下一步
 
-- 主任务：Supplier Master Schema Design / Schema Review / Migration 与 Backend 实施。
+- 主任务：Supplier Master Frontend 接入已冻结 API；Backend 分支完成 PR / Review / Merge。
 - 并行任务：Product / Category / Pricing Schema Design。
 
 ## Blocker
 
 - Repository：无代码合并 Blocker。
-- Supplier：无整体字段资料 Gate；未确认的企业、税务、地址、银行、资质等字段仍不得自行添加。Supplier Migration 必须在 Schema Review 后创建。
+- Supplier：后端 Schema/API 已在功能分支实施；未确认的企业、税务、地址、银行、资质等字段仍不得自行添加。资质业务字段及其 API 继续冻结。
 - Product / Catalog：尚未创建 Product / Category Migration，需先完成 Schema Design。
 
 ## Workstreams / Implementation Context
 
 - Auth Real API Integration：已完成真实 Auth API 联调；分支与合入状态以 GitHub / `main` 历史为准。
 - Business Sequence：`sys_biz_sequence` Migration、并发安全取号服务与 MySQL 并发测试已完成；分支与合入状态以 GitHub / `main` 历史为准。
-- Supplier：`FIELD_FREEZE_READY_FOR_SCHEMA_DESIGN`；Database / Backend / Frontend 尚未实施。
+- Supplier：Backend IMPLEMENTED / Frontend PENDING；Revision `20260907_0004`，权限目录、状态机、合作状态历史及 MySQL API 测试均已实现，待 PR/Merge。
 - Catalog：`SCHEMA_DESIGN_READY`；Product / Category Migration 尚未创建。
