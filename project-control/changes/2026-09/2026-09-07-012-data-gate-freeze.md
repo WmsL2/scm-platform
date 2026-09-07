@@ -1,6 +1,6 @@
 # Change Record: Supplier / Product Data Gate Freeze
 
-Change ID: 2026-09-07-010  
+Change ID: 2026-09-07-012
 Module: supplier / catalog / product-import / category-pricing  
 Branch: docs/data-gate-freeze
 
@@ -23,4 +23,3 @@ Branch: docs/data-gate-freeze
 ## Tests / Verification
 
 本任务为文档与数据设计冻结：检查 Markdown 内容一致性、Project Control Gate，以及 Git Diff 格式。未创建 Supplier/Product Migration、ORM 或业务实现。
-
