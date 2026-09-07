@@ -1,6 +1,6 @@
 # 商品主数据 / Catalog
 
-状态：SCHEMA_DESIGN_READY
+状态：SCHEMA_REVIEW_READY
 Owner：TBD
 Last Updated：2026-09-07
 
@@ -23,7 +23,7 @@ Last Updated：2026-09-07
 无。
 
 ## Next Step
-商品、类目及价格字段门禁已冻结，可进入 Product Master Schema Design；Database / Backend / Frontend 尚未实施。
+Product / Category / Pricing Schema Review 已完成，等待评审冻结结构；Database / Backend / Frontend 尚未实施。
 
 ## 已冻结业务规则
 - 商品大表是正式商品主数据来源；
@@ -35,8 +35,10 @@ Last Updated：2026-09-07
 - 69码按源文本原样保存，不拆分；
 - 已取得商城三级品类维表与工业品产品线两份类目来源；蓝色三级类目扣点 5%，其余当前规则 8%；
 - Pricing Rule 已冻结：Decimal、4 位小数；前端可计算并提交，后端必须按正式类目规则重算校验；
-- 派生价格与毛利字段需要正式保存，最终 Product/Pricing Schema 结构留待评审。
+- 派生价格与毛利字段需要正式保存；一期建议当前价格及派生值直接承载于 `scm_product`，等待 Schema Review 确认；
+- 31 列大表字段映射、Category 三级维度建议、Product ↔ Category FK 与 Decimal 类型建议见 `docs/schema/product-category-pricing-schema-review.md`；
+- 普通金额与比率使用 Decimal `ROUND_HALF_UP`、4 位小数；唯一例外 `deduction_review` 使用 `ROUND_DOWN`、4 位小数；本阶段不实现 Pricing Service。
 
 ## Current Gate
 
-`SCHEMA_DESIGN_READY`：商品主数据的正式字段设计可开始，但尚未创建 Product / Category Migration、ORM、API 或页面，不得标记为已实现。
+`SCHEMA_REVIEW_READY`：Database Schema Review 已完成，等待后续 Runtime Implementation。下一步为 Pricing Service → 基于届时最新 main Alembic Head 的 Category/Product Migration → Product Backend。尚未创建 Migration、ORM、API 或页面，不得标记为已实现。
