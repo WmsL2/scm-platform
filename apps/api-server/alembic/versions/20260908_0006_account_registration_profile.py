@@ -1,15 +1,15 @@
 """account registration and profile administration
 
-Revision ID: 20260908_0005
-Revises: 20260907_0004
+Revision ID: 20260908_0006
+Revises: 20260908_0005
 """
 
 import sqlalchemy as sa
 
 from alembic import op
 
-revision = "20260908_0005"
-down_revision = "20260907_0004"
+revision = "20260908_0006"
+down_revision = "20260908_0005"
 branch_labels = None
 depends_on = None
 
