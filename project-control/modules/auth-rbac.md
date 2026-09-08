@@ -24,6 +24,14 @@
 - [x] 前端单元测试、typecheck 和 build。
 - [x] 开发环境显式设置 `VITE_USE_MOCK=false`，并验证真实 API 路径调用
   `/api/v1/auth/login`、`/me`、`/logout`。
+- Web Admin UI Optimization（`feat/web-admin-ui-optimization`）：用户管理以中文标签显示用户
+  状态、以角色名称显示所属角色，不显示角色 UUID；用户响应新增兼容的只读 `role_names`。角色权限
+  不显示权限 UUID；待审批注册数使用真实 API `total` 显示在“注册审批”菜单红色角标中，审批后
+  即时刷新。只有 `ENABLED` 用户可分配角色，前端隐藏其他状态的操作，后端返回
+  `ACCOUNT_USER_NOT_ENABLED` 拒绝绕过页面的写入。前后端测试、typecheck 和 production build
+  已通过；浏览器验收待完成。
+- 注册审批页面提供待审批与审批历史两个页签。审批历史使用同一查看审批权限，按
+  `reviewed_at` 倒序、分页展示已处理申请的审批结果、时间与说明；待审批申请不会进入历史。
 
 ## Account / Registration / Profile
 

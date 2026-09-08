@@ -13,7 +13,8 @@ describe("account UI contracts", () => {
     expect(source(BasicLayout)).toContain("system:registration:list")
     expect(source(UsersView)).toContain("accountApi.roles")
     expect(source(RolesView)).toContain("accountApi.permissions")
-    expect(source(RegistrationsView)).toContain("e.status === 409")
+    expect(source(RegistrationsView)).toContain("error.status === 409")
+    expect(source(RegistrationsView)).toContain("accountApi.registrationHistory")
   })
   it("keeps registration confirmation local and profile/password contracts explicit", () => {
     expect(source(RegisterView)).toContain("form.confirm")

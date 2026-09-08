@@ -15,6 +15,7 @@ import { ElMessage } from "element-plus"
 
 import WorkspaceTabs from "../components/layout/WorkspaceTabs.vue"
 import { useAuthStore } from "../stores/auth"
+import { useRegistrationStore } from "../stores/registration"
 import { useWorkspaceStore } from "../stores/workspace"
 import { accountApi } from "../api/account"
 import { HttpError } from "../shared/http"
@@ -22,6 +23,7 @@ import { HttpError } from "../shared/http"
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const registration = useRegistrationStore()
 const workspace = useWorkspaceStore()
 const collapsed = ref(false)
 const appTitle = import.meta.env.VITE_APP_TITLE ?? "众诚智链商品管理平台"
@@ -38,6 +40,18 @@ const pageTitle = computed(() => typeof route.meta.title === "string" ? route.me
 watch(
   () => route.fullPath,
   () => workspace.openRoute(route),
+  { immediate: true },
+)
+
+watch(
+  () => auth.hasPermission("system:registration:list"),
+  (canViewRegistrations) => {
+    if (!canViewRegistrations) {
+      registration.clear()
+      return
+    }
+    void registration.refreshPendingCount().catch(() => registration.clear())
+  },
   { immediate: true },
 )
 
@@ -75,7 +89,7 @@ async function changePassword(): Promise<void> { if (passwordForm.new_password !
           <el-icon><OfficeBuilding /></el-icon>
           <template #title>供应商管理</template>
         </el-menu-item>
-        <template v-if="hasSystemMenu"><el-menu-item-group title="系统管理"><el-menu-item v-if="auth.hasPermission('system:user:list')" index="/admin/users"><el-icon><Setting /></el-icon><template #title>用户管理</template></el-menu-item><el-menu-item v-if="auth.hasPermission('system:role:list')" index="/admin/roles"><el-icon><Setting /></el-icon><template #title>角色权限</template></el-menu-item><el-menu-item v-if="auth.hasPermission('system:registration:list')" index="/admin/registrations"><el-icon><Setting /></el-icon><template #title>注册审批</template></el-menu-item></el-menu-item-group></template>
+        <template v-if="hasSystemMenu"><el-menu-item-group title="系统管理"><el-menu-item v-if="auth.hasPermission('system:user:list')" index="/admin/users"><el-icon><Setting /></el-icon><template #title>用户管理</template></el-menu-item><el-menu-item v-if="auth.hasPermission('system:role:list')" index="/admin/roles"><el-icon><Setting /></el-icon><template #title>角色权限</template></el-menu-item><el-menu-item v-if="auth.hasPermission('system:registration:list')" index="/admin/registrations"><el-icon><Setting /></el-icon><template #title><el-badge :value="registration.pendingCount" :hidden="registration.pendingCount === 0" class="registration-badge"><span class="registration-menu-label">注册审批</span></el-badge></template></el-menu-item></el-menu-item-group></template>
       </el-menu>
 
       <div v-show="!collapsed" class="sidebar-boundary">
@@ -171,6 +185,8 @@ async function changePassword(): Promise<void> { if (passwordForm.new_password !
 .user-arrow { color: #98a2b3; }
 .main-content { padding: 22px; background: #f3f6fa; }
 .tag { margin: 0 6px 6px 0; }.permission-list { max-height: 180px; overflow: auto; }.el-dialog .el-input { margin-bottom: 12px; }
+.registration-menu-label { display: inline-block; line-height: 1; }
+.registration-badge :deep(.el-badge__content) { top: 50%; right: -10px; transform: translateY(-50%) translateX(100%); }
 .page-enter-active, .page-leave-active { transition: opacity .16s ease, transform .16s ease; }
 .page-enter-from { opacity: 0; transform: translateY(4px); }
 .page-leave-to { opacity: 0; }

@@ -33,6 +33,7 @@ class UserResponse(BaseModel):
     username: str
     user_status: str
     role_ids: list[uuid.UUID]
+    role_names: list[str]
     reviewed_by: uuid.UUID | None
     reviewed_at: datetime | None
     review_note: str | None

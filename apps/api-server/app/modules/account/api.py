@@ -104,6 +104,15 @@ async def registrations(
     return success(await AccountService(session).list_users(page, pending_only=True))
 
 
+@admin_router.get("/registration-history", response_model=ApiResponse[PageResult[UserResponse]])
+async def registration_history(
+    page: Annotated[PageParams, Depends()],
+    _: Annotated[CurrentUser, Depends(require_permission("system:registration:list"))],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> ApiResponse[PageResult[UserResponse]]:
+    return success(await AccountService(session).list_registration_history(page))
+
+
 @admin_router.post(
     "/registration-requests/{user_id}/commands/approve", response_model=ApiResponse[UserResponse]
 )

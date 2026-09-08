@@ -113,6 +113,45 @@ async def test_registration_review_and_password_change() -> None:
         await _cleanup([admin_id, *([created_id] if created_id else [])], [admin_role])
 
 
+async def test_registration_history_lists_reviewed_records_only() -> None:
+    admin_id, admin_role = await _admin()
+    approved_username = f"history-approved-{uuid.uuid4()}"
+    pending_username = f"history-pending-{uuid.uuid4()}"
+    approved_id: uuid.UUID | None = None
+    pending_id: uuid.UUID | None = None
+    headers = {"Authorization": f"Bearer {create_token(admin_id, 1)}"}
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            approved = await client.post(
+                "/api/v1/auth/register", json={"username": approved_username, "password": "password"}
+            )
+            pending = await client.post(
+                "/api/v1/auth/register", json={"username": pending_username, "password": "password"}
+            )
+            approved_id = uuid.UUID(approved.json()["data"]["id"])
+            pending_id = uuid.UUID(pending.json()["data"]["id"])
+            reviewed = await client.post(
+                f"/api/v1/admin/registration-requests/{approved_id}/commands/approve",
+                headers=headers,
+                json={"review_note": "history note"},
+            )
+            assert reviewed.status_code == 200
+
+            history = await client.get("/api/v1/admin/registration-history", headers=headers)
+            assert history.status_code == 200
+            items = history.json()["data"]["items"]
+            approved_item = next(item for item in items if item["id"] == str(approved_id))
+            assert approved_item["user_status"] == "ENABLED"
+            assert approved_item["review_note"] == "history note"
+            assert approved_item["reviewed_at"] is not None
+            assert str(pending_id) not in {item["id"] for item in items}
+    finally:
+        await _cleanup(
+            [admin_id, *([approved_id] if approved_id else []), *([pending_id] if pending_id else [])],
+            [admin_role],
+        )
+
+
 async def test_admin_replacement_permissions_and_forbidden() -> None:
     admin_id, admin_role = await _admin()
     target_id, target_role, extra_permission = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
@@ -127,8 +166,12 @@ async def test_admin_replacement_permissions_and_forbidden() -> None:
             await session.commit()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             assert (await client.get("/api/v1/admin/users", headers={"Authorization": f"Bearer {create_token(target_id, 1)}"})).status_code == 403
-            assert (await client.put(f"/api/v1/admin/users/{target_id}/roles", headers=headers, json={"role_ids": [str(target_role)]})).status_code == 200
-            assert (await client.put(f"/api/v1/admin/users/{target_id}/roles", headers=headers, json={"role_ids": []})).json()["data"]["role_ids"] == []
+            assigned = await client.put(f"/api/v1/admin/users/{target_id}/roles", headers=headers, json={"role_ids": [str(target_role)]})
+            assert assigned.status_code == 200
+            assert assigned.json()["data"]["role_names"] == ["target"]
+            cleared = await client.put(f"/api/v1/admin/users/{target_id}/roles", headers=headers, json={"role_ids": []})
+            assert cleared.json()["data"]["role_ids"] == []
+            assert cleared.json()["data"]["role_names"] == []
             assert (await client.put(f"/api/v1/admin/roles/{target_role}/permissions", headers=headers, json={"permission_ids": [str(extra_permission)]})).status_code == 200
             assert (await client.put(f"/api/v1/admin/roles/{target_role}/permissions", headers=headers, json={"permission_ids": []})).json()["data"]["permission_ids"] == []
             listed = await client.get("/api/v1/admin/permissions", headers=headers)
@@ -144,6 +187,47 @@ async def test_admin_replacement_permissions_and_forbidden() -> None:
             await session.execute(delete(Permission).where(Permission.id == extra_permission))
             await session.commit()
         await _cleanup([admin_id, target_id], [admin_role, target_role])
+
+
+async def test_admin_role_assignment_requires_enabled_user() -> None:
+    admin_id, admin_role = await _admin()
+    target_role = uuid.uuid4()
+    target_ids = [uuid.uuid4() for _ in range(3)]
+    headers = {"Authorization": f"Bearer {create_token(admin_id, 1)}"}
+    statuses = ["PENDING", "REJECTED", "DISABLED"]
+    try:
+        async with SessionLocal() as session:
+            session.add(
+                Role(
+                    id=target_role,
+                    role_code=f"enabled-only-role-{target_role}",
+                    role_name="enabled only role",
+                )
+            )
+            session.add_all(
+                [
+                    User(
+                        id=user_id,
+                        username=f"enabled-only-{status.lower()}-{user_id}",
+                        password_hash=hash_password("x"),
+                        user_status=status,
+                    )
+                    for user_id, status in zip(target_ids, statuses, strict=True)
+                ]
+            )
+            await session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            for user_id in target_ids:
+                response = await client.put(
+                    f"/api/v1/admin/users/{user_id}/roles",
+                    headers=headers,
+                    json={"role_ids": [str(target_role)]},
+                )
+                assert response.status_code == 409
+                assert response.json()["code"] == "ACCOUNT_USER_NOT_ENABLED"
+    finally:
+        await _cleanup([admin_id, *target_ids], [admin_role, target_role])
 
 
 async def test_replacement_normalizes_duplicate_ids_and_caller_transaction_can_rollback() -> None:
@@ -182,6 +266,7 @@ async def test_replacement_normalizes_duplicate_ids_and_caller_transaction_can_r
             )
             assert roles.status_code == 200
             assert roles.json()["data"]["role_ids"] == [str(target_role)]
+            assert roles.json()["data"]["role_names"] == ["hardening role"]
             permissions = await client.put(
                 f"/api/v1/admin/roles/{target_role}/permissions",
                 headers=headers,

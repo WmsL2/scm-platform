@@ -21,4 +21,9 @@ describe("account api contracts", () => {
     expect(http.put).toHaveBeenNthCalledWith(1, "/api/v1/admin/users/u/roles", { role_ids: [] })
     expect(http.put).toHaveBeenNthCalledWith(2, "/api/v1/admin/roles/r/permissions", { permission_ids: [] })
   })
+  it("requests registration history through the protected paginated endpoint", async () => {
+    const { accountApi } = await import("./account")
+    await accountApi.registrationHistory(2, 20)
+    expect(http.get).toHaveBeenCalledWith("/api/v1/admin/registration-history?page=2&page_size=20")
+  })
 })
