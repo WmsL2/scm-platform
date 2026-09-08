@@ -25,13 +25,48 @@ def upgrade() -> None:
     op.add_column("sys_user", sa.Column("reviewed_at", sa.DateTime(), nullable=True))
     op.add_column("sys_user", sa.Column("review_note", sa.Text(), nullable=True))
     permissions = (
-        ("30000000-0000-0000-0000-000000000001", "system:user:list", "用户列表", "API"),
-        ("30000000-0000-0000-0000-000000000002", "system:user:role:update", "更新用户角色", "ACTION"),
-        ("30000000-0000-0000-0000-000000000003", "system:role:list", "角色列表", "API"),
-        ("30000000-0000-0000-0000-000000000004", "system:role:permission:update", "更新角色权限", "ACTION"),
-        ("30000000-0000-0000-0000-000000000005", "system:permission:list", "权限列表", "API"),
-        ("30000000-0000-0000-0000-000000000006", "system:registration:list", "注册申请列表", "API"),
-        ("30000000-0000-0000-0000-000000000007", "system:registration:review", "注册申请审批", "ACTION"),
+        (
+            "30000000-0000-0000-0000-000000000001",
+            "system:user:list",
+            "用户列表",
+            "API",
+        ),
+        (
+            "30000000-0000-0000-0000-000000000002",
+            "system:user:role:update",
+            "更新用户角色",
+            "ACTION",
+        ),
+        (
+            "30000000-0000-0000-0000-000000000003",
+            "system:role:list",
+            "角色列表",
+            "API",
+        ),
+        (
+            "30000000-0000-0000-0000-000000000004",
+            "system:role:permission:update",
+            "更新角色权限",
+            "ACTION",
+        ),
+        (
+            "30000000-0000-0000-0000-000000000005",
+            "system:permission:list",
+            "权限列表",
+            "API",
+        ),
+        (
+            "30000000-0000-0000-0000-000000000006",
+            "system:registration:list",
+            "注册申请列表",
+            "API",
+        ),
+        (
+            "30000000-0000-0000-0000-000000000007",
+            "system:registration:review",
+            "注册申请审批",
+            "ACTION",
+        ),
     )
     for permission_id, code, name, permission_type in permissions:
         op.execute(sa.text(
