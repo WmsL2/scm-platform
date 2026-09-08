@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 const http = vi.hoisted(() => ({
   get: vi.fn(),
+  getBlob: vi.fn(),
   post: vi.fn(),
   patch: vi.fn(),
+  delete: vi.fn(),
 }))
 
 vi.mock("../shared/http/runtime", () => ({ http }))
@@ -11,8 +13,37 @@ vi.mock("../shared/http/runtime", () => ({ http }))
 describe("supplier api", () => {
   afterEach(() => {
     http.get.mockReset()
+    http.getBlob.mockReset()
     http.post.mockReset()
     http.patch.mockReset()
+    http.delete.mockReset()
+  })
+
+  it("uses delete and two-stage Excel import routes", async () => {
+    http.getBlob.mockResolvedValue(new Blob())
+    http.post.mockResolvedValue({ id: "batch-1" })
+    http.delete.mockResolvedValue({ id: "supplier-1", status: "deleted" })
+    const { supplierApi } = await import("./supplier")
+    const file = new File(["content"], "suppliers.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    })
+
+    await supplierApi.downloadImportTemplate()
+    await supplierApi.previewImport(file)
+    await supplierApi.confirmImport("batch-1")
+    await supplierApi.delete("supplier-1")
+
+    expect(http.getBlob).toHaveBeenCalledWith("/api/v1/suppliers/imports/template")
+    expect(http.post).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/suppliers/imports/preview",
+      expect.any(FormData),
+    )
+    expect(http.post).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/suppliers/imports/batch-1/confirm",
+    )
+    expect(http.delete).toHaveBeenCalledWith("/api/v1/suppliers/supplier-1")
   })
 
   it("uses the frozen paged-list contract", async () => {

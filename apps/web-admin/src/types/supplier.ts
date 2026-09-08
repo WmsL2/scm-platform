@@ -43,6 +43,38 @@ export interface SupplierPage {
   page_size: number
 }
 
+export interface SupplierDeleteResult {
+  id: string
+  status: "deleted"
+}
+
+export interface SupplierImportRow {
+  source_row_number: number
+  supplier_name: string | null
+  main_brands: string | null
+  advantage: string | null
+  contact_name: string | null
+  contact_phone: string | null
+  is_valid: boolean
+  error_message: string | null
+}
+
+export interface SupplierImportPreview {
+  id: string
+  original_filename: string
+  status: "VALIDATED"
+  total_rows: number
+  valid_rows: number
+  invalid_rows: number
+  rows: SupplierImportRow[]
+}
+
+export interface SupplierImportConfirmResult {
+  id: string
+  status: "CONFIRMED"
+  imported_count: number
+}
+
 export interface SupplierListParams {
   page?: number
   page_size?: number

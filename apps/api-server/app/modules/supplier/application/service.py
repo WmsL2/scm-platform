@@ -19,6 +19,7 @@ from app.modules.supplier.schemas import (
     SupplierContactInput,
     SupplierContactResponse,
     SupplierCreateRequest,
+    SupplierDeleteResponse,
     SupplierDetailResponse,
     SupplierListItem,
     SupplierUpdateRequest,
@@ -95,6 +96,16 @@ class SupplierService:
                 self._replace_contacts(supplier, payload.contacts or [], actor_id)
             supplier.updated_by = actor_id
         return await self.get(supplier_id)
+
+    async def delete(self, supplier_id: str, actor_id: uuid.UUID) -> SupplierDeleteResponse:
+        async with self._transaction():
+            supplier = await self._active_for_update(supplier_id)
+            supplier.is_deleted = True
+            supplier.deleted_by = actor_id
+            supplier.deleted_at = datetime.now()
+            supplier.updated_by = actor_id
+            await self.repository.logical_delete_children(supplier.id, actor_id)
+        return SupplierDeleteResponse(id=supplier.id)
 
     async def submit(self, supplier_id: str, actor_id: uuid.UUID) -> SupplierDetailResponse:
         async with self._transaction():
