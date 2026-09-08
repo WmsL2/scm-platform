@@ -1,6 +1,6 @@
 # Auth/RBAC
 
-状态：BACKEND MERGED / FRONTEND MERGED / REAL API VERIFIED
+状态：AUTH SPRINT 1 SCOPE IMPLEMENTED / VERIFIED
 
 ## Backend
 
@@ -25,6 +25,28 @@
 - [x] 开发环境显式设置 `VITE_USE_MOCK=false`，并验证真实 API 路径调用
   `/api/v1/auth/login`、`/me`、`/logout`。
 
+## Account / Registration / Profile
+
+- 注册：`POST /api/v1/auth/register` 创建 `PENDING` 用户；状态机包含
+  `PENDING`、`ENABLED`、`DISABLED` 与 `REJECTED`。`PENDING` 和 `REJECTED`
+  用户不能登录。
+- 审批：注册申请可由具有对应 `system:registration:*` 权限的管理员审批或拒绝，
+  并记录 `reviewed_by`、`reviewed_at`、`review_note`。
+- 管理：管理员 API 支持用户列表、整体替换用户角色、角色列表、整体替换角色权限、
+  动态权限目录以及注册申请列表/审批；全部管理员入口继续使用
+  `require_permission`。
+- 权限：目录包括 `system:user:list`、`system:user:role:update`、
+  `system:role:list`、`system:role:permission:update`、
+  `system:permission:list`、`system:registration:list`、
+  `system:registration:review` 七项权限，并动态从 `sys_permission` 读取。
+- 个人信息：前端提供 `/register`、`/admin/users`、`/admin/roles`、
+  `/admin/registrations`、完整 Profile Dropdown 与 Change Password Dialog。系统管理菜单、
+  角色分配、权限分配和审批操作均按各自权限单独控制，不使用硬编码管理员用户名或角色。
+- 修改密码：`POST /api/v1/auth/change-password` 校验当前密码，使用现有 Argon2id
+  哈希策略保存新密码，并在成功事务中令 `token_version + 1`，使旧 Token 失效。
+- Migration：Revision `20260908_0006`，down revision `20260908_0005`。Supplier
+  Delete & Import 先合入后，原临时 Account `0005` 调整为 `0006`；未创建 merge migration。
+
 ## Boundaries
 
 - Mock 仅在 Vite 开发模式下可启用，用于后端开发库不可用时的前端验收；生产构建始终调用真实 API，Mock 不代表真实接口联调通过。
@@ -38,11 +60,15 @@
   stateless logout、错误密码、过期 Token、DISABLED 与 deleted 用户。
 - 权限拒绝与权限撤销通过 MySQL 集成测试验证；前端权限路由守卫测试已通过。
 - 临时联调用户在验证结束后删除；未新增默认账号或硬编码密码。
+- Account / Registration / Profile：Backend Ruff、mypy 通过，pytest 51 passed；
+  Frontend Vitest 22 passed，typecheck 与 build 通过；Alembic heads/current 为
+  `20260908_0006`，Supplier schema integration test 通过。
 
 ## Pending
 
 - Refresh Token、Session、Multi-device Logout 属于未来范围，不阻塞当前 Supplier / Product 开发。
+- Role Create/Delete policy 尚未冻结；REJECTED username reapply / reopen policy 尚未实现。
 
 ## Next Step
 
-Auth Sprint 1 scope completed；无当前 Auth 开发任务。后续业务模块继续使用 `CurrentUser` 与 `require_permission`，不在本模块扩展功能。
+Auth Sprint 1 当前范围已实现并验证；未来 Auth 范围仍以 Pending 为准。后续业务模块继续使用 `CurrentUser` 与 `require_permission`，下一业务重点为 Product / Category / Pricing。

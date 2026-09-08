@@ -2,7 +2,7 @@
 
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
-Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Business Sequence implemented
+Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified
 日期：2026-09-08
 
 ## Repository
@@ -19,7 +19,7 @@ Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Bu
 Sprint 1 — Auth/RBAC + Supplier
 
 状态：IN_PROGRESS
-进度：Auth Kernel DONE；Web Admin Auth DONE / REAL API VERIFIED；Business Sequence DONE / IMPLEMENTED（Revision `20260907_0003`）；Supplier Master Backend DONE / MERGED via PR #13（Revision `20260907_0004`）；Supplier Delete & Import Patch IMPLEMENTED on `fix/supplier-delete-import`（Revision `20260908_0005`，待 PR/Merge 后才成为 main 事实）。分支与合入状态以 GitHub / `main` 历史为准。
+进度：Auth Kernel DONE；Web Admin Auth DONE / REAL API VERIFIED；Business Sequence DONE / IMPLEMENTED（Revision `20260907_0003`）；Supplier Master Backend DONE / MERGED via PR #13（Revision `20260907_0004`）；Supplier Delete & Import Patch MERGED / IMPLEMENTED（Revision `20260908_0005`）；Account / Registration / Profile IMPLEMENTED / VERIFIED（Revision `20260908_0006`）。当前 Alembic 迁移链为单 Head：`20260907_0004` → `20260908_0005` → `20260908_0006`。分支与合入状态以 GitHub / `main` 历史为准。
 
 ## 已冻结
 
@@ -42,19 +42,20 @@ Sprint 1 — Auth/RBAC + Supplier
 
 ## 下一步
 
-- 主任务：Supplier Delete & Import Patch 创建 PR / Review / Merge；使用已分配 `supplier:delete` 的账号完成浏览器验收。
-- 后续任务：Account / Registration / Profile 分支实现管理员角色权限分配、注册审批、个人信息栏和修改密码。
-- 并行任务：Product / Category / Pricing Schema Design。
+- 主任务：推进 Product / Category / Pricing 后续设计与实现工作；Product / Category Migration 尚未创建。
+- 后续任务：在已冻结的 Product / Category / Pricing 规则基础上，安排 Pricing Service、Category / Product Migration 与 Product Backend。
+- Auth 后续范围：Refresh Token、Session、Multi-device Logout 与 Role Create/Delete policy 仍待后续冻结。
 
 ## Blocker
 
 - Repository：无代码合并 Blocker。
-- Supplier：Delete & Import 补丁待合入；未确认的企业、税务、地址、银行、资质等字段仍不得自行添加。资质业务字段及其 API 继续冻结。
+- Supplier：Delete & Import 已合入；未确认的企业、税务、地址、银行、资质等字段仍不得自行添加。资质业务字段及其 API 继续冻结。
 - Product / Catalog：尚未创建 Product / Category Migration，需先完成 Schema Design。
 
 ## Workstreams / Implementation Context
 
 - Auth Real API Integration：已完成真实 Auth API 联调；分支与合入状态以 GitHub / `main` 历史为准。
 - Business Sequence：`sys_biz_sequence` Migration、并发安全取号服务与 MySQL 并发测试已完成；分支与合入状态以 GitHub / `main` 历史为准。
-- Supplier：Backend MERGED / Frontend REAL_API_IMPLEMENTED；Delete & Import Patch IMPLEMENTED / PENDING MERGE（Revision `20260908_0005`），新增逻辑删除、`supplier:delete`、Excel 模板/校验预览/确认导入和 Web Admin 控制。
+- Supplier：Backend MERGED / Frontend REAL_API_IMPLEMENTED；Delete & Import Patch MERGED / IMPLEMENTED（Revision `20260908_0005`），新增逻辑删除、`supplier:delete`、Excel 模板/校验预览/确认导入和 Web Admin 控制。
+- Auth/RBAC：Auth Sprint 1 当前范围 IMPLEMENTED / VERIFIED（Revision `20260908_0006`），包括注册审批、用户角色/角色权限管理、动态权限目录、Profile 与修改密码；Refresh Token、Session、Multi-device Logout 仍属未来范围。
 - Catalog：`SCHEMA_DESIGN_READY`；Product / Category Migration 尚未创建。
