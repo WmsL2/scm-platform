@@ -1,6 +1,4 @@
 import uuid
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from datetime import datetime
 from io import BytesIO
 
@@ -9,6 +7,7 @@ from openpyxl.styles import Font, PatternFill
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError
+from app.core.transaction import transaction_scope
 from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
 from app.modules.supplier.infrastructure.models import (
     Supplier,
@@ -74,16 +73,16 @@ class SupplierImportService:
             created_by=actor_id,
             rows=rows,
         )
-        async with self._transaction():
+        async with transaction_scope(self.session):
             self.session.add(batch)
             await self.session.flush()
             response = self._preview_response(batch)
         return response
 
     async def confirm(
-        self, batch_id: str, actor_id: uuid.UUID
+        self, batch_id: uuid.UUID, actor_id: uuid.UUID
     ) -> SupplierImportConfirmResponse:
-        async with self._transaction():
+        async with transaction_scope(self.session):
             batch = await self.repository.import_batch_by_id_for_update(batch_id)
             if batch is None:
                 raise AppError("SUPPLIER_IMPORT_BATCH_NOT_FOUND", "Import batch not found", 404)
@@ -246,17 +245,3 @@ class SupplierImportService:
                 for row in batch.rows
             ],
         )
-
-    @asynccontextmanager
-    async def _transaction(self) -> AsyncIterator[None]:
-        if self.session.in_transaction():
-            try:
-                yield
-            except Exception:
-                await self.session.rollback()
-                raise
-            else:
-                await self.session.commit()
-            return
-        async with self.session.begin():
-            yield

@@ -1,13 +1,12 @@
 # ruff: noqa: E501
 import uuid
-from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import AsyncIterator
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError, PageParams, PageResult
+from app.core.transaction import transaction_scope
 from app.modules.account.repository import AccountRepository
 from app.modules.account.schemas import PermissionResponse, RoleResponse, UserResponse
 from app.modules.auth.security import hash_password, verify_password
@@ -23,28 +22,28 @@ class AccountService:
         normalized = username.strip()
         if not normalized or len(normalized) > 64:
             raise AppError("ACCOUNT_VALIDATION_ERROR", "username must be 1 to 64 characters", 422)
-        try:
-            async with self._transaction():
-                if await self.repository.active_user_by_username(normalized):
-                    raise AppError("ACCOUNT_USERNAME_EXISTS", "Username already exists", 409)
-                user = User(
-                    username=normalized,
-                    password_hash=hash_password(password),
-                    user_status="PENDING",
-                )
-                self.session.add(user)
-                await self.session.flush()
-        except IntegrityError as exc:
-            await self.session.rollback()
-            if self._is_active_username_conflict(exc):
-                raise AppError("ACCOUNT_USERNAME_EXISTS", "Username already exists", 409) from exc
-            raise
+        async with transaction_scope(self.session):
+            if await self.repository.active_user_by_username(normalized):
+                raise AppError("ACCOUNT_USERNAME_EXISTS", "Username already exists", 409)
+            try:
+                async with self.session.begin_nested():
+                    user = User(
+                        username=normalized,
+                        password_hash=hash_password(password),
+                        user_status="PENDING",
+                    )
+                    self.session.add(user)
+                    await self.session.flush()
+            except IntegrityError as exc:
+                if self._is_active_username_conflict(exc):
+                    raise AppError("ACCOUNT_USERNAME_EXISTS", "Username already exists", 409) from exc
+                raise
         return self._user(user, [])
 
     async def change_password(
         self, user_id: uuid.UUID, current_password: str, new_password: str
     ) -> None:
-        async with self._transaction():
+        async with transaction_scope(self.session):
             user = await self.repository.active_user_for_update(user_id)
             if user is None:
                 raise AppError("AUTH_UNAUTHORIZED", "Invalid access token", 401)
@@ -66,15 +65,16 @@ class AccountService:
     async def replace_user_roles(
         self, user_id: uuid.UUID, role_ids: list[uuid.UUID], actor: uuid.UUID
     ) -> UserResponse:
-        async with self._transaction():
+        normalized_role_ids = list(dict.fromkeys(role_ids))
+        async with transaction_scope(self.session):
             user = await self.repository.active_user_for_update(user_id)
             if user is None:
                 raise AppError("ACCOUNT_USER_NOT_FOUND", "User not found", 404)
-            roles = await self.repository.active_roles(list(set(role_ids)))
-            if len(roles) != len(set(role_ids)):
+            roles = await self.repository.active_roles(normalized_role_ids)
+            if len(roles) != len(normalized_role_ids):
                 raise AppError("ACCOUNT_ROLE_NOT_FOUND", "One or more roles do not exist", 404)
-            await self.repository.replace_user_roles(user_id, role_ids, actor)
-        return self._user(user, role_ids)
+            await self.repository.replace_user_roles(user_id, normalized_role_ids, actor)
+        return self._user(user, normalized_role_ids)
 
     async def roles(self) -> list[RoleResponse]:
         roles = await self.repository.roles()
@@ -86,17 +86,18 @@ class AccountService:
     async def replace_role_permissions(
         self, role_id: uuid.UUID, permission_ids: list[uuid.UUID], actor: uuid.UUID
     ) -> RoleResponse:
-        async with self._transaction():
+        normalized_permission_ids = list(dict.fromkeys(permission_ids))
+        async with transaction_scope(self.session):
             role = await self.repository.active_role_for_update(role_id)
             if role is None:
                 raise AppError("ACCOUNT_ROLE_NOT_FOUND", "Role not found", 404)
-            permissions = await self.repository.active_permissions(list(set(permission_ids)))
-            if len(permissions) != len(set(permission_ids)):
+            permissions = await self.repository.active_permissions(normalized_permission_ids)
+            if len(permissions) != len(normalized_permission_ids):
                 raise AppError(
                     "ACCOUNT_PERMISSION_NOT_FOUND", "One or more permissions do not exist", 404
                 )
-            await self.repository.replace_role_permissions(role_id, permission_ids, actor)
-        return self._role(role, permission_ids)
+            await self.repository.replace_role_permissions(role_id, normalized_permission_ids, actor)
+        return self._role(role, normalized_permission_ids)
 
     async def permissions(self) -> list[PermissionResponse]:
         return [
@@ -112,7 +113,7 @@ class AccountService:
     async def review(
         self, user_id: uuid.UUID, approve: bool, note: str | None, actor: uuid.UUID
     ) -> UserResponse:
-        async with self._transaction():
+        async with transaction_scope(self.session):
             user = await self.repository.active_user_for_update(user_id)
             if user is None:
                 raise AppError("ACCOUNT_USER_NOT_FOUND", "User not found", 404)
@@ -124,20 +125,6 @@ class AccountService:
             user.review_note = note.strip() if note and note.strip() else None
             user.updated_by = actor
         return self._user(user, await self.repository.role_ids_for_user(user.id))
-
-    @asynccontextmanager
-    async def _transaction(self) -> AsyncIterator[None]:
-        if self.session.in_transaction():
-            try:
-                yield
-            except Exception:
-                await self.session.rollback()
-                raise
-            else:
-                await self.session.commit()
-        else:
-            async with self.session.begin():
-                yield
 
     @staticmethod
     def _user(user: User, role_ids: list[uuid.UUID]) -> UserResponse:

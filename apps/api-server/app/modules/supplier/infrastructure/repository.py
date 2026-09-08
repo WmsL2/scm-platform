@@ -20,7 +20,7 @@ class SupplierRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def active_by_id(self, supplier_id: str) -> Supplier | None:
+    async def active_by_id(self, supplier_id: uuid.UUID) -> Supplier | None:
         return cast(
             Supplier | None,
             await self.session.scalar(
@@ -30,7 +30,7 @@ class SupplierRepository:
             ),
         )
 
-    async def active_by_id_for_update(self, supplier_id: str) -> Supplier | None:
+    async def active_by_id_for_update(self, supplier_id: uuid.UUID) -> Supplier | None:
         return cast(
             Supplier | None,
             await self.session.scalar(
@@ -76,7 +76,9 @@ class SupplierRepository:
         total = cast(int, await self.session.scalar(count_statement))
         return suppliers, total
 
-    async def import_batch_by_id_for_update(self, batch_id: str) -> SupplierImportBatch | None:
+    async def import_batch_by_id_for_update(
+        self, batch_id: uuid.UUID
+    ) -> SupplierImportBatch | None:
         return cast(
             SupplierImportBatch | None,
             await self.session.scalar(
