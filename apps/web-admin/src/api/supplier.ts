@@ -2,7 +2,10 @@ import { http } from "../shared/http/runtime"
 import type {
   SupplierCommand,
   SupplierDetail,
+  SupplierDeleteResult,
   SupplierFormDraft,
+  SupplierImportConfirmResult,
+  SupplierImportPreview,
   SupplierListParams,
   SupplierPage,
 } from "../types/supplier"
@@ -41,6 +44,26 @@ export const supplierApi = {
     return http.post<SupplierDetail, { reason: string } | undefined>(
       supplierPath(`/${id}/commands/${command}`),
       reason === undefined ? undefined : { reason },
+    )
+  },
+
+  delete(id: string): Promise<SupplierDeleteResult> {
+    return http.delete<SupplierDeleteResult>(supplierPath(`/${id}`))
+  },
+
+  downloadImportTemplate(): Promise<Blob> {
+    return http.getBlob(supplierPath("/imports/template"))
+  },
+
+  previewImport(file: File): Promise<SupplierImportPreview> {
+    const formData = new FormData()
+    formData.append("file", file)
+    return http.post<SupplierImportPreview, FormData>(supplierPath("/imports/preview"), formData)
+  },
+
+  confirmImport(batchId: string): Promise<SupplierImportConfirmResult> {
+    return http.post<SupplierImportConfirmResult>(
+      supplierPath(`/imports/${batchId}/confirm`),
     )
   },
 }

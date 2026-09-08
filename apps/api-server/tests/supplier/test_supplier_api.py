@@ -1,6 +1,8 @@
 import uuid
+from io import BytesIO
 
 from httpx import ASGITransport, AsyncClient
+from openpyxl import Workbook, load_workbook
 from sqlalchemy import delete, select
 
 from app.core.database import SessionLocal
@@ -10,6 +12,8 @@ from app.modules.supplier.infrastructure.models import (
     Supplier,
     SupplierContact,
     SupplierCooperationRecord,
+    SupplierImportBatch,
+    SupplierImportRow,
     SupplierQualification,
 )
 from app.modules.system.models import Permission, Role, RolePermission, User, UserRole
@@ -23,6 +27,7 @@ SUPPLIER_PERMISSIONS = (
     "supplier:archive",
     "supplier:stop",
     "supplier:blacklist",
+    "supplier:delete",
 )
 
 
@@ -89,6 +94,31 @@ async def cleanup_suppliers(supplier_ids: list[str]) -> None:
         )
         await session.execute(delete(Supplier).where(Supplier.id.in_(supplier_ids)))
         await session.commit()
+
+
+async def cleanup_import_batches(batch_ids: list[str]) -> None:
+    if not batch_ids:
+        return
+    async with SessionLocal() as session:
+        await session.execute(
+            delete(SupplierImportRow).where(SupplierImportRow.batch_id.in_(batch_ids))
+        )
+        await session.execute(
+            delete(SupplierImportBatch).where(SupplierImportBatch.id.in_(batch_ids))
+        )
+        await session.commit()
+
+
+def workbook_bytes(rows: list[tuple[object, object, object, object, object]]) -> bytes:
+    workbook = Workbook()
+    worksheet = workbook.active
+    assert worksheet is not None
+    worksheet.append(["供应商名称", "主营品牌", "主要优势", "联系人", "联系电话"])
+    for row in rows:
+        worksheet.append(row)
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
 
 
 async def test_supplier_api_enforces_permissions_and_lifecycle() -> None:
@@ -210,3 +240,160 @@ async def test_supplier_api_returns_403_for_authenticated_user_without_supplier_
             assert response.json()["code"] == "AUTH_FORBIDDEN"
     finally:
         await cleanup_user(user_id)
+
+
+async def test_supplier_delete_is_logical_and_requires_permission() -> None:
+    authorized_user, authorized_headers = await create_user_with_permissions(
+        ("supplier:create", "supplier:list", "supplier:detail", "supplier:delete")
+    )
+    unprivileged_user, unprivileged_headers = await create_user_with_permissions(
+        ("supplier:list",)
+    )
+    supplier_ids: list[str] = []
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = await client.post(
+                "/api/v1/suppliers",
+                headers=authorized_headers,
+                json={
+                    "supplier_name": "删除测试供应商",
+                    "main_brands": "品牌",
+                    "advantage": "优势",
+                    "contacts": [{"contact_name": "联系人", "contact_phone": None}],
+                },
+            )
+            assert created.status_code == 201
+            supplier_id = created.json()["data"]["id"]
+            supplier_ids.append(supplier_id)
+
+            forbidden = await client.delete(
+                f"/api/v1/suppliers/{supplier_id}", headers=unprivileged_headers
+            )
+            assert forbidden.status_code == 403
+
+            deleted = await client.delete(
+                f"/api/v1/suppliers/{supplier_id}", headers=authorized_headers
+            )
+            assert deleted.status_code == 200
+            assert deleted.json()["data"] == {"id": supplier_id, "status": "deleted"}
+            detail_after_delete = await client.get(
+                f"/api/v1/suppliers/{supplier_id}", headers=authorized_headers
+            )
+            assert detail_after_delete.status_code == 404
+            listing = await client.get("/api/v1/suppliers", headers=authorized_headers)
+            assert supplier_id not in {item["id"] for item in listing.json()["data"]["items"]}
+
+        async with SessionLocal() as session:
+            supplier = await session.get(Supplier, supplier_id)
+            assert supplier is not None
+            assert supplier.is_deleted is True
+            assert supplier.deleted_by == authorized_user
+            assert supplier.deleted_at is not None
+            contacts = list(
+                (
+                    await session.scalars(
+                        select(SupplierContact).where(SupplierContact.supplier_id == supplier_id)
+                    )
+                ).all()
+            )
+            assert contacts and all(contact.is_deleted for contact in contacts)
+    finally:
+        await cleanup_suppliers(supplier_ids)
+        await cleanup_user(authorized_user)
+        await cleanup_user(unprivileged_user)
+
+
+async def test_supplier_excel_preview_and_confirm() -> None:
+    user_id, headers = await create_user_with_permissions(("supplier:create", "supplier:list"))
+    another_user, another_headers = await create_user_with_permissions(("supplier:create",))
+    batch_ids: list[str] = []
+    supplier_ids: list[str] = []
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            template = await client.get("/api/v1/suppliers/imports/template", headers=headers)
+            assert template.status_code == 200
+            template_workbook = load_workbook(BytesIO(template.content), read_only=True)
+            template_sheet = template_workbook.active
+            assert template_sheet is not None
+            assert tuple(cell.value for cell in next(template_sheet.iter_rows(max_row=1))) == (
+                "供应商名称",
+                "主营品牌",
+                "主要优势",
+                "联系人",
+                "联系电话",
+            )
+
+            invalid_preview = await client.post(
+                "/api/v1/suppliers/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "invalid.xlsx",
+                        workbook_bytes([("错误供应商", "品牌", None, None, None)]),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert invalid_preview.status_code == 200
+            invalid_batch = invalid_preview.json()["data"]
+            batch_ids.append(invalid_batch["id"])
+            assert invalid_batch["invalid_rows"] == 1
+            assert invalid_batch["rows"][0]["error_message"] == "主要优势不能为空"
+            invalid_confirm = await client.post(
+                f"/api/v1/suppliers/imports/{invalid_batch['id']}/confirm", headers=headers
+            )
+            assert invalid_confirm.status_code == 409
+
+            valid_preview = await client.post(
+                "/api/v1/suppliers/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "valid.xlsx",
+                        workbook_bytes([("导入供应商", "品牌 A", "现货", "王五", "13800000000")]),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert valid_preview.status_code == 200
+            valid_batch = valid_preview.json()["data"]
+            batch_ids.append(valid_batch["id"])
+            assert valid_batch["valid_rows"] == 1
+            assert valid_batch["invalid_rows"] == 0
+
+            wrong_uploader = await client.post(
+                f"/api/v1/suppliers/imports/{valid_batch['id']}/confirm", headers=another_headers
+            )
+            assert wrong_uploader.status_code == 403
+
+            confirmed = await client.post(
+                f"/api/v1/suppliers/imports/{valid_batch['id']}/confirm", headers=headers
+            )
+            assert confirmed.status_code == 200
+            assert confirmed.json()["data"]["imported_count"] == 1
+            repeated = await client.post(
+                f"/api/v1/suppliers/imports/{valid_batch['id']}/confirm", headers=headers
+            )
+            assert repeated.status_code == 409
+
+        async with SessionLocal() as session:
+            imported = list(
+                (
+                    await session.scalars(
+                        select(Supplier).where(
+                            Supplier.created_by == user_id,
+                            Supplier.supplier_name == "导入供应商",
+                        )
+                    )
+                ).all()
+            )
+            assert len(imported) == 1
+            supplier_ids.append(str(imported[0].id))
+            assert imported[0].archive_status == "ARCHIVED"
+            assert imported[0].cooperation_status == "NORMAL"
+            assert imported[0].supplier_code.startswith("SUP")
+    finally:
+        await cleanup_suppliers(supplier_ids)
+        await cleanup_import_batches(batch_ids)
+        await cleanup_user(user_id)
+        await cleanup_user(another_user)

@@ -1,18 +1,22 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import ApiResponse, PageParams, PageResult, success
 from app.core.database import get_db_session
 from app.modules.auth.dependencies import require_permission
 from app.modules.auth.schemas import CurrentUser
+from app.modules.supplier.application.import_service import SupplierImportService
 from app.modules.supplier.application.service import SupplierService
 from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
 from app.modules.supplier.schemas import (
     CooperationCommand,
     SupplierCreateRequest,
+    SupplierDeleteResponse,
     SupplierDetailResponse,
+    SupplierImportConfirmResponse,
+    SupplierImportPreviewResponse,
     SupplierListItem,
     SupplierUpdateRequest,
 )
@@ -38,6 +42,43 @@ async def list_suppliers(
         cooperation_status=cooperation_status,
     )
     return success(result)
+
+
+@router.get("/imports/template")
+async def download_import_template(
+    _: Annotated[CurrentUser, Depends(require_permission("supplier:create"))],
+    session: SessionDep,
+) -> Response:
+    template = SupplierImportService(session).build_template()
+    return Response(
+        content=template,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="supplier-import-template.xlsx"'},
+    )
+
+
+@router.post("/imports/preview", response_model=ApiResponse[SupplierImportPreviewResponse])
+async def preview_import(
+    file: Annotated[UploadFile, File(...)],
+    current: Annotated[CurrentUser, Depends(require_permission("supplier:create"))],
+    session: SessionDep,
+) -> ApiResponse[SupplierImportPreviewResponse]:
+    return success(
+        await SupplierImportService(session).preview(
+            file.filename or "supplier-import.xlsx", await file.read(), current.user_id
+        )
+    )
+
+
+@router.post(
+    "/imports/{batch_id}/confirm", response_model=ApiResponse[SupplierImportConfirmResponse]
+)
+async def confirm_import(
+    batch_id: str,
+    current: Annotated[CurrentUser, Depends(require_permission("supplier:create"))],
+    session: SessionDep,
+) -> ApiResponse[SupplierImportConfirmResponse]:
+    return success(await SupplierImportService(session).confirm(batch_id, current.user_id))
 
 
 @router.get("/{supplier_id}", response_model=ApiResponse[SupplierDetailResponse])
@@ -66,6 +107,15 @@ async def update_supplier(
     session: SessionDep,
 ) -> ApiResponse[SupplierDetailResponse]:
     return success(await SupplierService(session).update(supplier_id, payload, current.user_id))
+
+
+@router.delete("/{supplier_id}", response_model=ApiResponse[SupplierDeleteResponse])
+async def delete_supplier(
+    supplier_id: str,
+    current: Annotated[CurrentUser, Depends(require_permission("supplier:delete"))],
+    session: SessionDep,
+) -> ApiResponse[SupplierDeleteResponse]:
+    return success(await SupplierService(session).delete(supplier_id, current.user_id))
 
 
 @router.post("/{supplier_id}/commands/submit", response_model=ApiResponse[SupplierDetailResponse])

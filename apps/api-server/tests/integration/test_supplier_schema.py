@@ -9,6 +9,8 @@ async def test_supplier_schema_and_permission_directory() -> None:
         "scm_supplier_contact",
         "scm_supplier_qualification",
         "scm_supplier_cooperation_record",
+        "scm_supplier_import_batch",
+        "scm_supplier_import_row",
     }
     expected_permissions = {
         "supplier:list",
@@ -19,6 +21,7 @@ async def test_supplier_schema_and_permission_directory() -> None:
         "supplier:archive",
         "supplier:stop",
         "supplier:blacklist",
+        "supplier:delete",
     }
     async with SessionLocal() as session:
         table_rows = await session.execute(
@@ -52,9 +55,11 @@ async def test_supplier_schema_and_permission_directory() -> None:
             "created_by",
             "updated_by",
             "archived_by",
+            "deleted_by",
             "created_at",
             "updated_at",
             "archived_at",
+            "deleted_at",
         } == supplier_columns
 
         qualification_columns = {

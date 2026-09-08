@@ -42,6 +42,8 @@ All business APIs use /api/v1 and the shared response/error envelope. Command en
 |---|---|
 | GET /api/v1/suppliers; GET /api/v1/suppliers/{id} | supplier:list/detail |
 | POST /api/v1/suppliers; PATCH /api/v1/suppliers/{id} | supplier:create/update |
+| DELETE /api/v1/suppliers/{id} | supplier:delete；仅逻辑删除，正常查询过滤但记录保留 |
 | POST /api/v1/suppliers/{id}/commands/submit, archive, stop, blacklist | matching action code |
+| GET /api/v1/suppliers/imports/template；POST /api/v1/suppliers/imports/preview；POST /api/v1/suppliers/imports/{batch_id}/confirm | supplier:create；模板下载、校验预览、上传者确认导入 |
 
 Page designs only: /suppliers, /suppliers/new, /suppliers/:id, /suppliers/:id/edit. UI permission control is not the security boundary; backend require_permission is.

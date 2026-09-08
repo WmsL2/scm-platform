@@ -69,3 +69,35 @@ class SupplierDetailResponse(SupplierListItem):
     archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class SupplierDeleteResponse(BaseModel):
+    id: uuid.UUID
+    status: str = "deleted"
+
+
+class SupplierImportRowResponse(BaseModel):
+    source_row_number: int
+    supplier_name: str | None
+    main_brands: str | None
+    advantage: str | None
+    contact_name: str | None
+    contact_phone: str | None
+    is_valid: bool
+    error_message: str | None
+
+
+class SupplierImportPreviewResponse(BaseModel):
+    id: uuid.UUID
+    original_filename: str
+    status: str
+    total_rows: int
+    valid_rows: int
+    invalid_rows: int
+    rows: list[SupplierImportRowResponse]
+
+
+class SupplierImportConfirmResponse(BaseModel):
+    id: uuid.UUID
+    status: str
+    imported_count: int
