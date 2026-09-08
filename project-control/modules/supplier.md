@@ -1,8 +1,8 @@
 # 供应商
 
-状态：DELETE_IMPORT_IMPLEMENTED_PENDING_MERGE
+状态：DELETE_IMPORT_MERGED / POST_MERGE_HARDENED
 Owner：人员 A（Backend）/ 人员 B（Frontend）
-Last Updated：2026-09-07
+Last Updated：2026-09-08
 
 ## Database
 - [x] Revision `20260907_0004`：`scm_supplier`、联系人、资质关系表、合作状态历史表
@@ -30,6 +30,16 @@ Last Updated：2026-09-07
 - [x] MySQL Schema、API 生命周期、401/403、状态机、状态历史覆盖
 - [x] 前端 Supplier API 路径、请求体、字段规范化、路由权限单元测试
 - [x] 删除权限、逻辑删除保留、Excel 模板/预览/错误行/确认导入 MySQL 集成测试
+- [x] Post-merge：Supplier UUID Path Validation（`422` / `VALIDATION_ERROR`）与
+  caller-owned transaction rollback 回归覆盖
+
+## Post-Merge Hardening
+
+- Supplier 与 Import Service 使用共享事务作用域；已有 caller-owned transaction
+  仅参与，不自行 commit / rollback。
+- `supplier_id`（详情、编辑、删除、状态命令）与 Import confirm 的 `batch_id`
+  在 Router 边界使用 `uuid.UUID` 验证，非法值不会进入 UUIDChar36 ORM。
+- 无 Migration 变化；Alembic 仍为单 Head `20260908_0006`。
 
 ## Known Issues
 - 资质业务字段仍未确认；当前 `scm_supplier_qualification` 只保留已冻结的关系、逻辑删除和审计列，未暴露资质写入 API。
@@ -39,7 +49,7 @@ Last Updated：2026-09-07
 - 导入文件只接受下载模板对应的 `.xlsx`，最多 5 MB、1,000 条数据行；未确认字段、手机号格式验证和来源旧编码均不导入。
 
 ## Next Step
-为 `supplier:delete` 分配权限后完成浏览器验收，并创建 PR 合并 `fix/supplier-delete-import`；不要新增或猜测未确认供应商字段。
+为 `supplier:delete` 分配权限后完成浏览器验收；不要新增或猜测未确认供应商字段。
 
 ## Design Freeze
 
@@ -53,4 +63,4 @@ Last Updated：2026-09-07
 
 ## Current Gate
 
-删除与 Excel 导入补丁已在 `fix/supplier-delete-import` 实现，待 PR/Merge；资质业务字段仍需后续资料确认，模块整体不标为 COMPLETED。未确认字段不得自行加入。
+Delete & Import 已合入并完成事务/UUID 合并后加固；资质业务字段仍需后续资料确认，模块整体不标为 COMPLETED。未确认字段不得自行加入。
