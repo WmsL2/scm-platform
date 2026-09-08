@@ -36,6 +36,10 @@ export const useAuthStore = defineStore("auth", () => {
     initialized.value = true
   }
 
+  async function refreshCurrentUser(): Promise<void> {
+    await loadCurrentUser()
+  }
+
   async function login(payload: LoginRequest): Promise<void> {
     status.value = "loading"
     try {
@@ -94,6 +98,7 @@ export const useAuthStore = defineStore("auth", () => {
     logout,
     restoreSession,
     clearSession,
+    refreshCurrentUser,
     hasPermission,
   }
 })

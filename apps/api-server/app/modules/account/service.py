@@ -12,6 +12,12 @@ from app.modules.account.schemas import PermissionResponse, RoleResponse, UserRe
 from app.modules.auth.security import hash_password, verify_password
 from app.modules.system.models import Role, User
 
+ROLE_MANAGEMENT_PERMISSION_CODES = {
+    "system:role:list",
+    "system:permission:list",
+    "system:role:permission:update",
+}
+
 
 class AccountService:
     def __init__(self, session: AsyncSession) -> None:
@@ -94,6 +100,28 @@ class AccountService:
             for role in roles
         ]
 
+    async def create_role(self, role_code: str, role_name: str, actor: uuid.UUID) -> RoleResponse:
+        async with transaction_scope(self.session):
+            if await self.repository.active_role_by_code(role_code):
+                raise AppError("ACCOUNT_ROLE_CODE_EXISTS", "角色编码已存在", 409)
+            if await self.repository.active_role_by_name(role_name):
+                raise AppError("ACCOUNT_ROLE_NAME_EXISTS", "角色名称已存在", 409)
+            try:
+                async with self.session.begin_nested():
+                    role = Role(
+                        role_code=role_code,
+                        role_name=role_name,
+                        created_by=actor,
+                        updated_by=actor,
+                    )
+                    self.session.add(role)
+                    await self.session.flush()
+            except IntegrityError as exc:
+                if self._is_role_code_conflict(exc):
+                    raise AppError("ACCOUNT_ROLE_CODE_EXISTS", "角色编码已存在", 409) from exc
+                raise
+        return self._role(role, [])
+
     async def replace_role_permissions(
         self, role_id: uuid.UUID, permission_ids: list[uuid.UUID], actor: uuid.UUID
     ) -> RoleResponse:
@@ -107,6 +135,9 @@ class AccountService:
                 raise AppError(
                     "ACCOUNT_PERMISSION_NOT_FOUND", "One or more permissions do not exist", 404
                 )
+            await self._ensure_actor_keeps_role_management_access(
+                actor, role_id, set(normalized_permission_ids)
+            )
             await self.repository.replace_role_permissions(role_id, normalized_permission_ids, actor)
         return self._role(role, normalized_permission_ids)
 
@@ -165,7 +196,34 @@ class AccountService:
             permission_ids=permission_ids,
         )
 
+    async def _ensure_actor_keeps_role_management_access(
+        self, actor: uuid.UUID, role_id: uuid.UUID, replacement_permission_ids: set[uuid.UUID]
+    ) -> None:
+        actor_roles = await self.repository.roles_for_user(actor)
+        if not any(role.id == role_id for role in actor_roles):
+            return
+        effective_permission_ids: set[uuid.UUID] = set()
+        for actor_role in actor_roles:
+            if actor_role.id == role_id:
+                effective_permission_ids.update(replacement_permission_ids)
+            else:
+                effective_permission_ids.update(
+                    await self.repository.permission_ids_for_role(actor_role.id)
+                )
+        effective_codes = await self.repository.permission_codes(effective_permission_ids)
+        if not ROLE_MANAGEMENT_PERMISSION_CODES.issubset(effective_codes):
+            raise AppError(
+                "ACCOUNT_ROLE_MANAGEMENT_SELF_LOCKOUT",
+                "不能移除当前账号的角色管理必要权限，请先由其他管理员接管",
+                409,
+            )
+
     @staticmethod
     def _is_active_username_conflict(exc: IntegrityError) -> bool:
         detail = str(exc.orig).lower()
         return "uq_sys_user_active_username" in detail or "active_username" in detail
+
+    @staticmethod
+    def _is_role_code_conflict(exc: IntegrityError) -> bool:
+        detail = str(exc.orig).lower()
+        return "role_code" in detail

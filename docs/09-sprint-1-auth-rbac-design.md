@@ -23,13 +23,13 @@ FK is RESTRICT. IDs/FKs and UNIQUE keys are indexed. Exact MySQL DDL is deferred
 
 ## FROZEN behavior
 
-username uniqueness applies to non-deleted accounts. Store only Argon2id password hashes; no plaintext/reversible secret. Referenced users are disabled or logically deleted, never physically deleted. role_code is stable machine code and role_name is display text; built-in roles cannot be deleted. Referenced role/permission records are logically deleted or disabled, never physically deleted.
+username uniqueness applies to non-deleted accounts. Store only Argon2id password hashes; no plaintext/reversible secret. Referenced users are disabled or logically deleted, never physically deleted. role_code is stable machine code and role_name is display text; built-in roles cannot be deleted. Referenced role/permission records are logically deleted or disabled, never physically deleted. Custom roles use an immutable lower-case `role_code` made of letters, numbers and underscores, plus a display `role_name`; a new custom role starts with no permissions and requires `system:role:create` to create.
 
 Permissions use lower-case domain:resource:action; never use Chinese page labels for authorization.
 
 | Domain | Codes |
 |---|---|
-| system | system:user:list/create/update/disable; system:role:list/create/update/assign-permission |
+| system | system:user:list/create/update/disable; system:role:list/create/permission:update |
 | supplier | supplier:list/detail/create/update/submit/archive/stop/blacklist |
 
 CurrentUser contains user_id, username, roles and permissions. Flow: Router -> CurrentUser/require_permission -> Application Service -> Repository. 401 is unauthenticated, 403 is authenticated but unauthorized.
