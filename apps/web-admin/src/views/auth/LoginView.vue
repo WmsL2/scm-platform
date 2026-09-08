@@ -133,6 +133,7 @@ async function submit(): Promise<void> {
           <el-icon><Connection /></el-icon>
           <span>登录信息通过统一认证接口安全传输</span>
         </div>
+        <el-button text class="register-link" @click="router.push('/register')">注册账号</el-button>
       </div>
       <footer>© 2026 众诚智链 · 企业商品管理平台</footer>
     </section>

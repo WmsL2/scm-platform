@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue"
+import { computed, reactive, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import {
   ArrowDown,
@@ -9,11 +9,15 @@ import {
   OfficeBuilding,
   SwitchButton,
   UserFilled,
+  Setting,
 } from "@element-plus/icons-vue"
+import { ElMessage } from "element-plus"
 
 import WorkspaceTabs from "../components/layout/WorkspaceTabs.vue"
 import { useAuthStore } from "../stores/auth"
 import { useWorkspaceStore } from "../stores/workspace"
+import { accountApi } from "../api/account"
+import { HttpError } from "../shared/http"
 
 const route = useRoute()
 const router = useRouter()
@@ -21,6 +25,11 @@ const auth = useAuthStore()
 const workspace = useWorkspaceStore()
 const collapsed = ref(false)
 const appTitle = import.meta.env.VITE_APP_TITLE ?? "众诚智链商品管理平台"
+const profileVisible = ref(false)
+const passwordVisible = ref(false)
+const passwordSubmitting = ref(false)
+const passwordForm = reactive({ current_password: "", new_password: "", confirm_new_password: "" })
+const hasSystemMenu = computed(() => ["system:user:list", "system:role:list", "system:registration:list"].some((item) => auth.hasPermission(item)))
 
 const sidebarWidth = computed(() => collapsed.value ? "72px" : "232px")
 const activeMenu = computed(() => route.path.startsWith("/dashboard") ? "/dashboard" : route.path)
@@ -33,11 +42,11 @@ watch(
 )
 
 async function handleUserCommand(command: string): Promise<void> {
-  if (command !== "logout") return
-  await auth.logout()
-  workspace.reset()
-  await router.replace({ name: "login" })
+  if (command === "profile") profileVisible.value = true
+  else if (command === "password") passwordVisible.value = true
+  else if (command === "logout") { await auth.logout(); workspace.reset(); await router.replace({ name: "login" }) }
 }
+async function changePassword(): Promise<void> { if (passwordForm.new_password !== passwordForm.confirm_new_password) { ElMessage.error("两次新密码不一致"); return }; passwordSubmitting.value = true; try { await accountApi.changePassword(passwordForm.current_password, passwordForm.new_password); ElMessage.success("密码修改成功，请重新登录"); auth.clearSession(); workspace.reset(); passwordVisible.value = false; await router.replace({ name: "login" }) } catch (error) { ElMessage.error(error instanceof HttpError ? error.response.message : "密码修改失败") } finally { passwordSubmitting.value = false } }
 </script>
 
 <template>
@@ -66,6 +75,7 @@ async function handleUserCommand(command: string): Promise<void> {
           <el-icon><OfficeBuilding /></el-icon>
           <template #title>供应商管理</template>
         </el-menu-item>
+        <template v-if="hasSystemMenu"><el-menu-item-group title="系统管理"><el-menu-item v-if="auth.hasPermission('system:user:list')" index="/admin/users"><el-icon><Setting /></el-icon><template #title>用户管理</template></el-menu-item><el-menu-item v-if="auth.hasPermission('system:role:list')" index="/admin/roles"><el-icon><Setting /></el-icon><template #title>角色权限</template></el-menu-item><el-menu-item v-if="auth.hasPermission('system:registration:list')" index="/admin/registrations"><el-icon><Setting /></el-icon><template #title>注册审批</template></el-menu-item></el-menu-item-group></template>
       </el-menu>
 
       <div v-show="!collapsed" class="sidebar-boundary">
@@ -102,6 +112,8 @@ async function handleUserCommand(command: string): Promise<void> {
           </button>
           <template #dropdown>
             <el-dropdown-menu>
+              <el-dropdown-item command="profile">个人信息</el-dropdown-item>
+              <el-dropdown-item command="password">修改密码</el-dropdown-item>
               <el-dropdown-item command="logout" :icon="SwitchButton">退出登录</el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -109,6 +121,9 @@ async function handleUserCommand(command: string): Promise<void> {
       </el-header>
 
       <WorkspaceTabs />
+
+      <el-dialog v-model="profileVisible" title="个人信息"><p>用户名：{{ auth.currentUser?.username }}</p><p>角色：</p><el-tag v-for="role in auth.currentUser?.roles" :key="role" class="tag">{{ role }}</el-tag><span v-if="!auth.currentUser?.roles.length">暂无角色</span><p>权限：</p><div class="permission-list"><el-tag v-for="permission in auth.currentUser?.permissions" :key="permission" class="tag">{{ permission }}</el-tag><span v-if="!auth.currentUser?.permissions.length">暂无权限</span></div></el-dialog>
+      <el-dialog v-model="passwordVisible" title="修改密码"><el-input v-model="passwordForm.current_password" type="password" placeholder="当前密码"/><el-input v-model="passwordForm.new_password" type="password" placeholder="新密码"/><el-input v-model="passwordForm.confirm_new_password" type="password" placeholder="确认新密码"/><template #footer><el-button @click="passwordVisible=false">取消</el-button><el-button type="primary" :loading="passwordSubmitting" @click="changePassword">保存</el-button></template></el-dialog>
 
       <el-main class="main-content">
         <RouterView v-slot="{ Component }">
@@ -155,6 +170,7 @@ async function handleUserCommand(command: string): Promise<void> {
 .user-copy small { max-width: 120px; overflow: hidden; color: #98a2b3; font-size: 10px; text-overflow: ellipsis; }
 .user-arrow { color: #98a2b3; }
 .main-content { padding: 22px; background: #f3f6fa; }
+.tag { margin: 0 6px 6px 0; }.permission-list { max-height: 180px; overflow: auto; }.el-dialog .el-input { margin-bottom: 12px; }
 .page-enter-active, .page-leave-active { transition: opacity .16s ease, transform .16s ease; }
 .page-enter-from { opacity: 0; transform: translateY(4px); }
 .page-leave-to { opacity: 0; }
