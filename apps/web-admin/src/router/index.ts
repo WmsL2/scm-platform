@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from "vue-router"
 
 import BasicLayout from "../layouts/BasicLayout.vue"
 import LoginView from "../views/auth/LoginView.vue"
+import RegisterView from "../views/auth/RegisterView.vue"
 import DashboardView from "../views/dashboard/DashboardView.vue"
 import ForbiddenView from "../views/ForbiddenView.vue"
 import NotFoundView from "../views/NotFoundView.vue"
@@ -19,6 +20,7 @@ const router = createRouter({
       component: LoginView,
       meta: { title: "登录" },
     },
+    { path: "/register", name: "register", component: RegisterView, meta: { title: "注册" } },
     {
       path: "/",
       component: BasicLayout,
@@ -31,6 +33,9 @@ const router = createRouter({
           component: DashboardView,
           meta: { title: "工作台", requiresAuth: true },
         },
+        { path: "admin/users", name: "admin-users", component: () => import("../views/admin/UsersView.vue"), meta: { title: "用户管理", requiresAuth: true, permission: "system:user:list" } },
+        { path: "admin/roles", name: "admin-roles", component: () => import("../views/admin/RolesView.vue"), meta: { title: "角色权限", requiresAuth: true, permission: "system:role:list" } },
+        { path: "admin/registrations", name: "admin-registrations", component: () => import("../views/admin/RegistrationsView.vue"), meta: { title: "注册审批", requiresAuth: true, permission: "system:registration:list" } },
         {
           path: "suppliers",
           name: "supplier-list",

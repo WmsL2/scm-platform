@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -19,7 +20,12 @@ from app.common.uuid_type import UUIDChar36
 
 class User(Base):
     __tablename__ = "sys_user"
-    __table_args__ = (CheckConstraint("user_status IN ('ENABLED', 'DISABLED')"),)
+    __table_args__ = (
+        CheckConstraint(
+            "user_status IN ('PENDING', 'ENABLED', 'DISABLED', 'REJECTED')",
+            name="ck_sys_user_status",
+        ),
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
     username: Mapped[str] = mapped_column(String(64), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -28,6 +34,9 @@ class User(Base):
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
     updated_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )

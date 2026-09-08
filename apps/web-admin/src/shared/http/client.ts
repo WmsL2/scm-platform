@@ -35,7 +35,7 @@ export class HttpClient {
   constructor(private readonly options: HttpClientOptions = {}) {}
 
   private async request<T>(
-    method: "GET" | "POST" | "PATCH" | "DELETE",
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
     body?: unknown,
     requestOptions: RequestOptions = {},
@@ -129,6 +129,10 @@ export class HttpClient {
 
   post<T, TBody = unknown>(path: string, body?: TBody, options?: RequestOptions): Promise<T> {
     return this.request<T>("POST", path, body, options)
+  }
+
+  put<T, TBody = unknown>(path: string, body?: TBody, options?: RequestOptions): Promise<T> {
+    return this.request<T>("PUT", path, body, options)
   }
 
   patch<T, TBody = unknown>(path: string, body?: TBody, options?: RequestOptions): Promise<T> {
