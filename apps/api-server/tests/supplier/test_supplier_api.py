@@ -19,7 +19,7 @@ from app.modules.supplier.infrastructure.models import (
     SupplierImportRow,
     SupplierQualification,
 )
-from app.modules.supplier.schemas import SupplierCreateRequest
+from app.modules.supplier.schemas import SupplierCreateRequest, SupplierUpdateRequest
 from app.modules.system.models import Permission, Role, RolePermission, User, UserRole
 
 SUPPLIER_PERMISSIONS = (
@@ -476,3 +476,39 @@ async def test_supplier_services_participate_in_caller_transactions() -> None:
             .select_from(SupplierImportBatch)
             .where(SupplierImportBatch.original_filename == import_filename)
         ) == 0
+
+
+async def test_supplier_standalone_sequential_writes_do_not_leave_transaction_active() -> None:
+    actor_id = uuid.uuid4()
+    supplier_id: str | None = None
+    supplier_name = f"standalone-supplier-{uuid.uuid4()}"
+    updated_name = f"updated-{supplier_name}"
+    try:
+        async with SessionLocal() as session:
+            service = SupplierService(session)
+            created = await service.create(
+                SupplierCreateRequest(
+                    supplier_name=supplier_name,
+                    main_brands="brand",
+                    advantage="advantage",
+                    contacts=[],
+                ),
+                actor_id,
+            )
+            supplier_id = str(created.id)
+            assert session.in_transaction() is False
+
+            updated = await service.update(
+                created.id,
+                SupplierUpdateRequest(supplier_name=updated_name),
+                actor_id,
+            )
+            assert updated.supplier_name == updated_name
+            assert session.in_transaction() is False
+
+        async with SessionLocal() as session:
+            supplier = await session.get(Supplier, supplier_id)
+            assert supplier is not None
+            assert supplier.supplier_name == updated_name
+    finally:
+        await cleanup_suppliers([supplier_id] if supplier_id else [])

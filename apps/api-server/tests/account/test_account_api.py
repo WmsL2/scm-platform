@@ -278,3 +278,34 @@ async def test_registration_unique_conflict_savepoint_preserves_caller_transacti
             await session.execute(delete(Role).where(Role.id == marker_role))
             await session.execute(delete(User).where(User.username == username))
             await session.commit()
+
+
+async def test_review_standalone_service_does_not_leave_transaction_active() -> None:
+    user_id, actor_id = uuid.uuid4(), uuid.uuid4()
+    try:
+        async with SessionLocal() as session:
+            session.add(
+                User(
+                    id=user_id,
+                    username=f"standalone-review-{user_id}",
+                    password_hash=hash_password("password"),
+                    user_status="PENDING",
+                )
+            )
+            await session.commit()
+
+        async with SessionLocal() as session:
+            response = await AccountService(session).review(user_id, True, "approved", actor_id)
+            assert response.user_status == "ENABLED"
+            assert session.in_transaction() is False
+
+        async with SessionLocal() as session:
+            user = await session.get(User, user_id)
+            assert user is not None
+            assert user.user_status == "ENABLED"
+            assert user.reviewed_by == actor_id
+            assert user.review_note == "approved"
+    finally:
+        async with SessionLocal() as session:
+            await session.execute(delete(User).where(User.id == user_id))
+            await session.commit()

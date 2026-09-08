@@ -77,7 +77,8 @@ class SupplierService:
             )
             self.session.add(supplier)
             await self.session.flush()
-        return await self.get(supplier.id)
+            result = await self.get(supplier.id)
+        return result
 
     async def update(
         self, supplier_id: uuid.UUID, payload: SupplierUpdateRequest, actor_id: uuid.UUID
@@ -95,7 +96,8 @@ class SupplierService:
             if "contacts" in payload.model_fields_set:
                 self._replace_contacts(supplier, payload.contacts or [], actor_id)
             supplier.updated_by = actor_id
-        return await self.get(supplier_id)
+            result = await self.get(supplier_id)
+        return result
 
     async def delete(self, supplier_id: uuid.UUID, actor_id: uuid.UUID) -> SupplierDeleteResponse:
         async with transaction_scope(self.session):
@@ -113,7 +115,8 @@ class SupplierService:
             assert_archive_transition(supplier.archive_status, ArchiveStatus.PENDING)
             supplier.archive_status = ArchiveStatus.PENDING
             supplier.updated_by = actor_id
-        return await self.get(supplier_id)
+            result = await self.get(supplier_id)
+        return result
 
     async def archive(self, supplier_id: uuid.UUID, actor_id: uuid.UUID) -> SupplierDetailResponse:
         async with transaction_scope(self.session):
@@ -123,7 +126,8 @@ class SupplierService:
             supplier.archived_by = actor_id
             supplier.archived_at = datetime.now()
             supplier.updated_by = actor_id
-        return await self.get(supplier_id)
+            result = await self.get(supplier_id)
+        return result
 
     async def stop(
         self, supplier_id: uuid.UUID, reason: str, actor_id: uuid.UUID
@@ -159,7 +163,8 @@ class SupplierService:
             )
             supplier.cooperation_status = target_status
             supplier.updated_by = actor_id
-        return await self.get(supplier_id)
+            result = await self.get(supplier_id)
+        return result
 
     async def _active_for_update(self, supplier_id: uuid.UUID) -> Supplier:
         supplier = await self.repository.active_by_id_for_update(supplier_id)

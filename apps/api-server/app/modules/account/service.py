@@ -124,7 +124,8 @@ class AccountService:
             user.reviewed_at = datetime.now()
             user.review_note = note.strip() if note and note.strip() else None
             user.updated_by = actor
-        return self._user(user, await self.repository.role_ids_for_user(user.id))
+            role_ids = await self.repository.role_ids_for_user(user.id)
+        return self._user(user, role_ids)
 
     @staticmethod
     def _user(user: User, role_ids: list[uuid.UUID]) -> UserResponse:
