@@ -58,7 +58,14 @@ class AccountService:
     ) -> PageResult[UserResponse]:
         users, total = await self.repository.users(page, pending_only)
         items = [
-            self._user(user, await self.repository.role_ids_for_user(user.id)) for user in users
+            self._user(user, await self.repository.roles_for_user(user.id)) for user in users
+        ]
+        return PageResult(items=items, total=total, page=page.page, page_size=page.page_size)
+
+    async def list_registration_history(self, page: PageParams) -> PageResult[UserResponse]:
+        users, total = await self.repository.reviewed_users(page)
+        items = [
+            self._user(user, await self.repository.roles_for_user(user.id)) for user in users
         ]
         return PageResult(items=items, total=total, page=page.page, page_size=page.page_size)
 
@@ -70,11 +77,15 @@ class AccountService:
             user = await self.repository.active_user_for_update(user_id)
             if user is None:
                 raise AppError("ACCOUNT_USER_NOT_FOUND", "User not found", 404)
+            if user.user_status != "ENABLED":
+                raise AppError(
+                    "ACCOUNT_USER_NOT_ENABLED", "Only enabled users can be assigned roles", 409
+                )
             roles = await self.repository.active_roles(normalized_role_ids)
             if len(roles) != len(normalized_role_ids):
                 raise AppError("ACCOUNT_ROLE_NOT_FOUND", "One or more roles do not exist", 404)
             await self.repository.replace_user_roles(user_id, normalized_role_ids, actor)
-        return self._user(user, normalized_role_ids)
+        return self._user(user, self._roles_in_requested_order(normalized_role_ids, roles))
 
     async def roles(self) -> list[RoleResponse]:
         roles = await self.repository.roles()
@@ -124,20 +135,26 @@ class AccountService:
             user.reviewed_at = datetime.now()
             user.review_note = note.strip() if note and note.strip() else None
             user.updated_by = actor
-            role_ids = await self.repository.role_ids_for_user(user.id)
-        return self._user(user, role_ids)
+            roles = await self.repository.roles_for_user(user.id)
+        return self._user(user, roles)
 
     @staticmethod
-    def _user(user: User, role_ids: list[uuid.UUID]) -> UserResponse:
+    def _user(user: User, roles: list[Role]) -> UserResponse:
         return UserResponse(
             id=user.id,
             username=user.username,
             user_status=user.user_status,
-            role_ids=role_ids,
+            role_ids=[role.id for role in roles],
+            role_names=[role.role_name for role in roles],
             reviewed_by=user.reviewed_by,
             reviewed_at=user.reviewed_at,
             review_note=user.review_note,
         )
+
+    @staticmethod
+    def _roles_in_requested_order(role_ids: list[uuid.UUID], roles: list[Role]) -> list[Role]:
+        roles_by_id = {role.id: role for role in roles}
+        return [roles_by_id[role_id] for role_id in role_ids]
 
     @staticmethod
     def _role(role: Role, permission_ids: list[uuid.UUID]) -> RoleResponse:

@@ -46,6 +46,23 @@ class AccountRepository:
         )
         return list((await self.session.scalars(statement)).all()), total
 
+    async def reviewed_users(self, page: PageParams) -> tuple[list[User], int]:
+        criteria: tuple[ColumnElement[bool], ...] = (
+            User.is_deleted.is_(False),
+            User.reviewed_at.is_not(None),
+        )
+        statement = (
+            select(User)
+            .where(*criteria)
+            .order_by(User.reviewed_at.desc())
+            .offset((page.page - 1) * page.page_size)
+            .limit(page.page_size)
+        )
+        total = cast(
+            int, await self.session.scalar(select(func.count()).select_from(User).where(*criteria))
+        )
+        return list((await self.session.scalars(statement)).all()), total
+
     async def active_roles(self, ids: list[uuid.UUID]) -> list[Role]:
         if not ids:
             return []
@@ -90,11 +107,14 @@ class AccountRepository:
             ).all()
         )
 
-    async def role_ids_for_user(self, user_id: uuid.UUID) -> list[uuid.UUID]:
+    async def roles_for_user(self, user_id: uuid.UUID) -> list[Role]:
         return list(
             (
                 await self.session.scalars(
-                    select(UserRole.role_id).where(UserRole.user_id == user_id)
+                    select(Role)
+                    .join(UserRole, UserRole.role_id == Role.id)
+                    .where(UserRole.user_id == user_id, Role.is_deleted.is_(False))
+                    .order_by(Role.role_code)
                 )
             ).all()
         )
