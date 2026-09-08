@@ -43,6 +43,7 @@ export class HttpClient {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 10_000)
     try {
+      const isFormData = body instanceof FormData
       const authorization = requestOptions.authenticated === false
         ? undefined
         : this.options.getAuthorization?.()
@@ -51,12 +52,12 @@ export class HttpClient {
         method,
         headers: {
           Accept: "application/json",
-          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+          ...(body === undefined || isFormData ? {} : { "Content-Type": "application/json" }),
           ...(authorization ? { Authorization: authorization } : {}),
           "X-Request-ID": requestOptions.requestId ?? crypto.randomUUID(),
           ...requestOptions.headers,
         },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: body === undefined ? undefined : isFormData ? body : JSON.stringify(body),
         signal: controller.signal,
       })
 
@@ -89,6 +90,41 @@ export class HttpClient {
 
   get<T>(path: string, options?: RequestOptions): Promise<T> {
     return this.request<T>("GET", path, undefined, options)
+  }
+
+  async getBlob(path: string, requestOptions: RequestOptions = {}): Promise<Blob> {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 10_000)
+    try {
+      const authorization = requestOptions.authenticated === false
+        ? undefined
+        : this.options.getAuthorization?.()
+      const baseUrl = (this.options.baseUrl ?? import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")
+      const response = await fetch(`${baseUrl}${path}`, {
+        headers: {
+          Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          ...(authorization ? { Authorization: authorization } : {}),
+          "X-Request-ID": requestOptions.requestId ?? crypto.randomUUID(),
+          ...requestOptions.headers,
+        },
+        signal: controller.signal,
+      })
+      if (response.status === 401) this.options.onUnauthorized?.()
+      if (response.status === 403) this.options.onForbidden?.()
+      if (!response.ok) {
+        const rawBody = await response.text()
+        let error: ErrorResponse = { code: "HTTP_ERROR", message: response.statusText }
+        try {
+          error = JSON.parse(rawBody) as ErrorResponse
+        } catch {
+          // Keep the fallback error when a binary endpoint returns a non-JSON response.
+        }
+        throw new HttpError(response.status, error)
+      }
+      return response.blob()
+    } finally {
+      clearTimeout(timeout)
+    }
   }
 
   post<T, TBody = unknown>(path: string, body?: TBody, options?: RequestOptions): Promise<T> {

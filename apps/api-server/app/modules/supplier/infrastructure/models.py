@@ -3,7 +3,18 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, Text, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.models import Base
@@ -37,6 +48,7 @@ class Supplier(Base):
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
     updated_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
     archived_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+    deleted_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
@@ -46,6 +58,7 @@ class Supplier(Base):
         server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
     )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     contacts: Mapped[list[SupplierContact]] = relationship(
         back_populates="supplier", lazy="selectin"
     )
@@ -126,3 +139,55 @@ class SupplierCooperationRecord(Base):
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
+
+
+class SupplierImportBatch(Base):
+    __tablename__ = "scm_supplier_import_batch"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('VALIDATED', 'CONFIRMED')", name="ck_scm_supplier_import_batch_status"
+        ),
+        CheckConstraint("total_rows >= 0", name="ck_scm_supplier_import_batch_total_rows"),
+        CheckConstraint("valid_rows >= 0", name="ck_scm_supplier_import_batch_valid_rows"),
+        CheckConstraint("invalid_rows >= 0", name="ck_scm_supplier_import_batch_invalid_rows"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="VALIDATED")
+    total_rows: Mapped[int] = mapped_column(Integer, nullable=False)
+    valid_rows: Mapped[int] = mapped_column(Integer, nullable=False)
+    invalid_rows: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    confirmed_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    rows: Mapped[list[SupplierImportRow]] = relationship(back_populates="batch", lazy="selectin")
+
+
+class SupplierImportRow(Base):
+    __tablename__ = "scm_supplier_import_row"
+    __table_args__ = (
+        UniqueConstraint(
+            "batch_id", "source_row_number", name="uq_scm_supplier_import_row_batch_source_row"
+        ),
+        Index("ix_scm_supplier_import_row_batch_id", "batch_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
+    batch_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDChar36(),
+        ForeignKey("scm_supplier_import_batch.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    source_row_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    supplier_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    main_brands: Mapped[str | None] = mapped_column(Text, nullable=True)
+    advantage: Mapped[str | None] = mapped_column(Text, nullable=True)
+    contact_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    contact_phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    is_valid: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    batch: Mapped[SupplierImportBatch] = relationship(back_populates="rows")

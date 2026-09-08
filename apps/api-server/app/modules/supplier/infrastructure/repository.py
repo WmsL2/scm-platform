@@ -1,13 +1,19 @@
 import uuid
 from typing import cast
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.common.contracts import PageParams
 from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
-from app.modules.supplier.infrastructure.models import Supplier, SupplierCooperationRecord
+from app.modules.supplier.infrastructure.models import (
+    Supplier,
+    SupplierContact,
+    SupplierCooperationRecord,
+    SupplierImportBatch,
+    SupplierQualification,
+)
 
 
 class SupplierRepository:
@@ -69,6 +75,35 @@ class SupplierRepository:
         suppliers = list((await self.session.scalars(statement)).all())
         total = cast(int, await self.session.scalar(count_statement))
         return suppliers, total
+
+    async def import_batch_by_id_for_update(self, batch_id: str) -> SupplierImportBatch | None:
+        return cast(
+            SupplierImportBatch | None,
+            await self.session.scalar(
+                select(SupplierImportBatch)
+                .options(selectinload(SupplierImportBatch.rows))
+                .where(SupplierImportBatch.id == batch_id)
+                .with_for_update()
+            ),
+        )
+
+    async def logical_delete_children(self, supplier_id: uuid.UUID, actor_id: uuid.UUID) -> None:
+        await self.session.execute(
+            update(SupplierContact)
+            .where(
+                SupplierContact.supplier_id == supplier_id,
+                SupplierContact.is_deleted.is_(False),
+            )
+            .values(is_deleted=True, updated_by=actor_id)
+        )
+        await self.session.execute(
+            update(SupplierQualification)
+            .where(
+                SupplierQualification.supplier_id == supplier_id,
+                SupplierQualification.is_deleted.is_(False),
+            )
+            .values(is_deleted=True, updated_by=actor_id)
+        )
 
     def add_cooperation_record(
         self,
