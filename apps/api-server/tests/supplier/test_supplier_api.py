@@ -1,13 +1,16 @@
 import uuid
 from io import BytesIO
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 from openpyxl import Workbook, load_workbook
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from app.core.database import SessionLocal
 from app.main import app
 from app.modules.auth.security import create_token, hash_password
+from app.modules.supplier.application.import_service import SupplierImportService
+from app.modules.supplier.application.service import SupplierService
 from app.modules.supplier.infrastructure.models import (
     Supplier,
     SupplierContact,
@@ -16,6 +19,7 @@ from app.modules.supplier.infrastructure.models import (
     SupplierImportRow,
     SupplierQualification,
 )
+from app.modules.supplier.schemas import SupplierCreateRequest, SupplierUpdateRequest
 from app.modules.system.models import Permission, Role, RolePermission, User, UserRole
 
 SUPPLIER_PERMISSIONS = (
@@ -397,3 +401,114 @@ async def test_supplier_excel_preview_and_confirm() -> None:
         await cleanup_import_batches(batch_ids)
         await cleanup_user(user_id)
         await cleanup_user(another_user)
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("get", "/api/v1/suppliers/not-a-uuid", None),
+        ("patch", "/api/v1/suppliers/not-a-uuid", {"supplier_name": "valid"}),
+        ("delete", "/api/v1/suppliers/not-a-uuid", None),
+        ("post", "/api/v1/suppliers/not-a-uuid/commands/submit", None),
+        ("post", "/api/v1/suppliers/not-a-uuid/commands/archive", None),
+        ("post", "/api/v1/suppliers/not-a-uuid/commands/stop", {"reason": "valid"}),
+        (
+            "post",
+            "/api/v1/suppliers/not-a-uuid/commands/blacklist",
+            {"reason": "valid"},
+        ),
+        ("post", "/api/v1/suppliers/imports/not-a-uuid/confirm", None),
+    ],
+)
+async def test_supplier_uuid_path_validation(
+    method: str, path: str, payload: dict[str, str] | None
+) -> None:
+    user_id, headers = await create_user_with_permissions(SUPPLIER_PERMISSIONS)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.request(method, path, headers=headers, json=payload)
+            assert response.status_code == 422
+            assert response.json()["code"] == "VALIDATION_ERROR"
+    finally:
+        await cleanup_user(user_id)
+
+
+async def test_supplier_services_participate_in_caller_transactions() -> None:
+    actor_id = uuid.uuid4()
+    supplier_name = f"rollback-supplier-{uuid.uuid4()}"
+    import_filename = f"rollback-import-{uuid.uuid4()}.xlsx"
+    async with SessionLocal() as session:
+        try:
+            async with session.begin():
+                await SupplierService(session).create(
+                    SupplierCreateRequest(
+                        supplier_name=supplier_name,
+                        main_brands="brand",
+                        advantage="advantage",
+                        contacts=[],
+                    ),
+                    actor_id,
+                )
+                raise RuntimeError("caller rollback")
+        except RuntimeError as exc:
+            assert str(exc) == "caller rollback"
+    async with SessionLocal() as session:
+        assert await session.scalar(
+            select(func.count())
+            .select_from(Supplier)
+            .where(Supplier.supplier_name == supplier_name)
+        ) == 0
+
+    async with SessionLocal() as session:
+        try:
+            async with session.begin():
+                await SupplierImportService(session).preview(
+                    import_filename,
+                    workbook_bytes([("rollback import", "brand", "advantage", None, None)]),
+                    actor_id,
+                )
+                raise RuntimeError("caller rollback")
+        except RuntimeError as exc:
+            assert str(exc) == "caller rollback"
+    async with SessionLocal() as session:
+        assert await session.scalar(
+            select(func.count())
+            .select_from(SupplierImportBatch)
+            .where(SupplierImportBatch.original_filename == import_filename)
+        ) == 0
+
+
+async def test_supplier_standalone_sequential_writes_do_not_leave_transaction_active() -> None:
+    actor_id = uuid.uuid4()
+    supplier_id: str | None = None
+    supplier_name = f"standalone-supplier-{uuid.uuid4()}"
+    updated_name = f"updated-{supplier_name}"
+    try:
+        async with SessionLocal() as session:
+            service = SupplierService(session)
+            created = await service.create(
+                SupplierCreateRequest(
+                    supplier_name=supplier_name,
+                    main_brands="brand",
+                    advantage="advantage",
+                    contacts=[],
+                ),
+                actor_id,
+            )
+            supplier_id = str(created.id)
+            assert session.in_transaction() is False
+
+            updated = await service.update(
+                created.id,
+                SupplierUpdateRequest(supplier_name=updated_name),
+                actor_id,
+            )
+            assert updated.supplier_name == updated_name
+            assert session.in_transaction() is False
+
+        async with SessionLocal() as session:
+            supplier = await session.get(Supplier, supplier_id)
+            assert supplier is not None
+            assert supplier.supplier_name == updated_name
+    finally:
+        await cleanup_suppliers([supplier_id] if supplier_id else [])

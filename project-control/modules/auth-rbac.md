@@ -64,6 +64,17 @@
   Frontend Vitest 22 passed，typecheck 与 build 通过；Alembic heads/current 为
   `20260908_0006`，Supplier schema integration test 通过。
 
+## Post-Merge Hardening
+
+- Request-scoped Session 现在拥有 HTTP 事务；AccountService 在调用方已有事务时仅参与，
+  不再自行 commit 或 rollback。
+- 用户角色和角色权限整体替换会按输入顺序去重后再校验、写入和返回；重复 UUID
+  不会导致关联表联合主键冲突。
+- 注册用户名并发唯一冲突在 SAVEPOINT 中恢复并映射为
+  `ACCOUNT_USERNAME_EXISTS`，外层事务仍由调用方决定。
+- ADR-0007 冻结事务所有权规则；本次无 Migration，Alembic 继续为单 Head
+  `20260908_0006`。
+
 ## Pending
 
 - Refresh Token、Session、Multi-device Logout 属于未来范围，不阻塞当前 Supplier / Product 开发。

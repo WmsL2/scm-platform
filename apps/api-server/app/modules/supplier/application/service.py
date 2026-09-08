@@ -1,11 +1,11 @@
 import uuid
-from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError, PageParams, PageResult
+from app.core.transaction import transaction_scope
 from app.modules.supplier.domain.rules import (
     ArchiveStatus,
     CooperationStatus,
@@ -53,7 +53,7 @@ class SupplierService:
             page_size=page_params.page_size,
         )
 
-    async def get(self, supplier_id: str) -> SupplierDetailResponse:
+    async def get(self, supplier_id: uuid.UUID) -> SupplierDetailResponse:
         supplier = await self.repository.active_by_id(supplier_id)
         if supplier is None:
             raise AppError("SUPPLIER_NOT_FOUND", "Supplier not found", 404)
@@ -62,7 +62,7 @@ class SupplierService:
     async def create(
         self, payload: SupplierCreateRequest, actor_id: uuid.UUID
     ) -> SupplierDetailResponse:
-        async with self._transaction():
+        async with transaction_scope(self.session):
             supplier = Supplier(
                 supplier_code=await BusinessSequenceService(self.session).issue_code("SUPPLIER"),
                 supplier_name=payload.supplier_name.strip(),
@@ -77,14 +77,15 @@ class SupplierService:
             )
             self.session.add(supplier)
             await self.session.flush()
-        return await self.get(str(supplier.id))
+            result = await self.get(supplier.id)
+        return result
 
     async def update(
-        self, supplier_id: str, payload: SupplierUpdateRequest, actor_id: uuid.UUID
+        self, supplier_id: uuid.UUID, payload: SupplierUpdateRequest, actor_id: uuid.UUID
     ) -> SupplierDetailResponse:
         if not payload.model_fields_set:
             raise AppError("SUPPLIER_UPDATE_EMPTY", "At least one field must be supplied", 400)
-        async with self._transaction():
+        async with transaction_scope(self.session):
             supplier = await self._active_for_update(supplier_id)
             if "supplier_name" in payload.model_fields_set:
                 supplier.supplier_name = self._required_text(payload.supplier_name, "supplier_name")
@@ -95,10 +96,11 @@ class SupplierService:
             if "contacts" in payload.model_fields_set:
                 self._replace_contacts(supplier, payload.contacts or [], actor_id)
             supplier.updated_by = actor_id
-        return await self.get(supplier_id)
+            result = await self.get(supplier_id)
+        return result
 
-    async def delete(self, supplier_id: str, actor_id: uuid.UUID) -> SupplierDeleteResponse:
-        async with self._transaction():
+    async def delete(self, supplier_id: uuid.UUID, actor_id: uuid.UUID) -> SupplierDeleteResponse:
+        async with transaction_scope(self.session):
             supplier = await self._active_for_update(supplier_id)
             supplier.is_deleted = True
             supplier.deleted_by = actor_id
@@ -107,33 +109,35 @@ class SupplierService:
             await self.repository.logical_delete_children(supplier.id, actor_id)
         return SupplierDeleteResponse(id=supplier.id)
 
-    async def submit(self, supplier_id: str, actor_id: uuid.UUID) -> SupplierDetailResponse:
-        async with self._transaction():
+    async def submit(self, supplier_id: uuid.UUID, actor_id: uuid.UUID) -> SupplierDetailResponse:
+        async with transaction_scope(self.session):
             supplier = await self._active_for_update(supplier_id)
             assert_archive_transition(supplier.archive_status, ArchiveStatus.PENDING)
             supplier.archive_status = ArchiveStatus.PENDING
             supplier.updated_by = actor_id
-        return await self.get(supplier_id)
+            result = await self.get(supplier_id)
+        return result
 
-    async def archive(self, supplier_id: str, actor_id: uuid.UUID) -> SupplierDetailResponse:
-        async with self._transaction():
+    async def archive(self, supplier_id: uuid.UUID, actor_id: uuid.UUID) -> SupplierDetailResponse:
+        async with transaction_scope(self.session):
             supplier = await self._active_for_update(supplier_id)
             assert_archive_transition(supplier.archive_status, ArchiveStatus.ARCHIVED)
             supplier.archive_status = ArchiveStatus.ARCHIVED
             supplier.archived_by = actor_id
             supplier.archived_at = datetime.now()
             supplier.updated_by = actor_id
-        return await self.get(supplier_id)
+            result = await self.get(supplier_id)
+        return result
 
     async def stop(
-        self, supplier_id: str, reason: str, actor_id: uuid.UUID
+        self, supplier_id: uuid.UUID, reason: str, actor_id: uuid.UUID
     ) -> SupplierDetailResponse:
         return await self._change_cooperation_status(
             supplier_id, CooperationStatus.STOPPED, reason, actor_id
         )
 
     async def blacklist(
-        self, supplier_id: str, reason: str, actor_id: uuid.UUID
+        self, supplier_id: uuid.UUID, reason: str, actor_id: uuid.UUID
     ) -> SupplierDetailResponse:
         return await self._change_cooperation_status(
             supplier_id, CooperationStatus.BLACKLIST, reason, actor_id
@@ -141,13 +145,13 @@ class SupplierService:
 
     async def _change_cooperation_status(
         self,
-        supplier_id: str,
+        supplier_id: uuid.UUID,
         target_status: CooperationStatus,
         reason: str,
         actor_id: uuid.UUID,
     ) -> SupplierDetailResponse:
         normalized_reason = normalize_reason(reason)
-        async with self._transaction():
+        async with transaction_scope(self.session):
             supplier = await self._active_for_update(supplier_id)
             assert_cooperation_transition(supplier.cooperation_status, target_status)
             self.repository.add_cooperation_record(
@@ -159,27 +163,14 @@ class SupplierService:
             )
             supplier.cooperation_status = target_status
             supplier.updated_by = actor_id
-        return await self.get(supplier_id)
+            result = await self.get(supplier_id)
+        return result
 
-    async def _active_for_update(self, supplier_id: str) -> Supplier:
+    async def _active_for_update(self, supplier_id: uuid.UUID) -> Supplier:
         supplier = await self.repository.active_by_id_for_update(supplier_id)
         if supplier is None:
             raise AppError("SUPPLIER_NOT_FOUND", "Supplier not found", 404)
         return supplier
-
-    @asynccontextmanager
-    async def _transaction(self) -> AsyncIterator[None]:
-        if self.session.in_transaction():
-            try:
-                yield
-            except Exception:
-                await self.session.rollback()
-                raise
-            else:
-                await self.session.commit()
-            return
-        async with self.session.begin():
-            yield
 
     def _replace_contacts(
         self, supplier: Supplier, contacts: Sequence[SupplierContactInput], actor_id: uuid.UUID

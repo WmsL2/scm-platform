@@ -3,7 +3,7 @@ import asyncio
 import uuid
 
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from app.common.contracts import AppError
 from app.core.database import SessionLocal
@@ -144,3 +144,168 @@ async def test_admin_replacement_permissions_and_forbidden() -> None:
             await session.execute(delete(Permission).where(Permission.id == extra_permission))
             await session.commit()
         await _cleanup([admin_id, target_id], [admin_role, target_role])
+
+
+async def test_replacement_normalizes_duplicate_ids_and_caller_transaction_can_rollback() -> None:
+    admin_id, admin_role = await _admin()
+    target_id, target_role, permission_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    headers = {"Authorization": f"Bearer {create_token(admin_id, 1)}"}
+    try:
+        async with SessionLocal() as session:
+            session.add_all(
+                [
+                    User(
+                        id=target_id,
+                        username=f"hardening-target-{target_id}",
+                        password_hash=hash_password("x"),
+                    ),
+                    Role(
+                        id=target_role,
+                        role_code=f"hardening-role-{target_role}",
+                        role_name="hardening role",
+                    ),
+                    Permission(
+                        id=permission_id,
+                        permission_code=f"hardening:{permission_id}",
+                        permission_name="hardening permission",
+                        permission_type="API",
+                    ),
+                ]
+            )
+            await session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            roles = await client.put(
+                f"/api/v1/admin/users/{target_id}/roles",
+                headers=headers,
+                json={"role_ids": [str(target_role), str(target_role)]},
+            )
+            assert roles.status_code == 200
+            assert roles.json()["data"]["role_ids"] == [str(target_role)]
+            permissions = await client.put(
+                f"/api/v1/admin/roles/{target_role}/permissions",
+                headers=headers,
+                json={"permission_ids": [str(permission_id), str(permission_id)]},
+            )
+            assert permissions.status_code == 200
+            assert permissions.json()["data"]["permission_ids"] == [str(permission_id)]
+
+        async with SessionLocal() as session:
+            assert await session.scalar(
+                select(func.count()).select_from(UserRole).where(
+                    UserRole.user_id == target_id, UserRole.role_id == target_role
+                )
+            ) == 1
+            assert await session.scalar(
+                select(func.count()).select_from(RolePermission).where(
+                    RolePermission.role_id == target_role,
+                    RolePermission.permission_id == permission_id,
+                )
+            ) == 1
+
+        rollback_role = uuid.uuid4()
+        async with SessionLocal() as session:
+            session.add(
+                Role(
+                    id=rollback_role,
+                    role_code=f"rollback-role-{rollback_role}",
+                    role_name="rollback role",
+                )
+            )
+            await session.commit()
+        try:
+            async with SessionLocal() as session:
+                try:
+                    async with session.begin():
+                        await AccountService(session).replace_user_roles(
+                            target_id, [rollback_role], admin_id
+                        )
+                        raise RuntimeError("caller rollback")
+                except RuntimeError as exc:
+                    assert str(exc) == "caller rollback"
+            async with SessionLocal() as session:
+                assert await session.scalar(
+                    select(func.count()).select_from(UserRole).where(
+                        UserRole.user_id == target_id, UserRole.role_id == rollback_role
+                    )
+                ) == 0
+        finally:
+            await _cleanup([], [rollback_role])
+    finally:
+        async with SessionLocal() as session:
+            await session.execute(
+                delete(RolePermission).where(RolePermission.permission_id == permission_id)
+            )
+            await session.execute(delete(Permission).where(Permission.id == permission_id))
+            await session.commit()
+        await _cleanup([admin_id, target_id], [admin_role, target_role])
+
+
+async def test_registration_unique_conflict_savepoint_preserves_caller_transaction() -> None:
+    username = f"savepoint-registration-{uuid.uuid4()}"
+    marker_role = uuid.uuid4()
+    try:
+        async with SessionLocal() as session:
+            session.add(User(username=username, password_hash=hash_password("existing")))
+            await session.commit()
+
+        async with SessionLocal() as session:
+            service = AccountService(session)
+
+            async def skip_precheck(_: str) -> User | None:
+                return None
+
+            service.repository.active_user_by_username = skip_precheck  # type: ignore[method-assign]
+            async with session.begin():
+                try:
+                    await service.register(username, "duplicate")
+                except AppError as exc:
+                    assert exc.code == "ACCOUNT_USERNAME_EXISTS"
+                else:
+                    raise AssertionError("expected duplicate username conflict")
+                session.add(
+                    Role(
+                        id=marker_role,
+                        role_code=f"savepoint-marker-{marker_role}",
+                        role_name="savepoint marker",
+                    )
+                )
+
+        async with SessionLocal() as session:
+            assert await session.get(Role, marker_role) is not None
+    finally:
+        async with SessionLocal() as session:
+            await session.execute(delete(Role).where(Role.id == marker_role))
+            await session.execute(delete(User).where(User.username == username))
+            await session.commit()
+
+
+async def test_review_standalone_service_does_not_leave_transaction_active() -> None:
+    user_id, actor_id = uuid.uuid4(), uuid.uuid4()
+    try:
+        async with SessionLocal() as session:
+            session.add(
+                User(
+                    id=user_id,
+                    username=f"standalone-review-{user_id}",
+                    password_hash=hash_password("password"),
+                    user_status="PENDING",
+                )
+            )
+            await session.commit()
+
+        async with SessionLocal() as session:
+            response = await AccountService(session).review(user_id, True, "approved", actor_id)
+            assert response.user_status == "ENABLED"
+            assert session.in_transaction() is False
+
+        async with SessionLocal() as session:
+            user = await session.get(User, user_id)
+            assert user is not None
+            assert user.user_status == "ENABLED"
+            assert user.reviewed_by == actor_id
+            assert user.review_note == "approved"
+    finally:
+        async with SessionLocal() as session:
+            await session.execute(delete(User).where(User.id == user_id))
+            await session.commit()

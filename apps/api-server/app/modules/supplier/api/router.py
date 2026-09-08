@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
@@ -74,7 +75,7 @@ async def preview_import(
     "/imports/{batch_id}/confirm", response_model=ApiResponse[SupplierImportConfirmResponse]
 )
 async def confirm_import(
-    batch_id: str,
+    batch_id: uuid.UUID,
     current: Annotated[CurrentUser, Depends(require_permission("supplier:create"))],
     session: SessionDep,
 ) -> ApiResponse[SupplierImportConfirmResponse]:
@@ -83,7 +84,7 @@ async def confirm_import(
 
 @router.get("/{supplier_id}", response_model=ApiResponse[SupplierDetailResponse])
 async def get_supplier(
-    supplier_id: str,
+    supplier_id: uuid.UUID,
     _: Annotated[CurrentUser, Depends(require_permission("supplier:detail"))],
     session: SessionDep,
 ) -> ApiResponse[SupplierDetailResponse]:
@@ -101,7 +102,7 @@ async def create_supplier(
 
 @router.patch("/{supplier_id}", response_model=ApiResponse[SupplierDetailResponse])
 async def update_supplier(
-    supplier_id: str,
+    supplier_id: uuid.UUID,
     payload: SupplierUpdateRequest,
     current: Annotated[CurrentUser, Depends(require_permission("supplier:update"))],
     session: SessionDep,
@@ -111,7 +112,7 @@ async def update_supplier(
 
 @router.delete("/{supplier_id}", response_model=ApiResponse[SupplierDeleteResponse])
 async def delete_supplier(
-    supplier_id: str,
+    supplier_id: uuid.UUID,
     current: Annotated[CurrentUser, Depends(require_permission("supplier:delete"))],
     session: SessionDep,
 ) -> ApiResponse[SupplierDeleteResponse]:
@@ -120,7 +121,7 @@ async def delete_supplier(
 
 @router.post("/{supplier_id}/commands/submit", response_model=ApiResponse[SupplierDetailResponse])
 async def submit_supplier(
-    supplier_id: str,
+    supplier_id: uuid.UUID,
     current: Annotated[CurrentUser, Depends(require_permission("supplier:submit"))],
     session: SessionDep,
 ) -> ApiResponse[SupplierDetailResponse]:
@@ -129,7 +130,7 @@ async def submit_supplier(
 
 @router.post("/{supplier_id}/commands/archive", response_model=ApiResponse[SupplierDetailResponse])
 async def archive_supplier(
-    supplier_id: str,
+    supplier_id: uuid.UUID,
     current: Annotated[CurrentUser, Depends(require_permission("supplier:archive"))],
     session: SessionDep,
 ) -> ApiResponse[SupplierDetailResponse]:
@@ -138,7 +139,7 @@ async def archive_supplier(
 
 @router.post("/{supplier_id}/commands/stop", response_model=ApiResponse[SupplierDetailResponse])
 async def stop_supplier(
-    supplier_id: str,
+    supplier_id: uuid.UUID,
     payload: CooperationCommand,
     current: Annotated[CurrentUser, Depends(require_permission("supplier:stop"))],
     session: SessionDep,
@@ -152,7 +153,7 @@ async def stop_supplier(
     "/{supplier_id}/commands/blacklist", response_model=ApiResponse[SupplierDetailResponse]
 )
 async def blacklist_supplier(
-    supplier_id: str,
+    supplier_id: uuid.UUID,
     payload: CooperationCommand,
     current: Annotated[CurrentUser, Depends(require_permission("supplier:blacklist"))],
     session: SessionDep,
