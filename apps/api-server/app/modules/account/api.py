@@ -12,6 +12,7 @@ from app.modules.account.schemas import (
     PermissionResponse,
     RegisterRequest,
     ReviewRequest,
+    RoleCreateRequest,
     RolePermissionsRequest,
     RoleResponse,
     UserResponse,
@@ -71,6 +72,17 @@ async def roles(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> ApiResponse[list[RoleResponse]]:
     return success(await AccountService(session).roles())
+
+
+@admin_router.post("/roles", response_model=ApiResponse[RoleResponse])
+async def create_role(
+    payload: RoleCreateRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("system:role:create"))],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> ApiResponse[RoleResponse]:
+    return success(
+        await AccountService(session).create_role(payload.role_code, payload.role_name, current.user_id)
+    )
 
 
 @admin_router.put("/roles/{role_id}/permissions", response_model=ApiResponse[RoleResponse])

@@ -14,10 +14,11 @@ describe("account api contracts", () => {
   })
   it("uses dynamic role and permission replacement APIs including empty arrays", async () => {
     const { accountApi } = await import("./account")
-    await accountApi.roles(); await accountApi.permissions()
+    await accountApi.roles(); await accountApi.permissions(); await accountApi.createRole({ role_code: "pricing_operator", role_name: "报价管理员" })
     await accountApi.setUserRoles("u", []); await accountApi.setRolePermissions("r", [])
     expect(http.get).toHaveBeenCalledWith("/api/v1/admin/roles")
     expect(http.get).toHaveBeenCalledWith("/api/v1/admin/permissions")
+    expect(http.post).toHaveBeenCalledWith("/api/v1/admin/roles", { role_code: "pricing_operator", role_name: "报价管理员" })
     expect(http.put).toHaveBeenNthCalledWith(1, "/api/v1/admin/users/u/roles", { role_ids: [] })
     expect(http.put).toHaveBeenNthCalledWith(2, "/api/v1/admin/roles/r/permissions", { permission_ids: [] })
   })

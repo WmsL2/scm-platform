@@ -32,6 +32,12 @@
   已通过；浏览器验收待完成。
 - 注册审批页面提供待审批与审批历史两个页签。审批历史使用同一查看审批权限，按
   `reviewed_at` 倒序、分页展示已处理申请的审批结果、时间与说明；待审批申请不会进入历史。
+- 自定义角色可由 `system:role:create` 创建：角色编码采用不可修改的小写英文、数字和下划线，
+  角色名称为展示文本，初始权限为空；创建者与更新者记录为当前操作用户。创建成功后，如同时具备
+  权限目录与角色权限更新权限，前端直接进入“配置权限”。本期不提供角色编辑、停用或删除。
+- 角色权限保存为单次提交：保存期间前端禁止重复提交。若当前操作人编辑自己所属角色，后端必须保留
+  `system:role:list`、`system:permission:list` 与 `system:role:permission:update` 的有效组合，防止
+  操作人将自己锁出角色管理。
 
 ## Account / Registration / Profile
 
@@ -44,15 +50,17 @@
   动态权限目录以及注册申请列表/审批；全部管理员入口继续使用
   `require_permission`。
 - 权限：目录包括 `system:user:list`、`system:user:role:update`、
-  `system:role:list`、`system:role:permission:update`、
+  `system:role:list`、`system:role:create`、`system:role:permission:update`、
   `system:permission:list`、`system:registration:list`、
-  `system:registration:review` 七项权限，并动态从 `sys_permission` 读取。
+  `system:registration:review` 八项权限，并动态从 `sys_permission` 读取。
 - 个人信息：前端提供 `/register`、`/admin/users`、`/admin/roles`、
   `/admin/registrations`、完整 Profile Dropdown 与 Change Password Dialog。系统管理菜单、
   角色分配、权限分配和审批操作均按各自权限单独控制，不使用硬编码管理员用户名或角色。
 - 修改密码：`POST /api/v1/auth/change-password` 校验当前密码，使用现有 Argon2id
   哈希策略保存新密码，并在成功事务中令 `token_version + 1`，使旧 Token 失效。
-- Migration：Revision `20260908_0006`，down revision `20260908_0005`。Supplier
+- Migration：Revision `20260908_0007`，down revision `20260908_0006`。新增
+  `system:role:create` 权限；如存在未删除的 `system_administrator` 内置角色，迁移会为其赋予该权限。
+  Supplier
   Delete & Import 先合入后，原临时 Account `0005` 调整为 `0006`；未创建 merge migration。
 
 ## Boundaries
@@ -86,7 +94,7 @@
 ## Pending
 
 - Refresh Token、Session、Multi-device Logout 属于未来范围，不阻塞当前 Supplier / Product 开发。
-- Role Create/Delete policy 尚未冻结；REJECTED username reapply / reopen policy 尚未实现。
+- Role Delete / disable policy 尚未冻结；REJECTED username reapply / reopen policy 尚未实现。
 
 ## Next Step
 

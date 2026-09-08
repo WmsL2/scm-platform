@@ -140,11 +140,7 @@ async function changePassword(): Promise<void> { if (passwordForm.new_password !
       <el-dialog v-model="passwordVisible" title="修改密码"><el-input v-model="passwordForm.current_password" type="password" placeholder="当前密码"/><el-input v-model="passwordForm.new_password" type="password" placeholder="新密码"/><el-input v-model="passwordForm.confirm_new_password" type="password" placeholder="确认新密码"/><template #footer><el-button @click="passwordVisible=false">取消</el-button><el-button type="primary" :loading="passwordSubmitting" @click="changePassword">保存</el-button></template></el-dialog>
 
       <el-main class="main-content">
-        <RouterView v-slot="{ Component }">
-          <Transition name="page" mode="out-in">
-            <component :is="Component" />
-          </Transition>
-        </RouterView>
+        <RouterView />
       </el-main>
     </el-container>
   </el-container>
@@ -187,8 +183,5 @@ async function changePassword(): Promise<void> { if (passwordForm.new_password !
 .tag { margin: 0 6px 6px 0; }.permission-list { max-height: 180px; overflow: auto; }.el-dialog .el-input { margin-bottom: 12px; }
 .registration-menu-label { display: inline-block; line-height: 1; }
 .registration-badge :deep(.el-badge__content) { top: 50%; right: -10px; transform: translateY(-50%) translateX(100%); }
-.page-enter-active, .page-leave-active { transition: opacity .16s ease, transform .16s ease; }
-.page-enter-from { opacity: 0; transform: translateY(4px); }
-.page-leave-to { opacity: 0; }
 @media (max-width: 720px) { .breadcrumb span, .breadcrumb i, .user-copy { display: none; } .topbar { padding-right: 12px; } .main-content { padding: 14px; } }
 </style>

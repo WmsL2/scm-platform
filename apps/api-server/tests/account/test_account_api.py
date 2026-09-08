@@ -8,7 +8,7 @@ from sqlalchemy import delete, func, select
 from app.common.contracts import AppError
 from app.core.database import SessionLocal
 from app.main import app
-from app.modules.account.service import AccountService
+from app.modules.account.service import ROLE_MANAGEMENT_PERMISSION_CODES, AccountService
 from app.modules.auth.security import create_token, hash_password
 from app.modules.system.models import Permission, Role, RolePermission, User, UserRole
 
@@ -187,6 +187,111 @@ async def test_admin_replacement_permissions_and_forbidden() -> None:
             await session.execute(delete(Permission).where(Permission.id == extra_permission))
             await session.commit()
         await _cleanup([admin_id, target_id], [admin_role, target_role])
+
+
+async def test_admin_creates_custom_role_with_unique_code_and_name() -> None:
+    admin_id, admin_role = await _admin()
+    unprivileged_id = uuid.uuid4()
+    role_id: uuid.UUID | None = None
+    role_code = f"pricing_operator_{uuid.uuid4().hex}"
+    role_name = f"报价管理员-{uuid.uuid4()}"
+    headers = {"Authorization": f"Bearer {create_token(admin_id, 1)}"}
+    try:
+        async with SessionLocal() as session:
+            session.add(
+                User(
+                    id=unprivileged_id,
+                    username=f"unprivileged-role-create-{unprivileged_id}",
+                    password_hash=hash_password("secret"),
+                )
+            )
+            await session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            forbidden = await client.post(
+                "/api/v1/admin/roles",
+                headers={"Authorization": f"Bearer {create_token(unprivileged_id, 1)}"},
+                json={"role_code": f"forbidden_{uuid.uuid4().hex}", "role_name": "无权限角色"},
+            )
+            assert forbidden.status_code == 403
+            created = await client.post(
+                "/api/v1/admin/roles",
+                headers=headers,
+                json={"role_code": f"  {role_code}  ", "role_name": f"  {role_name}  "},
+            )
+            assert created.status_code == 200
+            body = created.json()["data"]
+            role_id = uuid.UUID(body["id"])
+            assert body == {
+                "id": str(role_id),
+                "role_code": role_code,
+                "role_name": role_name,
+                "permission_ids": [],
+            }
+            duplicate_code = await client.post(
+                "/api/v1/admin/roles",
+                headers=headers,
+                json={"role_code": role_code, "role_name": f"另一个角色-{uuid.uuid4()}"},
+            )
+            assert duplicate_code.status_code == 409
+            assert duplicate_code.json()["code"] == "ACCOUNT_ROLE_CODE_EXISTS"
+            duplicate_name = await client.post(
+                "/api/v1/admin/roles",
+                headers=headers,
+                json={"role_code": f"catalog_operator_{uuid.uuid4().hex}", "role_name": role_name},
+            )
+            assert duplicate_name.status_code == 409
+            assert duplicate_name.json()["code"] == "ACCOUNT_ROLE_NAME_EXISTS"
+            invalid_code = await client.post(
+                "/api/v1/admin/roles",
+                headers=headers,
+                json={"role_code": "Pricing Operator", "role_name": "无效角色"},
+            )
+            assert invalid_code.status_code == 422
+
+        async with SessionLocal() as session:
+            role = await session.get(Role, role_id)
+            assert role is not None
+            assert role.is_builtin is False
+            assert role.created_by == admin_id
+            assert role.updated_by == admin_id
+    finally:
+        await _cleanup(
+            [admin_id, unprivileged_id], [admin_role, *([role_id] if role_id else [])]
+        )
+
+
+async def test_admin_cannot_remove_own_role_management_access() -> None:
+    admin_id, admin_role = await _admin()
+    headers = {"Authorization": f"Bearer {create_token(admin_id, 1)}"}
+    try:
+        async with SessionLocal() as session:
+            required_permission_ids = list(
+                (
+                    await session.scalars(
+                        select(Permission.id).where(
+                            Permission.permission_code.in_(ROLE_MANAGEMENT_PERMISSION_CODES)
+                        )
+                    )
+                ).all()
+            )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            retained = await client.put(
+                f"/api/v1/admin/roles/{admin_role}/permissions",
+                headers=headers,
+                json={"permission_ids": [str(item) for item in required_permission_ids]},
+            )
+            assert retained.status_code == 200
+            locked_out = await client.put(
+                f"/api/v1/admin/roles/{admin_role}/permissions",
+                headers=headers,
+                json={"permission_ids": []},
+            )
+            assert locked_out.status_code == 409
+            assert locked_out.json()["code"] == "ACCOUNT_ROLE_MANAGEMENT_SELF_LOCKOUT"
+    finally:
+        await _cleanup([admin_id], [admin_role])
 
 
 async def test_admin_role_assignment_requires_enabled_user() -> None:

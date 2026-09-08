@@ -74,6 +74,22 @@ class AccountRepository:
             ).all()
         )
 
+    async def active_role_by_code(self, role_code: str) -> Role | None:
+        return cast(
+            Role | None,
+            await self.session.scalar(
+                select(Role).where(Role.role_code == role_code, Role.is_deleted.is_(False))
+            ),
+        )
+
+    async def active_role_by_name(self, role_name: str) -> Role | None:
+        return cast(
+            Role | None,
+            await self.session.scalar(
+                select(Role).where(Role.role_name == role_name, Role.is_deleted.is_(False))
+            ),
+        )
+
     async def active_permissions(self, ids: list[uuid.UUID]) -> list[Permission]:
         if not ids:
             return []
@@ -124,6 +140,19 @@ class AccountRepository:
             (
                 await self.session.scalars(
                     select(RolePermission.permission_id).where(RolePermission.role_id == role_id)
+                )
+            ).all()
+        )
+
+    async def permission_codes(self, ids: set[uuid.UUID]) -> set[str]:
+        if not ids:
+            return set()
+        return set(
+            (
+                await self.session.scalars(
+                    select(Permission.permission_code).where(
+                        Permission.id.in_(ids), Permission.is_deleted.is_(False)
+                    )
                 )
             ).all()
         )
