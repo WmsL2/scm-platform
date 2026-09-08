@@ -13,6 +13,7 @@ HTTP 路由、认证依赖和业务 Service 共享同一个 AsyncSession。此�
 - Service 收到已有事务的 Session 时只参与事务，绝不 commit 或 rollback 调用方事务。
 - Service 收到无活动事务的全新 Session 时，通过共享 `transaction_scope()` 创建并拥有事务。
 - 局部唯一约束冲突恢复使用 nested transaction / SAVEPOINT；不以 `session.rollback()` 处理该局部冲突。
+- Service-owned transaction 覆盖该操作所需的全部持久化工作及 response-building reads，避免 Service 返回后泄漏内部创建的活动事务。
 
 ## Reason
 

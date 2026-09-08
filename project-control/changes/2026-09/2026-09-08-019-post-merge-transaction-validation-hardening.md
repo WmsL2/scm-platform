@@ -15,6 +15,7 @@ Resolve three post-merge P1 defects without changing business scope or database 
 - HTTP database dependency now owns a request-scoped transaction. AccountService, SupplierService and SupplierImportService share `transaction_scope()`: they participate in an existing caller transaction and own a transaction only for a fresh Session.
 - Registration keeps its username precheck and uses a nested transaction / SAVEPOINT for INSERT+flush unique-conflict recovery. The active-username constraint remains the concurrency authority and conflicts map to `ACCOUNT_USERNAME_EXISTS` without rolling back the outer transaction.
 - Supplier `supplier_id` and import `batch_id` router parameters are `uuid.UUID`; corresponding Service and Repository boundaries accept UUID values directly.
+- A Service-owned transaction now includes every response-building database read required by its write operation. Standalone Service calls therefore return without an internally-created active transaction.
 
 ## Regression Coverage
 
@@ -22,6 +23,7 @@ Resolve three post-merge P1 defects without changing business scope or database 
 - Account, Supplier and SupplierImport writes are rolled back when their caller rolls back an outer transaction.
 - Concurrent username registration remains one created account and one deterministic conflict; the SAVEPOINT conflict path leaves its outer transaction usable.
 - All Supplier UUID path routes, including import confirm, return `422` / `VALIDATION_ERROR` for invalid UUID input.
+- Sequential standalone Supplier create/update and standalone Account review verify that each operation commits its own work and leaves `session.in_transaction()` false.
 
 ## Database / Alembic
 
