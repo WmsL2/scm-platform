@@ -13,7 +13,7 @@
 
 - 一行整理后的商品大表等于一条具体正式 `scm_product`；系统 `id` 是唯一主键，一期不强制 SPU/SKU。
 - `model`、`sku`、`product_name`、`brand + model`、货号与69码均不设业务 UNIQUE；69码以原始文本保存，不拆颜色、不限制 13 位数字。
-- Product、Supplier Master、Supplier Product Quote 是独立领域。商品大表“供应商”列不得生成 `product → supplier` 关系或报价。
+- Product、Supplier Master、Supplier Product Quote 是独立领域。商品大表“供应商”列用于解析来源供应商；正式 Product 保存 `source_supplier_id`，但不得自动生成报价。
 - Product 通过 `category_id` 查询 Category 的 `deduction_rate`，并保存本次使用的 `deduction_rate` 快照。
 - 所有金额和比率计算使用 Decimal、结果保留 4 位小数；派生价格结果需要正式保存。后端按 Category 规则重算并校验前端值。
 
@@ -52,7 +52,7 @@
 | 17 | 利润 | `profit` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值为结算价减成本价。 |
 | 18 | 京东价毛利（15-50） | `jd_margin` | `DECIMAL(9,4)` | YES | `NULL` | YES | NO | DERIVED | 正式公式为 `(jd_price - agreement_purchase_price) / jd_price`；表头括号不替代公式。 |
 | 19 | 采销员 | `purchasing_agent` | `VARCHAR(128)` | YES | `NULL` | YES | NO | MASTER_INPUT | 仅保留来源人员文本；不假定关联系统用户。 |
-| 20 | 供应商 | 导入暂存来源值 | `VARCHAR(255)` | YES | `NULL` | NO | NO | IMPORT_ONLY | 不进入 `scm_product`；不得映射 `supplier_id`、建立 `scm_product → scm_supplier` FK 或自动创建 Supplier Product Quote。 |
+| 20 | 供应商 | Staging：`supplier_name_raw`；正式：`source_supplier_id` | 原值 `VARCHAR(255)`；FK `CHAR(36)` | 原值 YES；正式 NOT NULL | `NULL` / — | 正式 FK 索引 | NO | SOURCE_SUPPLIER_LOOKUP | 原值仅供导入审计与确定性解析；正式 FK → `scm_supplier.id`，`ON DELETE RESTRICT`。不是 `supplier_id`，不自动创建 Supplier Product Quote。 |
 | 21 | 69码 | `barcode_text` | `VARCHAR(255)` | YES | `NULL` | YES | NO | MASTER_INPUT | 原样文本，例如可含 `---深蓝`。 |
 | 22 | 毛利复核 | `deduction_review` | `DECIMAL(9,4)` | YES | `NULL` | YES | NO | DERIVED | `ROUNDDOWN((agreement_price - agreement_purchase_price) / agreement_price, 4)`。 |
 | 23 | 产品规格 | `product_specification` | `TEXT` | YES | `NULL` | NO | NO | MASTER_INPUT | 不根据文本自动拆参数表。 |
@@ -110,13 +110,24 @@ Pricing Service 只能接受从 `scm_category` 查询得到的 `deduction_rate`�
 |---|---|---|---|---|
 | `id` | `CHAR(36)` | NOT NULL / 系统生成 | PK | UUID 主键，非 Excel 字段。 |
 | `category_id` | `CHAR(36)` | YES / `NULL` | 索引；FK → `scm_category.id` | 不冗余保存三级名称；无匹配类目应在导入预览中报错。 |
+| `source_supplier_id` | `CHAR(36)` | NOT NULL / — | 索引；FK → `scm_supplier.id`，ON DELETE RESTRICT | 来源供应商，不是唯一供应商；Confirm 前必须完成解析，故正式 Product 不允许 unresolved supplier。 |
 | `deduction_rate` | `DECIMAL(9,4)` | YES / `NULL` | 索引 | 商品本次计算采用的类目扣点快照。 |
 | `created_by`, `updated_by` | `CHAR(36)` | YES / `NULL` | NO | 系统审计字段。 |
 | `created_at`, `updated_at` | `DATETIME` | NOT NULL / 当前时间 | 索引（`created_at`） | 系统审计字段。 |
 
 Product 不重复存储一级、二级、三级类目名称：这是 Category 维度的职责，避免无理由冗余与更新不一致。若未来为历史快照、检索性能或导入追溯提出冗余，需要单独说明读写所有权和一致性策略。
 
-**PENDING：**Product / Category 的逻辑删除策略、外键删除动作、来源图片的存储形态、品牌与采销员的结构化关系、类目匹配失败的人工修正流程，以及各输入字段的最终业务必填规则。不得在 C1 Migration 中自行决定。
+`source_supplier_id` 不设 UNIQUE；一个供应商可对应许多商品。供应商名称的正式快照字段不在本轮冻结，如将来确需 `source_supplier_name` 或 `supplier_name_snapshot`，须另行评审。
+
+## RECOMMENDED Supplier Match Decision and Confirm Gate
+
+推荐 `scm_product_import_supplier_match`：`id CHAR(36) PK`、`import_task_id CHAR(36) NOT NULL FK -> scm_import_task.id`、`supplier_name_normalized VARCHAR(255) NOT NULL`、`match_status VARCHAR(...) NOT NULL`、`match_method VARCHAR(...) NULL`、`matched_supplier_id CHAR(36) NULL FK -> scm_supplier.id ON DELETE RESTRICT`、`resolved_by CHAR(36) NULL`、`resolved_at DATETIME NULL`、`created_at`、`updated_at`；建立 `UNIQUE(import_task_id, supplier_name_normalized)`。`match_status` 为 `MATCHED`、`AMBIGUOUS`、`UNMATCHED` 或 `INELIGIBLE`；`match_method` 为 `NAME_EXACT` 或 `MANUAL`，未成功时为 NULL，`MATCHED` 必须有 `matched_supplier_id`。不保存 candidate IDs JSON 或候选数量快照，候选从当前 Supplier Master 查询。
+
+Import Row 尚未冻结时，推荐增加 `supplier_match_id` FK 指向该表，使同一批次、同一标准化供应商名称的行共享一项决策。自动匹配只允许 NFKC、trim、连续空白压缩；仅在名称相等且唯一有效候选（ARCHIVED + NORMAL + not deleted）时写 `MATCHED/NAME_EXACT`。多候选、无同名、同名均无效分别为 `AMBIGUOUS`、`UNMATCHED`、`INELIGIBLE`，只能人工从当前有效供应商选择或在 Supplier Master 处理后重试。
+
+Confirm 是 all-or-nothing：重新校验行、类目、价格、全部决策均为 `MATCHED`，并重新查询每个已匹配供应商仍有效；任一失败均不得写入任何 `scm_product`。因此匹配成功并不替代 Confirm 时的状态检查。
+
+**PENDING：**Product / Category 的逻辑删除策略、其余外键删除动作、来源图片的存储形态、品牌与采销员的结构化关系、类目匹配失败的人工修正流程，以及各输入字段的最终业务必填规则。不得在 C1 Migration 中自行决定。
 
 ## Decimal Precision / Scale Recommendation
 

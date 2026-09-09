@@ -34,6 +34,8 @@ Effective selectable supplier is ARCHIVED + NORMAL + not deleted.
 
 Supplier is logical-delete only. Contacts/qualifications can logical-delete; referenced history is retained. No cascade deletes.
 
+Product Import 的来源供应商匹配只可选择上述 effective selectable supplier。正式 Product 未来以 `source_supplier_id` FK 保存来源，不以 supplier_name 关联，也不将此关系视为 Supplier Product Quote。
+
 ## Design API and pages
 
 All business APIs use /api/v1 and the shared response/error envelope. Command endpoints are frozen to prevent generic PATCH bypassing state rules.

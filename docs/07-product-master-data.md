@@ -12,13 +12,15 @@
 ## 导入链路
 
 ```text
-Excel
- -> 模板校验
- -> 行/字段校验
- -> Import Staging
- -> 错误/冲突预览
- -> 人工确认
- -> scm_product
+Supplier Excel -> Supplier Import -> scm_supplier
+
+商品大表 Excel
+ -> 模板、字段、类目、价格校验
+ -> Import Staging（保留 `supplier_name_raw`）
+ -> Supplier Matching（按批次及标准化供应商名称）
+ -> 错误/冲突/供应商解析预览
+ -> 全部解析后人工 Confirm
+ -> scm_product（保存 `source_supplier_id`）
 ```
 
 ## 正式查询
@@ -38,6 +40,8 @@ Excel
 `scm_import_task`
 `scm_import_row`
 `scm_import_row_error`
+
+推荐新增 `scm_product_import_supplier_match`，用来保存一个导入批次内每个标准化供应商名称的一次匹配决策；行推荐以 `supplier_match_id` 关联该决策，而不是重复保存 `matched_supplier_id`。
 
 只是导入过程，不是正式商品库。
 
@@ -60,3 +64,17 @@ Excel
 `scm_product` 与 `scm_supplier_product_quote` 是独立数据域。
 
 报价通过 `product_id` 与正式商品建立关联。
+
+`scm_product.source_supplier_id` 表示商品大表该行的**来源供应商**，而非该商品的唯一供应商，也不代表供应商已有正式报价。Product Import 不得因成本价或来源供应商自动创建 `scm_supplier_product_quote`。
+
+## 来源供应商解析
+
+Excel“供应商”原值只写入 Staging 的 `supplier_name_raw`，用于审计、排障和说明匹配原因；它不是业务外键，匹配成功后也不得删除。正式业务关联始终使用 `source_supplier_id -> scm_supplier.id`，本轮不增加 `source_supplier_name` 或 `supplier_name_snapshot`。
+
+自动匹配仅可使用 `normalize_supplier_name()`：Unicode NFKC、去除首尾空白、将连续空白压缩为一个普通空格。不得删除公司后缀或地区等词语，不得缩写、模糊匹配或由 AI 自动绑定。标准化 Excel 名称与标准化 `scm_supplier.supplier_name` 相等且仅有一个有效候选时，决策为 `MATCHED` / `NAME_EXACT`。
+
+有效候选必须同时为 `ARCHIVED`、`NORMAL`、未逻辑删除。多个有效候选为 `AMBIGUOUS`；没有同名供应商为 `UNMATCHED`；存在同名但均不符合有效条件为 `INELIGIBLE`。后三者必须由用户从当前有效 Supplier Master 中人工选择（`MANUAL`），或先在 Supplier Master 处理后重试；不得在导入页面创建、归档、恢复供应商或创建报价。
+
+推荐 Import Task 状态为 `UPLOADED` / `VALIDATING`、`VALIDATED`、`MATCHING`、`NEEDS_RESOLUTION`、`READY_TO_CONFIRM`、`CONFIRMED`、`FAILED`。Confirm 必须为全批次原子事务：重新校验全部行、类目、价格、全部 Match Decision 为 `MATCHED`，并重新查询每个 `matched_supplier_id` 仍是有效候选后，才写正式商品并将其作为 `source_supplier_id`。任一失败不得部分写入；先前匹配成功后供应商变为 STOPPED、BLACKLIST 或删除也必须使 Confirm 失败。
+
+未来 API（RECOMMENDED，未实现）：`POST /api/v1/products/imports/preview`、`GET /api/v1/products/imports/{task_id}`、`GET /api/v1/products/imports/{task_id}/supplier-matches`、`PUT /api/v1/products/imports/{task_id}/supplier-matches/{match_id}`、`POST /api/v1/products/imports/{task_id}/supplier-matches/retry`、`POST /api/v1/products/imports/{task_id}/confirm`。人工解析请求只提交 `{ "supplier_id": "<UUID>" }`；Backend 必须再次验证该 UUID 当前有效，前端不得把 supplier_name 作为正式选择结果。

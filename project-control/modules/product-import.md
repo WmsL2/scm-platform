@@ -2,7 +2,7 @@
 
 状态：NOT_STARTED
 Owner：TBD
-Last Updated：2026-09-07
+Last Updated：2026-09-09
 
 ## Database
 - [ ] 未开始
@@ -28,7 +28,10 @@ Last Updated：2026-09-07
 ## 已冻结业务规则
 - 固定标准大表；
 - 不做AI字段映射；
-- 不选择供应商；
+- 不创建供应商；只匹配已有 Supplier Master；
+- Excel 供应商原值保留为 `supplier_name_raw`；按批次和标准化名称产生一次 Match Decision；
+- 自动唯一匹配；歧义、未匹配和无效候选须人工解析；
+- Confirm 前全部供应商解析完成且重新验证仍有效；正式保存 `source_supplier_id`；
 - 不自动创建供应商产品报价；
 - Import表只做Staging；
 - 确认后写正式 `scm_product`。

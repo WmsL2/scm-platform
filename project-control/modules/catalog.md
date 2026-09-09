@@ -2,7 +2,7 @@
 
 状态：SCHEMA_REVIEW_READY
 Owner：TBD
-Last Updated：2026-09-07
+Last Updated：2026-09-09
 
 ## Database
 - [ ] 未开始
@@ -29,6 +29,7 @@ Product / Category / Pricing Schema Review 已完成，等待评审冻结结构�
 - 商品大表是正式商品主数据来源；
 - 大表一行 = 一条具体商品；
 - 正式商品表核心为 `scm_product`；
+- `scm_product` 推荐新增非唯一的 `source_supplier_id CHAR(36) NOT NULL`，索引并 FK → `scm_supplier.id ON DELETE RESTRICT`；其含义仅为商品大表来源供应商；
 - 一期不强制 SPU/SKU；
 - 真实整理后商品大表已取得；系统 `id` 为商品主键；
 - `sku`、`model`、`product_name`、`brand + model`、货号、69码均不设业务 UNIQUE；
