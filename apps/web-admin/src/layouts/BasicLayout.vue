@@ -6,6 +6,7 @@ import {
   Expand,
   Fold,
   House,
+  Box,
   OfficeBuilding,
   SwitchButton,
   UserFilled,
@@ -88,6 +89,10 @@ async function changePassword(): Promise<void> { if (passwordForm.new_password !
         <el-menu-item v-if="auth.hasPermission('supplier:list')" index="/suppliers">
           <el-icon><OfficeBuilding /></el-icon>
           <template #title>供应商管理</template>
+        </el-menu-item>
+        <el-menu-item v-if="auth.hasPermission('product:list')" index="/products">
+          <el-icon><Box /></el-icon>
+          <template #title>商品主数据</template>
         </el-menu-item>
         <template v-if="hasSystemMenu"><el-menu-item-group title="系统管理"><el-menu-item v-if="auth.hasPermission('system:user:list')" index="/admin/users"><el-icon><Setting /></el-icon><template #title>用户管理</template></el-menu-item><el-menu-item v-if="auth.hasPermission('system:role:list')" index="/admin/roles"><el-icon><Setting /></el-icon><template #title>角色权限</template></el-menu-item><el-menu-item v-if="auth.hasPermission('system:registration:list')" index="/admin/registrations"><el-icon><Setting /></el-icon><template #title><el-badge :value="registration.pendingCount" :hidden="registration.pendingCount === 0" class="registration-badge"><span class="registration-menu-label">注册审批</span></el-badge></template></el-menu-item></el-menu-item-group></template>
       </el-menu>
