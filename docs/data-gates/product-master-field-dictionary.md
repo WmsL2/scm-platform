@@ -9,6 +9,8 @@
 
 以下字段按源数据保留，但一期不得建立业务 UNIQUE 约束：`model`（型号）、`sku`、`product_name`、`brand + model`、货号、69码。
 
+`category_id` 是正式 Product 的 FROZEN `CHAR(36) NOT NULL` 外键。商品导入 Confirm 必须完成类目解析，正式 Product 通过该关系读取 Category 的 `deduction_rate`；Product 不重复保存一级、二级、三级类目名称。
+
 | 概念字段 | 冻结处理 |
 |---|---|
 | `sku` | 按来源保留；不是系统 id，不唯一；后续可按查询需求评审索引 |
