@@ -39,7 +39,7 @@
 | `source_supplier_id` | ADR-0008 已接受；Confirm 仅在来源供应商已解析且仍有效时写正式 Product。 | FROZEN | `CHAR(36) NOT NULL`、索引、FK → `scm_supplier.id ON DELETE RESTRICT`、非唯一；仅表示 Source Supplier。 | NO |
 | `brand` / `model` / `product_name` | 31 列大表确认字段语义与非唯一性，但没有业务必填规则。 | RECOMMENDED | `NULL`；不得因样例值齐全而改为 NOT NULL。 | NO |
 | `cost_price` / `jd_price` / `jd_self_operated_price` | 是价格计算输入；现有资料冻结了公式和除零校验，未冻结所有 Product 都必须拥有价格输入。 | RECOMMENDED | `NULL`；Pricing 保存/Confirm 时再按所用公式校验需要的输入。 | NO |
-| Category unique constraints | 已有商城 external ID 与工业品完整路径的规则建议，但当前仓库及工作环境没有两份真实类目源数据可统计验证。 | RECOMMENDED | 商城 `UNIQUE(source_type, level3_external_id)`；工业品 `UNIQUE(source_type, level1_name, level2_name, level3_name)`。 | YES，应用前必须完成真实数据预检 |
+| Category unique constraints | 两份真实类目源数据预检已完成；商城 external ID 无重复，但商城有两组同路径不同 external ID。 | RECOMMENDED | 仅商城建立 `UNIQUE(source_type, level3_external_id)`；工业品完整路径为 Source Loader / Import 去重规则，不建全局数据库路径 UNIQUE。 | NO，预检已完成 |
 | `source_type` | 现有资料有商城三级类目与工业品产品线两种来源。 | RECOMMENDED | `VARCHAR(32) NOT NULL`，受控值 `MALL_LEVEL3` / `INDUSTRIAL_LINE`。 | NO |
 | Category `is_active` | 商城来源含有效标记；当前没有独立删除语义。 | RECOMMENDED | `BOOLEAN NOT NULL DEFAULT TRUE`，表达当前可用性而非逻辑删除。 | NO |
 | `deduction_rate` | 类目扣点规则已冻结：商城标蓝 5%，其余商城及未标记工业品 8%。 | FROZEN | 值只从正式 Category 读取；Product 保存使用值快照。 | NO |
@@ -105,7 +105,7 @@
 | `created_by`, `updated_by` | `CHAR(36)` | YES / `NULL` | NO | 与既有系统审计字段一致。 |
 | `created_at`, `updated_at` | `DATETIME` | NOT NULL / 当前时间 | NO | 与既有系统审计字段一致。 |
 
-**RECOMMENDED 约束：**商城类目建立 `UNIQUE(source_type, level3_external_id)` 来源数据唯一约束；工业品建立 `(source_type, level1_name, level2_name, level3_name)` 唯一索引，以冻结的“完全重复路径去重”规则实施。Migration 前需以真实数据预检上述约束是否存在冲突。
+**RECOMMENDED 约束：**商城类目建立 `UNIQUE(source_type, level3_external_id)` 来源数据唯一约束；真实数据预检已通过。不得在整个 `scm_category` 建立 `UNIQUE(source_type, level1_name, level2_name, level3_name)`：商城存在合法的同名称路径、不同三级 external ID。工业品完整三级路径只作为 Category Source Loader / Import 的确定性去重与冲突检查规则；C1 Migration 暂不建立该路径数据库唯一索引，也不得为条件唯一性自行加入 generated column、functional index、trigger 或其他复杂机制。
 
 工业品完整三级名称路径仅用于导入去重与冲突检测，不是永久不可变的业务身份。所有正式 Category 身份始终使用 `scm_category.id`。
 
@@ -150,17 +150,32 @@ Confirm 是 all-or-nothing：重新校验行、类目、价格、全部决策均
 
 ## Category Source Data Preflight
 
-当前环境存在 `京东大表-礼品.xlsx`，它是商品大表而非商城三级类目维表或工业品产品线：共 16,333 条商品行，16,321 条含完整三级路径，12 条缺少至少一个类目层级，形成 227 个不同的完整路径。199 个路径在商品行中重复（共 16,293 行）；这是多个商品属于同一类目的正常现象，**不是** Category 维表重复证据。
+状态：COMPLETE。已对正式来源“商城三级品类维表数据.xlsx”与“工业品产品线.xlsx”完成预检。
 
-该商品大表没有类目 external ID 列，也没有 `source_type`、有效标记或事业部等 Category 维表字段。因此无法从它验证重复 external ID、`NULL` external ID、同 external ID 不同名称、同名称不同 external ID，也无法区分商城与工业品的唯一约束。下一 Migration 创建前，数据提供方仍必须提供两份原始类目维表，并输出至少以下统计：重复 external ID、重复完整三级路径、`NULL` external ID、空名称、完全重复行、同 external ID 不同名称、同名称不同 external ID。统计结果是采用上述 Category UNIQUE 约束的前置门禁。
+### 商城三级品类维表
+
+- 原始数据 6,289 行；一级、二级、三级名称及 `level3_external_id` 空值均为 0。
+- `level3_external_id` 重复 0，完全重复行 0；`UNIQUE(source_type, level3_external_id)` 因此预检通过。
+- 完整三级名称路径有 2 组重复：`电脑、办公 / 办公用纸 / 其他标签纸` 对应 external ID `35450`、`35638`；`休闲食品 / 蜜饯果干 / 混合蔬果干` 对应 `37058`、`37068`。正式商城 Category 身份必须以 external ID 为准；后续 Product Import 若仅以这两个名称路径匹配，必须标记 `AMBIGUOUS`，不得随机绑定。
+- 蓝色三级类目 449 条，非蓝色 5,840 条；有效标记均为 `1`；上下柜标记 `1` 为 5,078 条、`0` 为 1,211 条。
+
+### 工业品产品线
+
+- 原始数据 578 行；一级、二级、三级名称空值均为 0。
+- 发现 3 组完全重复完整路径：`工业品 / 工具 / 工具存储`、`五金/工具 / 搬运/起重设备 / 叉车配件`、`五金/工具 / 仪器仪表 / 检漏仪`。
+- Source Loader 按完整三级路径去重后，正式路径数为 575；该路径是导入去重身份，不是永久不可变业务 ID。
+
+### 预计正式数量与扣点
+
+预计正式 `scm_category` 为 6,864 条：商城 6,289 条加工业品 575 条。`deduction_rate = 0.0500` 为商城蓝色 449 条；`0.0800` 为其他商城 5,840 条加工业品 575 条，共 6,415 条。
 
 ## C1 Migration Plan (plan only)
 
-基线 Alembic Head 为 `20260908_0007`。后续 Category / Product Migration 应只包含：
+基线 Alembic Head 为 `20260908_0007`。真实类目源数据预检已完成；后续 Category / Product Migration 应只包含：
 
 - `scm_category`；
 - `scm_product`，包括 `category_id` 与 `source_supplier_id` 两个正式外键、冻结的价格快照与派生价格列；
-- 本评审已列出的索引、Decimal 精度和经数据预检后确认的 Category UNIQUE 约束。
+- 本评审已列出的索引、Decimal 精度及商城 `UNIQUE(source_type, level3_external_id)` 约束。
 
 不得在同一个 Migration 创建 `scm_import_task`、`scm_import_row`、`scm_import_row_error` 或 `scm_product_import_supplier_match`；它们属于后续 Product Import。C1 也不得加入未经业务决策的 Product/Category 删除列。
 

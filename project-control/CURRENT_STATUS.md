@@ -44,14 +44,14 @@ Sprint 1 — Auth/RBAC + Supplier
 ## 下一步
 
 - 主任务：Catalog Schema Finalization 已完成；Product / Category Migration 尚未创建。
-- 后续任务：安排 Pricing Service；取得真实类目源数据并完成 UNIQUE 预检后，再创建 Category / Product Migration 与 Product Backend。
+- 后续任务：基于届时最新 Alembic Head 创建 Category / Product Migration，再推进 Product Backend；Pricing Service 与真实类目源数据 UNIQUE 预检已完成。
 - Auth 后续范围：Refresh Token、Session、Multi-device Logout 与 Role Delete / disable policy 仍待后续冻结。
 
 ## Blocker
 
 - Repository：无代码合并 Blocker。
 - Supplier：Delete & Import 已合入；未确认的企业、税务、地址、银行、资质等字段仍不得自行添加。资质业务字段及其 API 继续冻结。
-- Product / Catalog：Schema Finalization 已完成；Category UNIQUE 约束的真实数据预检尚未完成，且 Product / Category Migration 尚未创建。
+- Product / Catalog：Schema Finalization、Pricing Service 与 Category Source Data Preflight 已完成；Category UNIQUE 规则已按真实数据修正，Product / Category Migration 尚未创建。
 
 ## Workstreams / Implementation Context
 
@@ -61,4 +61,4 @@ Sprint 1 — Auth/RBAC + Supplier
 - Auth/RBAC：Auth Sprint 1 当前范围 IMPLEMENTED / VERIFIED（Revision `20260908_0006`），包括注册审批、用户角色/角色权限管理、动态权限目录、Profile 与修改密码；Web Admin UI Optimization 分支已完成内部 UUID 隐藏、中文用户状态、角色名称展示（只读 `role_names` 响应字段）、待审批数字角标与审批历史列表的前后端本地验证；角色只可分配给 `ENABLED` 用户，浏览器验收待完成；Refresh Token、Session、Multi-device Logout 仍属未来范围。
 - Role Management：自定义角色创建 IMPLEMENTED（Revision `20260908_0007`）。新增 `system:role:create`，角色编码不可修改且符合小写英文/数字/下划线规范，角色初始无权限；系统管理员内置角色存在时由迁移自动获得创建权限。角色编辑、停用与删除仍属未来范围。
 - Post-Merge Hardening：Request transaction ownership、Service caller-owned transaction participation、Account association ID 幂等去重与 Supplier UUID Router validation 已验证；ADR-0007 冻结事务规则，无 Migration 变化。
-- Catalog：`SCHEMA_FINALIZATION_COMPLETE / MIGRATION_PREFLIGHT_REQUIRED`；`category_id` 与 `source_supplier_id` 已完成正式关系收口，Product / Category Migration 尚未创建；真实类目源数据预检后方可实施 Category UNIQUE 约束。
+- Catalog：`SCHEMA_FINALIZATION_COMPLETE / MIGRATION_PREFLIGHT_REQUIRED`；`category_id` 与 `source_supplier_id` 已完成正式关系收口；真实类目源数据预检已完成，商城 external ID UNIQUE 已验证、工业品路径为导入去重规则；下一步为 Product / Category Migration。
