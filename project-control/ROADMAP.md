@@ -4,7 +4,7 @@
 |---|---:|---|---|
 | Sprint 0 | 3 | COMPLETED | Local-First工程底座 |
 | Sprint 1 | 5 | IN_PROGRESS | Auth/RBAC + Supplier |
-| Sprint 2 | 5 | NOT_STARTED | Supplier Product Quote |
+| Sprint 2 | 5 | COMPLETED | Product Cost Pricing（不建设独立报价库） |
 | Sprint 3 | 5 | NOT_STARTED | Product Master |
 | Sprint 4 | 5 | NOT_STARTED | Product Master Excel Import |
 | Sprint 5 | 7 | NOT_STARTED | Smart Quotation |

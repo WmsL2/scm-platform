@@ -32,7 +32,7 @@ Sprint 1 — Auth/RBAC + Supplier
 - [x] Multi-Developer / Multi-Agent
 - [x] 文档同步 Definition of Done
 - [x] 供应商编码系统自动生成
-- [x] 供应商产品报价独立历史库
+- [x] 商品当前成本价承载当前供应商报价；一期不建设独立报价库
 - [x] 商品大表是正式商品主数据来源
 - [x] 大表一行 = 一条具体正式商品
 - [x] 一期不强制 SPU/SKU
@@ -45,6 +45,7 @@ Sprint 1 — Auth/RBAC + Supplier
 
 - 主任务：Catalog Schema Finalization 已完成；Product / Category Migration 尚未创建。
 - 后续任务：基于届时最新 Alembic Head 创建 Category / Product Migration，再推进 Product Backend；Pricing Service 与真实类目源数据 UNIQUE 预检已完成。
+- 业务冻结：Supplier Product Quote 已取消；后续供应商新报价直接更新正式 Product 的 `cost_price`，并原子重算派生价格；不创建报价历史、有效期或比价模块。
 - Auth 后续范围：Refresh Token、Session、Multi-device Logout 与 Role Delete / disable policy 仍待后续冻结。
 
 ## Blocker
@@ -62,3 +63,4 @@ Sprint 1 — Auth/RBAC + Supplier
 - Role Management：自定义角色创建 IMPLEMENTED（Revision `20260908_0007`）。新增 `system:role:create`，角色编码不可修改且符合小写英文/数字/下划线规范，角色初始无权限；系统管理员内置角色存在时由迁移自动获得创建权限。角色编辑、停用与删除仍属未来范围。
 - Post-Merge Hardening：Request transaction ownership、Service caller-owned transaction participation、Account association ID 幂等去重与 Supplier UUID Router validation 已验证；ADR-0007 冻结事务规则，无 Migration 变化。
 - Catalog：`SCHEMA_FINALIZATION_COMPLETE / MIGRATION_PREFLIGHT_REQUIRED`；`category_id` 与 `source_supplier_id` 已完成正式关系收口；真实类目源数据预检已完成，商城 external ID UNIQUE 已验证、工业品路径为导入去重规则；下一步为 Product / Category Migration。
+- Product Cost Pricing：Pricing Service 已实现；`cost_price` 是当前成本价和当前供应商报价，不建设 `scm_supplier_product_quote`。成本价直接更新及 Product Backend 仍待后续 Product 任务实现。

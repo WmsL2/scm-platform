@@ -14,7 +14,7 @@
 
 - 一行整理后的商品大表等于一条具体正式 `scm_product`；系统 `id` 是唯一主键，一期不强制 SPU/SKU。
 - `model`、`sku`、`product_name`、`brand + model`、货号与69码均不设业务 UNIQUE；69码以原始文本保存，不拆颜色、不限制 13 位数字。
-- Product、Supplier Master、Supplier Product Quote 是独立领域。商品大表“供应商”列用于解析来源供应商；正式 Product 保存 `source_supplier_id`，但不得自动生成报价。
+- Product 与 Supplier Master 是独立领域。商品大表“供应商”列用于解析来源供应商；正式 Product 保存 `source_supplier_id`。`cost_price` 是 Product 当前成本价和当前供应商报价，不创建独立 Quote 领域。
 - Product 通过 `category_id` 查询 Category 的 `deduction_rate`，并保存本次使用的 `deduction_rate` 快照。
 - 所有金额和比率计算使用 Decimal、结果保留 4 位小数；派生价格结果需要正式保存。后端按 Category 规则重算并校验前端值。
 
@@ -22,7 +22,7 @@
 
 **RECOMMENDED：**一期建立 `scm_category` 与 `scm_product` 两张正式表；当前价格输入、扣点快照和派生结果直接承载于 `scm_product`。这对应一行大表一条商品、无独立 Product Price History 的已知需求，令导入、列表筛选和排序为单表读取。
 
-方案 B（`scm_product` 加独立 Product Pricing Table）会为当前价格增加关联、导入事务和查询复杂度；只有未来冻结多版本商品价格历史、价格生效区间或独立定价审批时才应引入。它不能与 Supplier Product Quote History 合并，后者仍是独立领域。
+方案 B（`scm_product` 加独立 Product Pricing Table）会为当前价格增加关联、导入事务和查询复杂度；只有未来冻结多版本商品价格历史、价格生效区间或独立定价审批时才应引入。一期也不建设 Supplier Product Quote History。
 
 **FROZEN — General monetary / ratio rounding：**普通金额字段和普通比率字段以 Decimal 语义使用 `ROUND_HALF_UP`，统一保留 4 位小数（例如 `123.45678 → 123.4568`）；禁止 Float。
 
@@ -38,7 +38,8 @@
 | Product → Category delete action | Cascade 会删除正式 Product，违反正式主数据保留原则；现有资料未把该动作提升为业务冻结规则。 | RECOMMENDED | `ON DELETE RESTRICT`；不得使用 `CASCADE`。 | NO |
 | `source_supplier_id` | ADR-0008 已接受；Confirm 仅在来源供应商已解析且仍有效时写正式 Product。 | FROZEN | `CHAR(36) NOT NULL`、索引、FK → `scm_supplier.id ON DELETE RESTRICT`、非唯一；仅表示 Source Supplier。 | NO |
 | `brand` / `model` / `product_name` | 31 列大表确认字段语义与非唯一性，但没有业务必填规则。 | RECOMMENDED | `NULL`；不得因样例值齐全而改为 NOT NULL。 | NO |
-| `cost_price` / `jd_price` / `jd_self_operated_price` | 是价格计算输入；现有资料冻结了公式和除零校验，未冻结所有 Product 都必须拥有价格输入。 | RECOMMENDED | `NULL`；Pricing 保存/Confirm 时再按所用公式校验需要的输入。 | NO |
+| `cost_price` | 业务确认它就是当前供应商报价；正式 Product 的当前价格计算以它为基础。 | FROZEN | `DECIMAL(18,4) NOT NULL`；供应商新报价直接更新此值并重算派生价格。 | NO |
+| `jd_price` / `jd_self_operated_price` | 是价格计算输入；现有资料冻结了公式和除零校验，未冻结所有 Product 都必须拥有这两项输入。 | RECOMMENDED | `NULL`；Pricing 保存/Confirm 时再按所用公式校验需要的输入。 | NO |
 | Category unique constraints | 两份真实类目源数据预检已完成；商城 external ID 无重复，但商城有两组同路径不同 external ID。 | RECOMMENDED | 仅商城建立 `UNIQUE(source_type, level3_external_id)`；工业品完整路径为 Source Loader / Import 去重规则，不建全局数据库路径 UNIQUE。 | NO，预检已完成 |
 | `source_type` | 现有资料有商城三级类目与工业品产品线两种来源。 | RECOMMENDED | `VARCHAR(32) NOT NULL`，受控值 `MALL_LEVEL3` / `INDUSTRIAL_LINE`。 | NO |
 | Category `is_active` | 商城来源含有效标记；当前没有独立删除语义。 | RECOMMENDED | `BOOLEAN NOT NULL DEFAULT TRUE`，表达当前可用性而非逻辑删除。 | NO |
@@ -63,7 +64,7 @@
 | 9 | 三级类目 | `category_id` FK | `CHAR(36)` | NO | — | YES | NO | CATEGORY_LOOKUP | 正式 Product 为 NOT NULL；FK 指向 `scm_category.id`；导入无法匹配时作为错误而非静默入库。 |
 | 10 | 货号 | `item_number` | `VARCHAR(255)` | YES | `NULL` | YES | NO | MASTER_INPUT | 按源值保留，不是系统标识。 |
 | 11 | 同款京东链接 | `jd_same_product_url` | `VARCHAR(2048)` | YES | `NULL` | NO | NO | SOURCE_REFERENCE | 与“参考链接”是两个来源列；未确认相同前分别保留。 |
-| 12 | *成本价 | `cost_price` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | MASTER_INPUT | 后端定价基础输入。 |
+| 12 | *成本价 | `cost_price` | `DECIMAL(18,4)` | NO | — | YES | NO | MASTER_INPUT | FROZEN：当前成本价，也是当前供应商报价；后端定价基础输入。 |
 | 13 | *市场价 | `market_price` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值为 `jd_price + 10`；旧 Excel 值仅作导入差异检查。 |
 | 14 | *京东价 | `jd_price` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | MASTER_INPUT | `jd_margin` 分母；零值处理由后端确定性校验。 |
 | 15 | *慧采价/协议价 | `agreement_price` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值为 `cost_price * 1.2`。 |
@@ -71,7 +72,7 @@
 | 17 | 利润 | `profit` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值为结算价减成本价。 |
 | 18 | 京东价毛利（15-50） | `jd_margin` | `DECIMAL(9,4)` | YES | `NULL` | YES | NO | DERIVED | 正式公式为 `(jd_price - agreement_purchase_price) / jd_price`；表头括号不替代公式。 |
 | 19 | 采销员 | `purchasing_agent` | `VARCHAR(128)` | YES | `NULL` | YES | NO | MASTER_INPUT | 仅保留来源人员文本；不假定关联系统用户。 |
-| 20 | 供应商 | Staging：`supplier_name_raw`；正式：`source_supplier_id` | 原值 `VARCHAR(255)`；FK `CHAR(36)` | 原值 YES；正式 NOT NULL | `NULL` / — | 正式 FK 索引 | NO | SOURCE_SUPPLIER_LOOKUP | 原值仅供导入审计与确定性解析；正式 FK → `scm_supplier.id`，`ON DELETE RESTRICT`。不是 `supplier_id`，不自动创建 Supplier Product Quote。 |
+| 20 | 供应商 | Staging：`supplier_name_raw`；正式：`source_supplier_id` | 原值 `VARCHAR(255)`；FK `CHAR(36)` | 原值 YES；正式 NOT NULL | `NULL` / — | 正式 FK 索引 | NO | SOURCE_SUPPLIER_LOOKUP | 原值仅供导入审计与确定性解析；正式 FK → `scm_supplier.id`，`ON DELETE RESTRICT`。不是当前报价供应商；不创建独立 Quote。 |
 | 21 | 69码 | `barcode_text` | `VARCHAR(255)` | YES | `NULL` | YES | NO | MASTER_INPUT | 原样文本，例如可含 `---深蓝`。 |
 | 22 | 毛利复核 | `deduction_review` | `DECIMAL(9,4)` | YES | `NULL` | YES | NO | DERIVED | `ROUNDDOWN((agreement_price - agreement_purchase_price) / agreement_price, 4)`。 |
 | 23 | 产品规格 | `product_specification` | `TEXT` | YES | `NULL` | NO | NO | MASTER_INPUT | 不根据文本自动拆参数表。 |
@@ -146,7 +147,7 @@ Import Row 尚未冻结时，推荐增加 `supplier_match_id` FK 指向该表，
 
 Confirm 是 all-or-nothing：重新校验行、类目、价格、全部决策均为 `MATCHED`，并重新查询每个已匹配供应商仍有效；任一失败均不得写入任何 `scm_product`。因此匹配成功并不替代 Confirm 时的状态检查。
 
-**BUSINESS_DECISION_REQUIRED：**Product / Category 的逻辑删除策略、未明确的外键删除动作、来源图片的存储形态、品牌与采销员的结构化关系、类目匹配失败的人工修正流程，以及除已冻结 `category_id`、`source_supplier_id` 外的输入字段最终业务必填规则。不得在 C1 Migration 中自行决定。
+**BUSINESS_DECISION_REQUIRED：**Product / Category 的逻辑删除策略、未明确的外键删除动作、来源图片的存储形态、品牌与采销员的结构化关系、类目匹配失败的人工修正流程，以及除已冻结 `category_id`、`source_supplier_id`、`cost_price` 外的输入字段最终业务必填规则。不得在 C1 Migration 中自行决定。
 
 ## Category Source Data Preflight
 
@@ -190,4 +191,4 @@ Confirm 是 all-or-nothing：重新校验行、类目、价格、全部决策均
 
 ## 后续实施顺序
 
-Schema Finalization 已完成：实现 Pricing Service 与单元测试 → 在拿到类目源数据并完成 UNIQUE 预检后，基于届时最新 main 的 Alembic Head 创建 Category/Product Migration → 创建 Product Backend。Product Import、Supplier 与 Supplier Quote 不在本阶段实现范围。
+Schema Finalization、Pricing Service 与类目数据预检已完成：基于届时最新 main 的 Alembic Head 创建 Category/Product Migration → 创建 Product Backend（包括成本价直接更新与派生价格原子重算）→ 创建 Product Import。Supplier Product Quote 不在一期范围。

@@ -6,7 +6,7 @@
 
 1. Auth / RBAC；
 2. 供应商主数据；
-3. 供应商产品报价库；
+3. 商品当前成本价与定价；
 4. 正式商品主数据；
 5. 公司标准商品大表导入；
 6. 客户需求；
@@ -45,13 +45,9 @@
 
 后续商品查询全部查 MySQL `scm_product`。
 
-### 2.3 供应商产品报价
+### 2.3 商品当前成本价
 
-回答：
-
-> 哪个供应商以什么价格供应哪个商品？
-
-与商品主数据保持独立。
+`scm_product.cost_price` 是具体正式商品的当前成本价，也是当前供应商报价；不建设独立供应商产品报价库。
 
 ## 3. 技术栈
 
@@ -76,7 +72,7 @@
 |---|---:|---:|---|
 | Sprint 0 | D1-D3 | 3 | Local-First 企业底座 |
 | Sprint 1 | D4-D8 | 5 | Auth/RBAC + 供应商 |
-| Sprint 2 | D9-D13 | 5 | 供应商产品报价库 |
+| Sprint 2 | D9-D13 | 5 | 商品当前成本价与定价 |
 | Sprint 3 | D14-D18 | 5 | 商品主数据 / Catalog |
 | Sprint 4 | D19-D23 | 5 | 标准商品大表导入 |
 | Sprint 5 | D24-D30 | 7 | 客户需求 + 智能报价 |
@@ -102,7 +98,7 @@ Sprint 0 合并 main 后，可以并行：
 
 - Auth / System
 - Supplier
-- Supplier Quote
+- Product Cost Pricing
 - Catalog Contract / Data Dictionary
 - Frontend Shell
 

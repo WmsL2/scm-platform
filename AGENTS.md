@@ -113,7 +113,7 @@ Docker 不是开发前置条件，也不是 Sprint 0 验收条件。
 - `scm_import_*` 只负责导入过程；
 - 后续正式商品查询只查询 `scm_product` 及受控参数表；
 - 商品导入不创建供应商；Excel 供应商原值保留在 Staging，并仅匹配已有有效 Supplier Master；Confirm 后正式商品以 `source_supplier_id` 保存来源供应商；
-- 商品导入不自动创建供应商产品报价；
+- 商品导入将大表 `cost_price` 写入正式 Product 的当前成本价；不得创建独立供应商产品报价记录；
 - 一期不强制 SPU/SKU 二层模型；
 - 禁止擅自新增 `scm_product_sku` 并把它作为必需架构；
 - 商品最终字段以实际《大表模版.xlsx》为准；
@@ -142,30 +142,22 @@ Docker 不是开发前置条件，也不是 Sprint 0 验收条件。
 - `archive_status`: DRAFT / PENDING / ARCHIVED
 - `cooperation_status`: NORMAL / STOPPED / BLACKLIST
 
-供应商产品报价只能关联已归档且正常合作供应商。
+商品导入的来源供应商匹配只能选择已归档且正常合作供应商。
 
 ---
 
-# 7. 供应商产品报价规则
+# 7. 商品当前成本价规则
 
-产品报价库和商品主数据是两个独立数据域。
-
-`scm_product`：
-> 这个商品是什么？
-
-`scm_supplier_product_quote`：
-> 哪个供应商以什么价格供应这个商品？
+一期不建设独立供应商产品报价库。`scm_product.cost_price` 表示该具体正式商品的**当前成本价**，也是业务确认的当前供应商报价。
 
 规则：
 
-- 产品型号是大小写敏感的核心检索字段；
-- 型号不是全局 UNIQUE；
-- 同型号允许多供应商；
-- 同供应商同型号允许多条历史报价；
-- 正式历史价格禁止 UPDATE 覆盖；
-- 更正采用旧记录 VOID + INSERT 新记录；
-- 过期或 VOID 报价不能进入有效报价候选；
-- 报价可通过 `product_id` 关联正式商品，未匹配时允许待关联。
+- 不创建 `scm_supplier_product_quote`，不建设报价编号、报价有效期、VOID、历史报价或多供应商比价；
+- 商品大表导入时，来源 `cost_price` 写入正式 Product 当前成本价；
+- 供应商提供新报价时，由后续 Product Backend 在目标 Product 上直接更新 `cost_price`；
+- 每次成本价更新必须在同一事务内按冻结公式重新计算并保存派生价格与毛利字段，并写入既有 `updated_by`、`updated_at` 审计字段；
+- `source_supplier_id` 仍只表示商品大表来源供应商；它不是“当前报价供应商”，成本价更新不新增 Quote 关联或历史记录；
+- 未来只有在业务重新确认多供应商比价、报价有效期或独立报价历史时，才能通过新 ADR 新建该领域。
 
 ---
 
@@ -180,7 +172,7 @@ Docker 不是开发前置条件，也不是 Sprint 0 验收条件。
 - AI 猜表头；
 - AI 字段映射；
 - 导入时选择供应商；
-- 自动生成供应商报价；
+- 自动生成独立供应商报价记录；
 - 错误行静默入库。
 
 ---
@@ -200,8 +192,7 @@ AI 负责：
 - 正式商品查询；
 - 型号/品牌/参数精确匹配；
 - 供应商状态过滤；
-- 报价有效期；
-- 价格计算与排序；
+- 当前成本价及派生价格计算与排序；
 - 权限；
 - 审计；
 - 数据落库。
@@ -228,7 +219,7 @@ AI 输出必须经过 Pydantic Schema 验证。
 建议：
 
 - `feat/supplier`
-- `feat/supplier-quote`
+- `feat/product-cost-update`
 - `feat/catalog`
 - `feat/product-import`
 - `fix/...`
@@ -237,7 +228,7 @@ AI 输出必须经过 Pydantic Schema 验证。
 Commit：
 
 - `feat(supplier): 实现供应商自动编码`
-- `fix(supplier-quote): 修复过期报价参与比价`
+- `fix(catalog): 修复成本价更新后的派生价格重算`
 - `docs(project-control): 更新项目状态`
 
 推荐使用 Git Worktree 让多个开发人员/Codex并行。

@@ -2,7 +2,7 @@
 
 Status: system relationship, lifecycle and confirmed field dictionary are FROZEN. Backend implementation is documented in `docs/14-sprint-1-supplier-master-backend-implementation.md`.
 
-Supplier Master answers who supplies. It is independent from Product Master and Supplier Product Quote. Every future relation uses supplier_id, never supplier_name.
+Supplier Master answers who supplies. It is independent from Product Master. Every future relation uses supplier_id, never supplier_name; Sprint 2 does not create a separate Supplier Product Quote domain.
 
 | Table | Responsibility | FROZEN columns/relationships |
 |---|---|---|
@@ -34,7 +34,7 @@ Effective selectable supplier is ARCHIVED + NORMAL + not deleted.
 
 Supplier is logical-delete only. Contacts/qualifications can logical-delete; referenced history is retained. No cascade deletes.
 
-Product Import 的来源供应商匹配只可选择上述 effective selectable supplier。正式 Product 未来以 `source_supplier_id` FK 保存来源，不以 supplier_name 关联，也不将此关系视为 Supplier Product Quote。
+Product Import 的来源供应商匹配只可选择上述 effective selectable supplier。正式 Product 未来以 `source_supplier_id` FK 保存来源，不以 supplier_name 关联；该字段不是当前成本价的供应商历史关系。
 
 ## Design API and pages
 
