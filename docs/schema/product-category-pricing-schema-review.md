@@ -37,7 +37,7 @@
 | Category logical / physical delete | 现有来源只有“有效标记”，没有删除、恢复或历史保留语义。 | BUSINESS_DECISION_REQUIRED | C1 仅保留 `is_active`；不新增逻辑删除列，不定义物理删除 API。 | NO（删除模型不进入 C1） |
 | Product → Category delete action | Cascade 会删除正式 Product，违反正式主数据保留原则；现有资料未把该动作提升为业务冻结规则。 | RECOMMENDED | `ON DELETE RESTRICT`；不得使用 `CASCADE`。 | NO |
 | `source_supplier_id` | ADR-0008 已接受；Confirm 仅在来源供应商已解析且仍有效时写正式 Product。 | FROZEN | `CHAR(36) NOT NULL`、索引、FK → `scm_supplier.id ON DELETE RESTRICT`、非唯一；仅表示 Source Supplier。 | NO |
-| `brand` / `model` / `product_name` | 31 列大表确认字段语义与非唯一性，但没有业务必填规则。 | RECOMMENDED | `NULL`；不得因样例值齐全而改为 NOT NULL。 | NO |
+| `brand` / `model` / `product_name` | 32 列最新商品大表确认字段语义与非唯一性，但没有业务必填规则。 | RECOMMENDED | `NULL`；不得因样例值齐全而改为 NOT NULL。 | NO |
 | `cost_price` | 业务确认它就是当前供应商报价；正式 Product 的当前价格计算以它为基础。 | FROZEN | `DECIMAL(18,4) NOT NULL`；供应商新报价直接更新此值并重算派生价格。 | NO |
 | `jd_price` / `jd_self_operated_price` | 是价格计算输入；现有资料冻结了公式和除零校验，未冻结所有 Product 都必须拥有这两项输入。 | RECOMMENDED | `NULL`；Pricing 保存/Confirm 时再按所用公式校验需要的输入。 | NO |
 | Category unique constraints | 两份真实类目源数据预检已完成；商城 external ID 无重复，但商城有两组同路径不同 external ID。 | RECOMMENDED | 仅商城建立 `UNIQUE(source_type, level3_external_id)`；工业品完整路径为 Source Loader / Import 去重规则，不建全局数据库路径 UNIQUE。 | NO，预检已完成 |
@@ -47,7 +47,7 @@
 | Decimal precision | 现有评审已完成精度建议，尚非业务最大金额的正式上限承诺。 | RECOMMENDED | 金额 `DECIMAL(18,4)`；比率 `DECIMAL(9,4)`。 | NO |
 | Rounding | 类目与价格规则门禁已冻结。 | FROZEN | 普通金额/比率 `ROUND_HALF_UP`、4 位小数；仅 `deduction_review` 为 `ROUND_DOWN`、4 位小数。 | NO |
 
-## 31 列 Product Schema Matrix
+## 32 列 Product Schema Matrix
 
 以下 Matrix 中，`UNIQUE` 均为数据库业务唯一约束；`—` 表示不适用。Nullable/Default 是 **RECOMMENDED**，不是现有实现。
 
@@ -63,27 +63,28 @@
 | 8 | 二级类目 | 三级路径解析输入（不是 `scm_product` 列） | — | PENDING | — | NO | NO | CATEGORY_LOOKUP | 与一级/三级共同用于受控类目匹配；导入字段级必填规则尚未冻结。 |
 | 9 | 三级类目 | `category_id` FK | `CHAR(36)` | NO | — | YES | NO | CATEGORY_LOOKUP | 正式 Product 为 NOT NULL；FK 指向 `scm_category.id`；导入无法匹配时作为错误而非静默入库。 |
 | 10 | 货号 | `item_number` | `VARCHAR(255)` | YES | `NULL` | YES | NO | MASTER_INPUT | 按源值保留，不是系统标识。 |
-| 11 | 同款京东链接 | `jd_same_product_url` | `VARCHAR(2048)` | YES | `NULL` | NO | NO | SOURCE_REFERENCE | 与“参考链接”是两个来源列；未确认相同前分别保留。 |
+| 11 | 链接 | `jd_same_product_url` | `VARCHAR(2048)` | YES | `NULL` | NO | NO | SOURCE_REFERENCE | 与“参考链接”是两个来源列；不合并。 |
 | 12 | *成本价 | `cost_price` | `DECIMAL(18,4)` | NO | — | YES | NO | MASTER_INPUT | FROZEN：当前成本价，也是当前供应商报价；后端定价基础输入。 |
 | 13 | *市场价 | `market_price` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值为 `jd_price + 10`；旧 Excel 值仅作导入差异检查。 |
 | 14 | *京东价 | `jd_price` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | MASTER_INPUT | `jd_margin` 分母；零值处理由后端确定性校验。 |
 | 15 | *慧采价/协议价 | `agreement_price` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值为 `cost_price * 1.2`。 |
 | 16 | 协议价采购价/结算价 | `agreement_purchase_price` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值由协议价及扣点快照计算。 |
 | 17 | 利润 | `profit` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值为结算价减成本价。 |
-| 18 | 京东价毛利（15-50） | `jd_margin` | `DECIMAL(9,4)` | YES | `NULL` | YES | NO | DERIVED | 正式公式为 `(jd_price - agreement_purchase_price) / jd_price`；表头括号不替代公式。 |
-| 19 | 采销员 | `purchasing_agent` | `VARCHAR(128)` | YES | `NULL` | YES | NO | MASTER_INPUT | 仅保留来源人员文本；不假定关联系统用户。 |
-| 20 | 供应商 | Staging：`supplier_name_raw`；正式：`source_supplier_id` | 原值 `VARCHAR(255)`；FK `CHAR(36)` | 原值 YES；正式 NOT NULL | `NULL` / — | 正式 FK 索引 | NO | SOURCE_SUPPLIER_LOOKUP | 原值仅供导入审计与确定性解析；正式 FK → `scm_supplier.id`，`ON DELETE RESTRICT`。不是当前报价供应商；不创建独立 Quote。 |
-| 21 | 69码 | `barcode_text` | `VARCHAR(255)` | YES | `NULL` | YES | NO | MASTER_INPUT | 原样文本，例如可含 `---深蓝`。 |
-| 22 | 毛利复核 | `deduction_review` | `DECIMAL(9,4)` | YES | `NULL` | YES | NO | DERIVED | `ROUNDDOWN((agreement_price - agreement_purchase_price) / agreement_price, 4)`。 |
-| 23 | 产品规格 | `product_specification` | `TEXT` | YES | `NULL` | NO | NO | MASTER_INPUT | 不根据文本自动拆参数表。 |
-| 24 | 众诚毛利 | `gross_margin` | `DECIMAL(9,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值为 `profit / agreement_price`。 |
-| 25 | 备注 | `remark` | `TEXT` | YES | `NULL` | NO | NO | MASTER_INPUT | 普通业务文本。 |
-| 26 | 折扣率 | `discount_rate` | `DECIMAL(9,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值为 `agreement_price / jd_self_operated_price`。 |
-| 27 | 限售区域 | `restricted_regions` | `TEXT` | YES | `NULL` | NO | NO | MASTER_INPUT | 原样业务文本；区域结构化规则 PENDING。 |
-| 28 | 京东自营前台价 | `jd_self_operated_price` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | MASTER_INPUT | 当前活动到手价，不含国补价；不是计算字段。 |
-| 29 | 参考链接 | `reference_url` | `VARCHAR(2048)` | YES | `NULL` | NO | NO | MASTER_INPUT | 优先同款京东自营旗舰店，无则同款京东自营商品。 |
-| 30 | 偏远地区加收运费发货（具体另外核算） | `remote_area_freight_note` | `TEXT` | YES | `NULL` | NO | NO | SOURCE_REFERENCE | 仅保留来源说明；具体核算规则未冻结，不进入当前价格公式。 |
+| 18 | 京东价毛利（30-50） | `jd_margin` | `DECIMAL(9,4)` | YES | `NULL` | YES | NO | DERIVED | 正式公式为 `(jd_price - agreement_purchase_price) / jd_price`；表头括号不替代公式。 |
+| 19 | 毛利复核 | `deduction_review` | `DECIMAL(9,4)` | YES | `NULL` | YES | NO | DERIVED | `ROUNDDOWN((agreement_price - agreement_purchase_price) / agreement_price, 4)`。 |
+| 20 | 众诚毛利 | `gross_margin` | `DECIMAL(9,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值为 `profit / agreement_price`。 |
+| 21 | 采销员 | `purchasing_agent` | `VARCHAR(128)` | YES | `NULL` | YES | NO | MASTER_INPUT | 仅保留来源人员文本；不假定关联系统用户。 |
+| 22 | 供应商 | Staging：`supplier_name_raw`；正式：`source_supplier_id` | 原值 `VARCHAR(255)`；FK `CHAR(36)` | 原值 YES；正式 NOT NULL | `NULL` / — | 正式 FK 索引 | NO | SOURCE_SUPPLIER_LOOKUP | 原值仅供导入审计与确定性解析；正式 FK → `scm_supplier.id`，`ON DELETE RESTRICT`。不是当前报价供应商；不创建独立 Quote。 |
+| 23 | 69码 | `barcode_text` | `VARCHAR(255)` | YES | `NULL` | YES | NO | MASTER_INPUT | 原样文本，例如可含 `---深蓝`。 |
+| 24 | 产品规格 | `product_specification` | `TEXT` | YES | `NULL` | NO | NO | MASTER_INPUT | 不根据文本自动拆参数表。 |
+| 25 | 卖点 | `selling_points` | `TEXT` | YES | `NULL` | NO | NO | MASTER_INPUT | 原样保留商品卖点文本；不自动拆关键词或标签表。 |
+| 26 | 限售区域 | `restricted_regions` | `TEXT` | YES | `NULL` | NO | NO | MASTER_INPUT | 原样业务文本；区域结构化规则 PENDING。 |
+| 27 | 京东自营前台价 | `jd_self_operated_price` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | MASTER_INPUT | 当前活动到手价，不含国补价；不是计算字段。 |
+| 28 | 参考链接 | `reference_url` | `VARCHAR(2048)` | YES | `NULL` | NO | NO | MASTER_INPUT | 原样保留该来源链接。 |
+| 29 | 自营旗舰店/官方旗舰店 | `storefront_type` | `VARCHAR(64)` | YES | `NULL` | NO | NO | MASTER_INPUT | 原样保留店铺类型文本；枚举值尚未冻结，不强加约束。 |
+| 30 | 折扣率 | `discount_rate` | `DECIMAL(9,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值为 `agreement_price / jd_self_operated_price`。 |
 | 31 | 价格虚高比例（30%） | `price_inflation_rate` | `DECIMAL(9,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值为 `(agreement_price - jd_self_operated_price) / jd_self_operated_price`；表头括号不替代公式。 |
+| 32 | 备注 | `remark` | `TEXT` | YES | `NULL` | NO | NO | MASTER_INPUT | 普通业务文本。 |
 
 所有 DERIVED 列的旧 Excel 值只能用于导入校验/差异展示，不能覆盖后端按冻结公式重新计算的正式值。
 

@@ -1,7 +1,7 @@
 # Product Master Field Dictionary / 商品主数据字段门禁
 
-状态：FROZEN — `SCHEMA_DESIGN_READY`  
-范围：已确认商品大表字段语义、唯一性约束边界与价格字段设计；不创建 Migration、ORM 或正式表。
+状态：FROZEN — `LATEST_EXCEL_32_COLUMNS`
+范围：已确认最新商品大表字段语义、唯一性约束边界与价格字段设计；正式 Schema 已实现，商品导入仍待后续实现。
 
 ## 主数据边界
 
@@ -18,6 +18,9 @@
 | 货号 | 按来源保留；不是系统唯一标识，不唯一 |
 | 源69码文本 | 原样保存且不拆分；例如 `6933037205930---深蓝` 不强制为 13 位数字，也不拆出颜色字段；正式代码名可在 Schema 阶段定为 `source_barcode`、`barcode_text` 等不暗示纯标准条码的名称 |
 | 商品供应商列 | 原始 Excel 名称保留为 Staging 的 `supplier_name_raw`；按确定性规则解析后，正式 `scm_product` 以 `source_supplier_id` FK 关联来源供应商。名称不是业务 FK；导入不创建供应商或独立报价记录。 |
+| 卖点 | 正式 `scm_product.selling_points` 以原始文本保存；不自动拆关键词、标签或参数表。 |
+| 自营旗舰店/官方旗舰店 | 正式 `scm_product.storefront_type` 以原始文本保存；当前不假定枚举值或业务约束。 |
+| 偏远地区加收运费发货 | 不在最新 32 列 Excel 中；不再是正式 Product 字段。 |
 
 ## 价格概念字段（需要正式保存）
 

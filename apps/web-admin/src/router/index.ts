@@ -10,6 +10,8 @@ import SupplierCreateView from "../views/supplier/SupplierCreateView.vue"
 import SupplierDetailView from "../views/supplier/SupplierDetailView.vue"
 import SupplierEditView from "../views/supplier/SupplierEditView.vue"
 import SupplierListView from "../views/supplier/SupplierListView.vue"
+import ProductDetailView from "../views/catalog/ProductDetailView.vue"
+import ProductListView from "../views/catalog/ProductListView.vue"
 
 const router = createRouter({
   history: createWebHistory(),
@@ -59,6 +61,18 @@ const router = createRouter({
           name: "supplier-edit",
           component: SupplierEditView,
           meta: { title: "编辑供应商", requiresAuth: true, permission: "supplier:update" },
+        },
+        {
+          path: "products",
+          name: "product-list",
+          component: ProductListView,
+          meta: { title: "商品主数据", requiresAuth: true, permission: "product:list" },
+        },
+        {
+          path: "products/:id",
+          name: "product-detail",
+          component: ProductDetailView,
+          meta: { title: "商品详情", requiresAuth: true, permission: "product:detail" },
         },
       ],
     },
