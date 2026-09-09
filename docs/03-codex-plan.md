@@ -38,18 +38,16 @@
 11. Frontend
 12. Tests + Docs
 
-## Sprint 2：Supplier Product Quote
+## Sprint 2：Product Cost Pricing
 
-1. Quote Schema
-2. Create/List/Detail
-3. Valid Supplier Selector
-4. Case-sensitive model search
-5. VOID / Copy New
-6. Effective Quote Query
-7. Compare
-8. Optional product_id link
-9. Frontend
-10. Tests + Docs
+1. 冻结 `scm_product.cost_price` 为当前成本价
+2. 实现冻结的 Pricing Service 与单元测试
+3. Product Migration 后实现成本价更新
+4. 成本价更新与派生价格重算必须原子提交
+5. 使用既有 Product 审计字段记录更新人和更新时间
+6. Tests + Docs
+
+不创建 Quote Schema、报价历史、有效期、VOID、独立报价页面或多供应商比价。
 
 ## Sprint 3：Catalog / Product Master
 

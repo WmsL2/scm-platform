@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## Unreleased
+
+- ADR-0009 冻结：商品 `cost_price` 承载当前供应商报价；一期取消独立供应商产品报价库、报价历史、有效期与多供应商比价。
+
 ## V1.3.2 — Fresh Starter / Product Master Clarified
 
 - 新建干净项目启动包；

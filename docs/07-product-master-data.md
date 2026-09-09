@@ -59,13 +59,13 @@ Supplier Excel -> Supplier Import -> scm_supplier
 
 系统生成的 `id` 是主键。`model`、`sku`、`product_name`、`brand + model`、货号及源69码文本均不设业务 UNIQUE；不得自行假设型号或品牌+型号唯一。
 
-## 产品报价
+## 当前成本价
 
-`scm_product` 与 `scm_supplier_product_quote` 是独立数据域。
+`scm_product.cost_price` 是具体正式商品的当前成本价，也是业务确认的当前供应商报价。一期不建设 `scm_supplier_product_quote`，不保存独立报价历史、有效期、作废记录或多供应商比价结果。
 
-报价通过 `product_id` 与正式商品建立关联。
+商品大表导入的成本价进入正式 Product。供应商给出新报价时，后续 Product Backend 直接更新目标 Product 的 `cost_price`，并在同一事务内按 Pricing Service 重新计算和保存派生价格与毛利；既有 `updated_by`、`updated_at` 记录更新审计。
 
-`scm_product.source_supplier_id` 表示商品大表该行的**来源供应商**，而非该商品的唯一供应商，也不代表供应商已有正式报价。Product Import 不得因成本价或来源供应商自动创建 `scm_supplier_product_quote`。
+`scm_product.source_supplier_id` 表示商品大表该行的**来源供应商**，不是当前报价供应商，也不是唯一供应商。成本价更新不自动新建报价关联或历史记录。
 
 ## 来源供应商解析
 
@@ -73,7 +73,7 @@ Excel“供应商”原值只写入 Staging 的 `supplier_name_raw`，用于审�
 
 自动匹配仅可使用 `normalize_supplier_name()`：Unicode NFKC、去除首尾空白、将连续空白压缩为一个普通空格。不得删除公司后缀或地区等词语，不得缩写、模糊匹配或由 AI 自动绑定。标准化 Excel 名称与标准化 `scm_supplier.supplier_name` 相等且仅有一个有效候选时，决策为 `MATCHED` / `NAME_EXACT`。
 
-有效候选必须同时为 `ARCHIVED`、`NORMAL`、未逻辑删除。多个有效候选为 `AMBIGUOUS`；没有同名供应商为 `UNMATCHED`；存在同名但均不符合有效条件为 `INELIGIBLE`。后三者必须由用户从当前有效 Supplier Master 中人工选择（`MANUAL`），或先在 Supplier Master 处理后重试；不得在导入页面创建、归档、恢复供应商或创建报价。
+有效候选必须同时为 `ARCHIVED`、`NORMAL`、未逻辑删除。多个有效候选为 `AMBIGUOUS`；没有同名供应商为 `UNMATCHED`；存在同名但均不符合有效条件为 `INELIGIBLE`。后三者必须由用户从当前有效 Supplier Master 中人工选择（`MANUAL`），或先在 Supplier Master 处理后重试；不得在导入页面创建、归档或恢复供应商，也不得创建独立报价记录。
 
 推荐 Import Task 状态为 `UPLOADED` / `VALIDATING`、`VALIDATED`、`MATCHING`、`NEEDS_RESOLUTION`、`READY_TO_CONFIRM`、`CONFIRMED`、`FAILED`。Confirm 必须为全批次原子事务：重新校验全部行、类目、价格、全部 Match Decision 为 `MATCHED`，并重新查询每个 `matched_supplier_id` 仍是有效候选后，才写正式商品并将其作为 `source_supplier_id`。任一失败不得部分写入；先前匹配成功后供应商变为 STOPPED、BLACKLIST 或删除也必须使 Confirm 失败。
 

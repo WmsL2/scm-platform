@@ -46,27 +46,9 @@ Supplier：
 
 ---
 
-# Sprint 2：Supplier Product Quote
+# Sprint 2：Product Cost Pricing
 
-- `scm_supplier_product_quote`
-
-建议字段包含：
-
-- id
-- quote_archive_no
-- supplier_id
-- product_id NULL
-- brand / brand_id（最终按数据模型冻结）
-- product_model（大小写敏感）
-- tax_included_factory_price
-- product_spec_params
-- valid_until
-- quote_remark
-- quote_status
-- source
-- entered_by
-- entered_at
-- void fields
+不创建 `scm_supplier_product_quote` 或任何独立报价历史表。当前成本价和按冻结公式得出的派生价格字段属于后续 `scm_product`；Product Migration 前仍须遵守 Category / Product Schema Gate。
 
 ---
 
@@ -75,7 +57,8 @@ Supplier：
 至少存在：
 
 - `scm_product`
-- `scm_product.source_supplier_id` FK → `scm_supplier.id`（来源供应商，不是报价或唯一供应商）
+- `scm_product.source_supplier_id` FK → `scm_supplier.id`（来源供应商，不是当前报价或唯一供应商）
+- `scm_product.cost_price`（当前成本价；业务确认等同当前供应商报价）
 - 商品分类相关表（如需要）
 - 品牌相关表（如需要）
 - 参数扩展相关表（如需要）
@@ -141,5 +124,5 @@ Supplier：
 - 业务编号 UNIQUE；
 - FK 使用 ID；
 - 核心索引来自真实查询场景；
-- 历史报价不可覆盖；
+- 当前成本价更新必须原子重算并保存派生价格与既有审计字段；
 - 商品字段来自真实大表。

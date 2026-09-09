@@ -25,7 +25,7 @@
 - 归档状态 `archive_status`：`DRAFT`、`PENDING`、`ARCHIVED`。
 - 合作状态 `cooperation_status`：`NORMAL`、`STOPPED`、`BLACKLIST`。
 - 现有供应商首次导入时固定为 `archive_status = ARCHIVED`、`cooperation_status = NORMAL`：它们是公司已实际使用的正式供应商，而非新建草稿。
-- Supplier Master、Product Master 与 Supplier Product Quote 是独立领域；关联使用系统 `supplier_id`，不用供应商名称作业务外键。
+- Supplier Master 与 Product Master 是独立领域；正式关联使用系统 `supplier_id`，不用供应商名称作业务外键。一期不建设 Supplier Product Quote 领域。
 
 ## Supplier Gate
 
@@ -40,4 +40,3 @@
 ### 仍待后续确认
 
 来源旧编码是否需要持久化为历史参考字段；以及未出现在已确认资料中的企业、税务、地址、银行、资质或合作等级字段。不得虚构这些字段，也不得据此创建正式 Schema。
-
