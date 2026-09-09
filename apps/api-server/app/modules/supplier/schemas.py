@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
 
@@ -13,6 +13,14 @@ class SupplierContactInput(BaseModel):
 
     contact_name: str | None = Field(default=None, max_length=255)
     contact_phone: str | None = Field(default=None, max_length=64)
+
+    @field_validator("contact_name", "contact_phone")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
     @model_validator(mode="after")
     def requires_a_value(self) -> SupplierContactInput:
@@ -31,6 +39,11 @@ class SupplierCreateRequest(BaseModel):
     advantage: str = Field(min_length=1)
     contacts: list[SupplierContactInput] = Field(default_factory=list, max_length=100)
 
+    @field_validator("supplier_name", "main_brands", "advantage")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        return _normalize_required_text(value)
+
 
 class SupplierUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -39,6 +52,13 @@ class SupplierUpdateRequest(BaseModel):
     main_brands: str | None = Field(default=None, min_length=1)
     advantage: str | None = Field(default=None, min_length=1)
     contacts: list[SupplierContactInput] | None = Field(default=None, max_length=100)
+
+    @field_validator("supplier_name", "main_brands", "advantage")
+    @classmethod
+    def validate_required_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalize_required_text(value)
 
 
 class CooperationCommand(BaseModel):
@@ -101,3 +121,10 @@ class SupplierImportConfirmResponse(BaseModel):
     id: uuid.UUID
     status: str
     imported_count: int
+
+
+def _normalize_required_text(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("must not be blank")
+    return normalized

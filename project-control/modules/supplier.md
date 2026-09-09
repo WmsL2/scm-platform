@@ -32,6 +32,7 @@ Last Updated：2026-09-08
 - [x] 删除权限、逻辑删除保留、Excel 模板/预览/错误行/确认导入 MySQL 集成测试
 - [x] Post-merge：Supplier UUID Path Validation（`422` / `VALIDATION_ERROR`）与
   caller-owned transaction rollback 回归覆盖
+- [x] Supplier Matching Foundation：空白输入校验、名称标准化、有效候选判断与确定性匹配分类
 
 ## Post-Merge Hardening
 
@@ -40,6 +41,21 @@ Last Updated：2026-09-08
 - `supplier_id`（详情、编辑、删除、状态命令）与 Import confirm 的 `batch_id`
   在 Router 边界使用 `uuid.UUID` 验证，非法值不会进入 UUIDChar36 ORM。
 - 无 Migration 变化；Alembic 仍为单 Head `20260908_0006`。
+
+## Supplier Matching Foundation
+
+- `SupplierCreateRequest` 与 `SupplierUpdateRequest` 对 `supplier_name`、
+  `main_brands`、`advantage` 采用相同的本地 Pydantic 校验：去除首尾空白后不得为空；
+  联系人空白字段归一为 `None`，但联系人至少仍须保留姓名或电话其中之一。
+- `normalize_supplier_name()` 仅执行 Unicode NFKC、首尾空白去除和连续 Unicode
+  空白压缩为一个普通空格；不删除公司后缀或地区，也不进行简称、大小写、拼音、模糊或 AI 替换。
+- `is_eligible_source_supplier()` 统一要求 `ARCHIVED + NORMAL + not deleted`。
+- `classify_supplier_name_match()` 仅基于标准化后严格同名分类为
+  `MATCHED/NAME_EXACT`、`AMBIGUOUS`、`UNMATCHED` 或 `INELIGIBLE`；仅唯一有效候选
+  才返回其 `supplier_id`。
+- 本阶段未新增 Repository 查询、Migration、Product Import 表、API 或 Frontend。
+  数据库候选检索将在未来 Product Import 按届时 Schema 决定，不能复用 Supplier 列表的
+  `contains` 搜索。
 
 ## Known Issues
 - 资质业务字段仍未确认；当前 `scm_supplier_qualification` 只保留已冻结的关系、逻辑删除和审计列，未暴露资质写入 API。
