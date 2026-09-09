@@ -75,6 +75,7 @@ Supplier：
 至少存在：
 
 - `scm_product`
+- `scm_product.source_supplier_id` FK → `scm_supplier.id`（来源供应商，不是报价或唯一供应商）
 - 商品分类相关表（如需要）
 - 品牌相关表（如需要）
 - 参数扩展相关表（如需要）
@@ -93,6 +94,7 @@ Supplier：
 - `scm_import_task`
 - `scm_import_row`
 - `scm_import_row_error`
+- `scm_product_import_supplier_match`（按 import_task_id + supplier_name_normalized 的来源供应商匹配决策）
 
 ---
 

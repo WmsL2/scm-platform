@@ -15,7 +15,7 @@
 | `model`、`product_name`、`brand + model` | 不因样例或经验推断唯一性 |
 | 货号 | 按来源保留；不是系统唯一标识，不唯一 |
 | 源69码文本 | 原样保存且不拆分；例如 `6933037205930---深蓝` 不强制为 13 位数字，也不拆出颜色字段；正式代码名可在 Schema 阶段定为 `source_barcode`、`barcode_text` 等不暗示纯标准条码的名称 |
-| 商品供应商列 | 不构成 `scm_product` 与 `scm_supplier` 的强绑定；商品导入不选择供应商，也不自动创建供应商报价 |
+| 商品供应商列 | 原始 Excel 名称保留为 Staging 的 `supplier_name_raw`；按确定性规则解析后，正式 `scm_product` 以 `source_supplier_id` FK 关联来源供应商。名称不是业务 FK，导入不创建供应商或供应商报价。 |
 
 ## 价格概念字段（需要正式保存）
 
@@ -33,5 +33,4 @@
 
 `标准商品大表 → 模板校验 → 字段校验 → 字典校验 → 重复/冲突校验 → 错误预览 → 人工确认 → scm_product`。
 
-禁止 AI 猜表头或自动字段映射；禁止导入要求供应商或自动创建 Supplier Product Quote；错误行不得静默进入正式库。
-
+禁止 AI 猜表头或自动字段映射；禁止自动创建 Supplier Product Quote；错误行不得静默进入正式库。供应商先进入 Supplier Master；商品导入仅匹配已有有效供应商，全部来源供应商解析完成后才能确认进入正式库。

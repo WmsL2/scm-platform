@@ -170,7 +170,7 @@
 
 上传公司标准大表。
 
-不选择供应商。
+供应商必须已在 Supplier Master 中存在；导入页不创建或选择新的供应商实体。
 
 ## 4.4 导入校验/预览
 
@@ -183,6 +183,8 @@
 - 冲突
 
 可查看字段级错误。
+
+增加“供应商解析”区域，按标准化供应商名称分组显示 Excel 原值、涉及行数、匹配状态、供应商编码/名称及当前归档、合作状态。`AMBIGUOUS`、`UNMATCHED`、`INELIGIBLE` 可打开“选择供应商”，仅搜索当前 `ARCHIVED + NORMAL + not deleted` 的 Supplier Master，候选展示 supplier_code、supplier_name、main_brands 与状态。界面不突出 UUID，但提交的是 supplier_id UUID；同组只处理一次。全部解析完成后才显示确认入口。
 
 ## 4.5 导入记录
 

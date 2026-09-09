@@ -40,10 +40,13 @@ FastAPI Modular Monolith
 公司商品大表
      |
      v
-Import Staging
+Import Staging（supplier_name_raw）
      |
      v
-scm_product 正式商品主数据
+Supplier Matching（按批次+标准化名称）
+     |
+     v
+Confirm 原子校验 → scm_product（source_supplier_id）正式商品主数据
      |
      +--> 商品查询
      +--> AI匹配
@@ -58,7 +61,13 @@ Import Staging 不能作为长期商品查询库。
 ```text
 scm_product
     |
-    | product_id
+    | source_supplier_id：商品大表来源供应商
+    v
+scm_supplier
+
+scm_product
+    |
+    | product_id：报价关联
     v
 scm_supplier_product_quote
     |
@@ -67,6 +76,8 @@ scm_supplier
 ```
 
 报价记录允许暂未绑定 product_id，后续匹配正式商品。
+
+`source_supplier_id` 仅表示导入来源，不能推导供应商产品报价；Import 不自动创建 Quote。
 
 ## 4. Backend 分层
 

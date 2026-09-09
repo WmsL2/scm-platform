@@ -112,7 +112,7 @@ Docker 不是开发前置条件，也不是 Sprint 0 验收条件。
 - 大表不是只用于生成另一套商品数据的临时来源；
 - `scm_import_*` 只负责导入过程；
 - 后续正式商品查询只查询 `scm_product` 及受控参数表；
-- 商品导入不选择供应商；
+- 商品导入不创建供应商；Excel 供应商原值保留在 Staging，并仅匹配已有有效 Supplier Master；Confirm 后正式商品以 `source_supplier_id` 保存来源供应商；
 - 商品导入不自动创建供应商产品报价；
 - 一期不强制 SPU/SKU 二层模型；
 - 禁止擅自新增 `scm_product_sku` 并把它作为必需架构；
