@@ -1,6 +1,6 @@
 # Product / Category / Pricing Schema Review
 
-状态：SCHEMA REVIEW READY
+状态：SCHEMA FINALIZATION COMPLETE — Migration preflight required
 范围：一期商品、三级类目与当前价格快照的数据库结构评审稿；不包含 Migration、ORM、API、UI 或 Pricing Service。
 
 ## 术语与评审结论
@@ -8,6 +8,7 @@
 - **FROZEN**：已由业务确认，不得在本评审中改变。
 - **RECOMMENDED**：本评审建议，待 Schema Review 通过后才可写入 Migration。
 - **PENDING**：现有资料不足，不得自行猜测或实现。
+- **BUSINESS_DECISION_REQUIRED**：需要业务方明确选择；C1 不得以“通常做法”代替决策。
 
 ### FROZEN 基线
 
@@ -27,6 +28,24 @@
 
 **FROZEN — `deduction_review` exception：**唯一例外使用 `ROUND_DOWN` / `ROUNDDOWN`，统一保留 4 位小数。
 
+## Schema Finalization Decision Matrix
+
+| Decision | Current Evidence | Status | Final / Recommended Value | Migration Blocker? |
+|---|---|---|---|---|
+| `scm_product.category_id` nullability | 正式 Product 的唯一已冻结写入链路是 Import Confirm；Confirm 必须完成类目解析。定价亦必须经 `category_id` 查询正式 `deduction_rate`。 | FROZEN | `CHAR(36) NOT NULL`，FK → `scm_category.id`；不在 Product 重复存储三级名称。 | NO |
+| Product logical delete | 已冻结资料没有 Product 删除、恢复、审计留存或查询过滤规则。 | BUSINESS_DECISION_REQUIRED | C1 不增加 `is_deleted`、`deleted_by`、`deleted_at`。 | NO（删除模型不进入 C1） |
+| Category logical / physical delete | 现有来源只有“有效标记”，没有删除、恢复或历史保留语义。 | BUSINESS_DECISION_REQUIRED | C1 仅保留 `is_active`；不新增逻辑删除列，不定义物理删除 API。 | NO（删除模型不进入 C1） |
+| Product → Category delete action | Cascade 会删除正式 Product，违反正式主数据保留原则；现有资料未把该动作提升为业务冻结规则。 | RECOMMENDED | `ON DELETE RESTRICT`；不得使用 `CASCADE`。 | NO |
+| `source_supplier_id` | ADR-0008 已接受；Confirm 仅在来源供应商已解析且仍有效时写正式 Product。 | FROZEN | `CHAR(36) NOT NULL`、索引、FK → `scm_supplier.id ON DELETE RESTRICT`、非唯一；仅表示 Source Supplier。 | NO |
+| `brand` / `model` / `product_name` | 31 列大表确认字段语义与非唯一性，但没有业务必填规则。 | RECOMMENDED | `NULL`；不得因样例值齐全而改为 NOT NULL。 | NO |
+| `cost_price` / `jd_price` / `jd_self_operated_price` | 是价格计算输入；现有资料冻结了公式和除零校验，未冻结所有 Product 都必须拥有价格输入。 | RECOMMENDED | `NULL`；Pricing 保存/Confirm 时再按所用公式校验需要的输入。 | NO |
+| Category unique constraints | 已有商城 external ID 与工业品完整路径的规则建议，但当前仓库及工作环境没有两份真实类目源数据可统计验证。 | RECOMMENDED | 商城 `UNIQUE(source_type, level3_external_id)`；工业品 `UNIQUE(source_type, level1_name, level2_name, level3_name)`。 | YES，应用前必须完成真实数据预检 |
+| `source_type` | 现有资料有商城三级类目与工业品产品线两种来源。 | RECOMMENDED | `VARCHAR(32) NOT NULL`，受控值 `MALL_LEVEL3` / `INDUSTRIAL_LINE`。 | NO |
+| Category `is_active` | 商城来源含有效标记；当前没有独立删除语义。 | RECOMMENDED | `BOOLEAN NOT NULL DEFAULT TRUE`，表达当前可用性而非逻辑删除。 | NO |
+| `deduction_rate` | 类目扣点规则已冻结：商城标蓝 5%，其余商城及未标记工业品 8%。 | FROZEN | 值只从正式 Category 读取；Product 保存使用值快照。 | NO |
+| Decimal precision | 现有评审已完成精度建议，尚非业务最大金额的正式上限承诺。 | RECOMMENDED | 金额 `DECIMAL(18,4)`；比率 `DECIMAL(9,4)`。 | NO |
+| Rounding | 类目与价格规则门禁已冻结。 | FROZEN | 普通金额/比率 `ROUND_HALF_UP`、4 位小数；仅 `deduction_review` 为 `ROUND_DOWN`、4 位小数。 | NO |
+
 ## 31 列 Product Schema Matrix
 
 以下 Matrix 中，`UNIQUE` 均为数据库业务唯一约束；`—` 表示不适用。Nullable/Default 是 **RECOMMENDED**，不是现有实现。
@@ -39,9 +58,9 @@
 | 4 | 型号 | `model` | `VARCHAR(255)` | YES | `NULL` | YES | NO | MASTER_INPUT | 大小写敏感检索策略 PENDING；不得设唯一。 |
 | 5 | sku | `sku` | `VARCHAR(255)` | YES | `NULL` | YES | NO | MASTER_INPUT | 不是系统 id。 |
 | 6 | 商品名称 | `product_name` | `VARCHAR(512)` | YES | `NULL` | YES | NO | MASTER_INPUT | 不因样例推断唯一或必填。 |
-| 7 | 一级类目 | `category_id` 解析输入 | `CHAR(36)` | YES | `NULL` | YES | NO | CATEGORY_LOOKUP | 不在 Product 重复保存名称；导入以三级路径匹配 Category。 |
-| 8 | 二级类目 | `category_id` 解析输入 | `CHAR(36)` | YES | `NULL` | YES | NO | CATEGORY_LOOKUP | 与一级/三级共同用于受控类目匹配。 |
-| 9 | 三级类目 | `category_id` FK | `CHAR(36)` | YES | `NULL` | YES | NO | CATEGORY_LOOKUP | FK 指向 `scm_category.id`；导入无法匹配时作为错误而非静默入库。 |
+| 7 | 一级类目 | 三级路径解析输入（不是 `scm_product` 列） | — | PENDING | — | NO | NO | CATEGORY_LOOKUP | 不在 Product 重复保存名称；导入字段级必填规则尚未冻结。 |
+| 8 | 二级类目 | 三级路径解析输入（不是 `scm_product` 列） | — | PENDING | — | NO | NO | CATEGORY_LOOKUP | 与一级/三级共同用于受控类目匹配；导入字段级必填规则尚未冻结。 |
+| 9 | 三级类目 | `category_id` FK | `CHAR(36)` | NO | — | YES | NO | CATEGORY_LOOKUP | 正式 Product 为 NOT NULL；FK 指向 `scm_category.id`；导入无法匹配时作为错误而非静默入库。 |
 | 10 | 货号 | `item_number` | `VARCHAR(255)` | YES | `NULL` | YES | NO | MASTER_INPUT | 按源值保留，不是系统标识。 |
 | 11 | 同款京东链接 | `jd_same_product_url` | `VARCHAR(2048)` | YES | `NULL` | NO | NO | SOURCE_REFERENCE | 与“参考链接”是两个来源列；未确认相同前分别保留。 |
 | 12 | *成本价 | `cost_price` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | MASTER_INPUT | 后端定价基础输入。 |
@@ -109,7 +128,7 @@ Pricing Service 只能接受从 `scm_category` 查询得到的 `deduction_rate`�
 | 字段 | MySQL Type | Nullable / Default | Index / Unique | 说明 |
 |---|---|---|---|---|
 | `id` | `CHAR(36)` | NOT NULL / 系统生成 | PK | UUID 主键，非 Excel 字段。 |
-| `category_id` | `CHAR(36)` | YES / `NULL` | 索引；FK → `scm_category.id` | 不冗余保存三级名称；无匹配类目应在导入预览中报错。 |
+| `category_id` | `CHAR(36)` | NOT NULL / — | 索引；FK → `scm_category.id`，RECOMMENDED `ON DELETE RESTRICT` | 不冗余保存三级名称；正式 Confirm 必须完成类目解析，无匹配类目应在导入预览中报错。 |
 | `source_supplier_id` | `CHAR(36)` | NOT NULL / — | 索引；FK → `scm_supplier.id`，ON DELETE RESTRICT | 来源供应商，不是唯一供应商；Confirm 前必须完成解析，故正式 Product 不允许 unresolved supplier。 |
 | `deduction_rate` | `DECIMAL(9,4)` | YES / `NULL` | 索引 | 商品本次计算采用的类目扣点快照。 |
 | `created_by`, `updated_by` | `CHAR(36)` | YES / `NULL` | NO | 系统审计字段。 |
@@ -127,7 +146,23 @@ Import Row 尚未冻结时，推荐增加 `supplier_match_id` FK 指向该表，
 
 Confirm 是 all-or-nothing：重新校验行、类目、价格、全部决策均为 `MATCHED`，并重新查询每个已匹配供应商仍有效；任一失败均不得写入任何 `scm_product`。因此匹配成功并不替代 Confirm 时的状态检查。
 
-**PENDING：**Product / Category 的逻辑删除策略、其余外键删除动作、来源图片的存储形态、品牌与采销员的结构化关系、类目匹配失败的人工修正流程，以及各输入字段的最终业务必填规则。不得在 C1 Migration 中自行决定。
+**BUSINESS_DECISION_REQUIRED：**Product / Category 的逻辑删除策略、未明确的外键删除动作、来源图片的存储形态、品牌与采销员的结构化关系、类目匹配失败的人工修正流程，以及除已冻结 `category_id`、`source_supplier_id` 外的输入字段最终业务必填规则。不得在 C1 Migration 中自行决定。
+
+## Category Source Data Preflight
+
+当前环境存在 `京东大表-礼品.xlsx`，它是商品大表而非商城三级类目维表或工业品产品线：共 16,333 条商品行，16,321 条含完整三级路径，12 条缺少至少一个类目层级，形成 227 个不同的完整路径。199 个路径在商品行中重复（共 16,293 行）；这是多个商品属于同一类目的正常现象，**不是** Category 维表重复证据。
+
+该商品大表没有类目 external ID 列，也没有 `source_type`、有效标记或事业部等 Category 维表字段。因此无法从它验证重复 external ID、`NULL` external ID、同 external ID 不同名称、同名称不同 external ID，也无法区分商城与工业品的唯一约束。下一 Migration 创建前，数据提供方仍必须提供两份原始类目维表，并输出至少以下统计：重复 external ID、重复完整三级路径、`NULL` external ID、空名称、完全重复行、同 external ID 不同名称、同名称不同 external ID。统计结果是采用上述 Category UNIQUE 约束的前置门禁。
+
+## C1 Migration Plan (plan only)
+
+基线 Alembic Head 为 `20260908_0007`。后续 Category / Product Migration 应只包含：
+
+- `scm_category`；
+- `scm_product`，包括 `category_id` 与 `source_supplier_id` 两个正式外键、冻结的价格快照与派生价格列；
+- 本评审已列出的索引、Decimal 精度和经数据预检后确认的 Category UNIQUE 约束。
+
+不得在同一个 Migration 创建 `scm_import_task`、`scm_import_row`、`scm_import_row_error` 或 `scm_product_import_supplier_match`；它们属于后续 Product Import。C1 也不得加入未经业务决策的 Product/Category 删除列。
 
 ## Decimal Precision / Scale Recommendation
 
@@ -140,4 +175,4 @@ Confirm 是 all-or-nothing：重新校验行、类目、价格、全部决策均
 
 ## 后续实施顺序
 
-Schema Review 通过后：冻结 Category / Product / Pricing 结构 → 实现 Pricing Service 与单元测试 → 基于届时最新 main 的 Alembic Head 创建 Category/Product Migration → 创建 Product Backend。Product Import、Supplier 与 Supplier Quote 不在本阶段实现范围。
+Schema Finalization 已完成：实现 Pricing Service 与单元测试 → 在拿到类目源数据并完成 UNIQUE 预检后，基于届时最新 main 的 Alembic Head 创建 Category/Product Migration → 创建 Product Backend。Product Import、Supplier 与 Supplier Quote 不在本阶段实现范围。
