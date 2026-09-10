@@ -7,12 +7,19 @@ const MOCK_USER: CurrentUser = {
   user_id: "00000000-0000-0000-0000-000000000001",
   username: "admin",
   roles: ["platform_admin"],
+  role_names: { platform_admin: "平台管理员" },
   permissions: [
     "system:user:list",
     "system:role:list",
     "supplier:list",
     "supplier:detail",
   ],
+  permission_names: {
+    "system:user:list": "查看用户",
+    "system:role:list": "查看角色",
+    "supplier:list": "查看供应商",
+    "supplier:detail": "查看供应商详情",
+  },
 }
 
 function wait(milliseconds = 280): Promise<void> {
@@ -43,7 +50,13 @@ export const mockAuthApi = {
         message: "登录状态已失效",
       })
     }
-    return { ...MOCK_USER, roles: [...MOCK_USER.roles], permissions: [...MOCK_USER.permissions] }
+    return {
+      ...MOCK_USER,
+      roles: [...MOCK_USER.roles],
+      role_names: { ...MOCK_USER.role_names },
+      permissions: [...MOCK_USER.permissions],
+      permission_names: { ...MOCK_USER.permission_names },
+    }
   },
 
   async logout(): Promise<{ status: string }> {

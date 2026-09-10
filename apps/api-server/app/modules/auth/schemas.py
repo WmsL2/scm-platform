@@ -18,4 +18,6 @@ class CurrentUser(BaseModel):
     user_id: uuid.UUID
     username: str
     roles: list[str]
+    role_names: dict[str, str]
     permissions: list[str]
+    permission_names: dict[str, str]
