@@ -18,6 +18,7 @@ Last Updated：2026-09-10
 
 ## Frontend
 - [x] 商品列表、详情（含本地图片预览）、按权限显示的成本价更新及导入预览/供应商解析页面
+- [x] 统一 API 请求禁用浏览器缓存，商品导入 Confirm 后重新加载列表可立即读取最新商品数据
 
 ## Permissions
 - [x] `product:list`、`product:detail`、`product:cost:update`、`product:import`、`product:import:resolve`
