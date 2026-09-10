@@ -14,6 +14,8 @@ describe("account UI contracts", () => {
     expect(source(BasicLayout)).toContain("system:registration:list")
     expect(render(BasicLayout)).not.toContain("out-in")
     expect(source(UsersView)).toContain("accountApi.roles")
+    expect(source(UsersView)).toContain("accountApi.deleteUser")
+    expect(render(UsersView)).toContain("system:user:delete")
     expect(source(RolesView)).toContain("accountApi.permissions")
     expect(render(RolesView)).toContain("system:role:create")
     expect(source(RolesView)).toContain("accountApi.createRole")
