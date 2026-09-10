@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,6 +43,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+settings.local_storage_path.mkdir(parents=True, exist_ok=True)
+app.mount(
+    "/local-media",
+    StaticFiles(directory=str(settings.local_storage_path)),
+    name="local-media",
 )
 app.include_router(api_v1_router)
 

@@ -57,7 +57,11 @@ class ProductService:
             product = await self.repository.by_id_for_update(product_id)
             if product is None:
                 raise AppError("PRODUCT_NOT_FOUND", "Product not found", 404)
-            category = await self.repository.category_by_id(product.category_id)
+            category = (
+                await self.repository.category_by_id(product.category_id)
+                if product.category_id is not None
+                else None
+            )
             if category is None:
                 raise AppError("PRODUCT_CATEGORY_NOT_FOUND", "Product category not found", 409)
             if product.jd_price is None or product.jd_self_operated_price is None:
@@ -102,7 +106,7 @@ class ProductService:
             product_name=product.product_name,
             item_number=product.item_number,
             category_id=product.category_id,
-            category_path=self._category_path(category),
+            category_path=self._category_path(product, category),
             source_supplier_id=product.source_supplier_id,
             source_supplier_name=supplier.supplier_name if supplier else None,
             cost_price=product.cost_price,
@@ -124,7 +128,10 @@ class ProductService:
             model=product.model,
             sku=product.sku,
             product_name=product.product_name,
-            category=CategoryResponse.model_validate(category),
+            category=CategoryResponse.model_validate(category) if category else None,
+            category_level1_name=product.category_level1_name,
+            category_level2_name=product.category_level2_name,
+            category_level3_name=product.category_level3_name,
             item_number=product.item_number,
             jd_same_product_url=product.jd_same_product_url,
             cost_price=product.cost_price,
@@ -154,12 +161,22 @@ class ProductService:
             updated_at=product.updated_at,
         )
 
-    async def _category(self, category_id: uuid.UUID) -> Category:
+    async def _category(self, category_id: uuid.UUID | None) -> Category | None:
+        if category_id is None:
+            return None
         category = await self.repository.category_by_id(category_id)
-        if category is None:
-            raise AppError("PRODUCT_CATEGORY_NOT_FOUND", "Product category not found", 409)
         return category
 
     @staticmethod
-    def _category_path(category: Category) -> str:
-        return " / ".join((category.level1_name, category.level2_name, category.level3_name))
+    def _category_path(product: Product, category: Category | None) -> str:
+        if category is not None:
+            return " / ".join((category.level1_name, category.level2_name, category.level3_name))
+        return " / ".join(
+            value
+            for value in (
+                product.category_level1_name,
+                product.category_level2_name,
+                product.category_level3_name,
+            )
+            if value
+        )

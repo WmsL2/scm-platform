@@ -25,7 +25,9 @@ async def test_inline_queue() -> None:
 
 async def test_local_storage(tmp_path) -> None:
     storage = LocalFileStorage(tmp_path)
-    key = await storage.save("sample.txt", b"content")
+    key = await storage.save("product-images/task/sample.png", b"content")
+    assert key.startswith("product-images/task/")
+    assert key.endswith(".png")
     assert await storage.read(key) == b"content"
 
 

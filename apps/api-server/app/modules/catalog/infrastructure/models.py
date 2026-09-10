@@ -5,6 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Date,
@@ -17,7 +18,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.models import Base
 from app.common.uuid_type import UUIDChar36
@@ -89,9 +90,12 @@ class Product(Base):
     model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     sku: Mapped[str | None] = mapped_column(String(255), nullable=True)
     product_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    category_id: Mapped[uuid.UUID] = mapped_column(
-        UUIDChar36(), ForeignKey("scm_category.id", ondelete="RESTRICT"), nullable=False
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_category.id", ondelete="RESTRICT"), nullable=True
     )
+    category_level1_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    category_level2_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    category_level3_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     item_number: Mapped[str | None] = mapped_column(String(255), nullable=True)
     jd_same_product_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     cost_price: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
@@ -128,3 +132,104 @@ class Product(Base):
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
     )
+
+
+class ProductImportTask(Base):
+    __tablename__ = "scm_product_import_task"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('VALIDATED', 'NEEDS_RESOLUTION', 'READY_TO_CONFIRM', 'CONFIRMED')",
+            name="ck_scm_product_import_task_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    total_rows: Mapped[int] = mapped_column(nullable=False)
+    valid_rows: Mapped[int] = mapped_column(nullable=False)
+    invalid_rows: Mapped[int] = mapped_column(nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    confirmed_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    rows: Mapped[list[ProductImportRow]] = relationship(back_populates="task", lazy="selectin")
+    supplier_matches: Mapped[list[ProductImportSupplierMatch]] = relationship(
+        back_populates="task", lazy="selectin"
+    )
+
+
+class ProductImportSupplierMatch(Base):
+    __tablename__ = "scm_product_import_supplier_match"
+    __table_args__ = (
+        CheckConstraint(
+            "match_status IN ('MATCHED', 'AMBIGUOUS', 'UNMATCHED', 'INELIGIBLE')",
+            name="ck_scm_product_import_supplier_match_status",
+        ),
+        UniqueConstraint(
+            "import_task_id",
+            "supplier_name_normalized",
+            name="uq_scm_product_import_supplier_match_task_name",
+        ),
+        Index("ix_scm_product_import_supplier_match_task_id", "import_task_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
+    import_task_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_product_import_task.id", ondelete="RESTRICT"), nullable=False
+    )
+    supplier_name_normalized: Mapped[str] = mapped_column(String(255), nullable=False)
+    match_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    match_method: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    matched_supplier_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_supplier.id", ondelete="RESTRICT"), nullable=True
+    )
+    resolved_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
+    )
+    task: Mapped[ProductImportTask] = relationship(back_populates="supplier_matches")
+    rows: Mapped[list[ProductImportRow]] = relationship(back_populates="supplier_match")
+
+
+class ProductImportRow(Base):
+    __tablename__ = "scm_product_import_row"
+    __table_args__ = (
+        UniqueConstraint(
+            "import_task_id", "source_row_number", name="uq_scm_product_import_row_task_source_row"
+        ),
+        Index("ix_scm_product_import_row_task_id", "import_task_id"),
+        Index("ix_scm_product_import_row_category_id", "category_id"),
+        Index("ix_scm_product_import_row_supplier_match_id", "supplier_match_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
+    import_task_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_product_import_task.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_row_number: Mapped[int] = mapped_column(nullable=False)
+    source_data: Mapped[dict[str, str | None]] = mapped_column(JSON, nullable=False)
+    calculated_data: Mapped[dict[str, str | None]] = mapped_column(JSON, nullable=False)
+    supplier_name_raw: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    image_storage_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_category.id", ondelete="RESTRICT"), nullable=True
+    )
+    supplier_match_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDChar36(),
+        ForeignKey("scm_product_import_supplier_match.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    is_valid: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    warning_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    task: Mapped[ProductImportTask] = relationship(back_populates="rows")
+    supplier_match: Mapped[ProductImportSupplierMatch | None] = relationship(back_populates="rows")

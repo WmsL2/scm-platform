@@ -17,6 +17,16 @@ const product = ref<ProductDetail | null>(null)
 const editCostVisible = ref(route.query.editCost === "1")
 const form = reactive({ cost_price: "" })
 const productId = computed(() => String(route.params.id))
+const canUpdateCost = computed(
+  () => auth.hasPermission("product:cost:update") && product.value?.category_id,
+)
+const imageUrl = computed(() => {
+  const reference = product.value?.image_reference
+  if (!reference) return undefined
+  if (/^https?:\/\//i.test(reference)) return reference
+  const baseUrl = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")
+  return `${baseUrl}/${reference.replace(/^\//, "")}`
+})
 
 async function loadProduct(): Promise<void> {
   loading.value = true
@@ -62,15 +72,18 @@ onMounted(() => void loadProduct())
         </div>
         <div>
           <el-button @click="$router.back()">返回列表</el-button>
-          <el-button v-if="auth.hasPermission('product:cost:update')" type="primary" @click="editCostVisible = true">更新成本价</el-button>
+          <el-button v-if="canUpdateCost" type="primary" @click="editCostVisible = true">更新成本价</el-button>
         </div>
       </header>
 
       <el-card class="page-card">
         <template #header><strong>基础信息</strong></template>
         <el-descriptions :column="2" border>
-          <el-descriptions-item label="三级类目">{{ product.category.level1_name }} / {{ product.category.level2_name }} / {{ product.category.level3_name }}</el-descriptions-item>
-          <el-descriptions-item label="类目扣点">{{ product.category.deduction_rate }}</el-descriptions-item>
+          <el-descriptions-item v-if="imageUrl" label="商品图片" :span="2">
+            <el-image class="product-image" :src="imageUrl" fit="contain" :preview-src-list="[imageUrl]" preview-teleported />
+          </el-descriptions-item>
+          <el-descriptions-item label="三级类目">{{ [product.category_level1_name, product.category_level2_name, product.category_level3_name].filter(Boolean).join(" / ") || "—" }}</el-descriptions-item>
+          <el-descriptions-item label="受控类目关联">{{ product.category ? "已关联" : "固定大表直存，未关联" }}</el-descriptions-item>
           <el-descriptions-item label="来源供应商">{{ product.source_supplier_name ?? "—" }}</el-descriptions-item>
           <el-descriptions-item label="货号">{{ product.item_number ?? "—" }}</el-descriptions-item>
           <el-descriptions-item label="69码">{{ product.barcode_text ?? "—" }}</el-descriptions-item>
@@ -82,7 +95,7 @@ onMounted(() => void loadProduct())
       </el-card>
 
       <el-card class="page-card">
-        <template #header><strong>当前价格与系统计算结果</strong></template>
+        <template #header><strong>当前价格（固定大表直存）</strong></template>
         <el-descriptions :column="3" border>
           <el-descriptions-item label="当前成本价">{{ money(product.cost_price) }}</el-descriptions-item>
           <el-descriptions-item label="京东价">{{ money(product.jd_price) }}</el-descriptions-item>
@@ -101,7 +114,7 @@ onMounted(() => void loadProduct())
     </template>
 
     <el-dialog v-model="editCostVisible" title="更新当前成本价" width="420px" :close-on-click-modal="false">
-      <p class="dialog-tip">该操作会原子重算市场价、协议价、毛利和其他派生价格；来源供应商不会改变。</p>
+      <p class="dialog-tip">此独立维护操作会原子重算价格字段；固定大表导入不会重算或覆盖 Excel 价格。</p>
       <el-input v-model="form.cost_price" inputmode="decimal" placeholder="例如：123.4567">
         <template #prepend>¥</template>
       </el-input>
@@ -120,4 +133,5 @@ onMounted(() => void loadProduct())
 .page-heading h1 { margin: 0 0 8px; color: #172b4d; font-size: 25px; }
 .page-heading span, .dialog-tip { color: var(--text-secondary); font-size: 14px; }
 .dialog-tip { margin-top: 0; line-height: 1.7; }
+.product-image { width: 180px; height: 180px; border: 1px solid var(--border-color); border-radius: 8px; }
 </style>

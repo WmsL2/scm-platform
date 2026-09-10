@@ -16,7 +16,7 @@ export interface ProductListItem {
   sku: string | null
   product_name: string | null
   item_number: string | null
-  category_id: string
+  category_id: string | null
   category_path: string
   source_supplier_id: string
   source_supplier_name: string | null
@@ -28,7 +28,10 @@ export interface ProductListItem {
 
 export interface ProductDetail extends Omit<ProductListItem, "category_path"> {
   image_reference: string | null
-  category: CategorySummary
+  category: CategorySummary | null
+  category_level1_name: string | null
+  category_level2_name: string | null
+  category_level3_name: string | null
   jd_same_product_url: string | null
   market_price: string | null
   agreement_purchase_price: string | null
@@ -63,4 +66,51 @@ export interface ProductPage {
   total: number
   page: number
   page_size: number
+}
+
+export interface ProductImportSupplierMatch {
+  id: string
+  supplier_name_normalized: string
+  match_status: "MATCHED" | "AMBIGUOUS" | "UNMATCHED" | "INELIGIBLE"
+  match_method: "NAME_EXACT" | "MANUAL" | null
+  matched_supplier_id: string | null
+  matched_supplier_code: string | null
+  matched_supplier_name: string | null
+}
+
+export interface ProductImportRow {
+  source_row_number: number
+  product_name: string | null
+  supplier_name_raw: string | null
+  image_saved: boolean
+  category_path: string
+  category_id: string | null
+  supplier_match_id: string | null
+  is_valid: boolean
+  error_message: string | null
+  warning_message: string | null
+}
+
+export interface ProductImportPreview {
+  id: string
+  original_filename: string
+  status: "VALIDATED" | "NEEDS_RESOLUTION" | "READY_TO_CONFIRM" | "CONFIRMED"
+  total_rows: number
+  valid_rows: number
+  invalid_rows: number
+  rows: ProductImportRow[]
+  supplier_matches: ProductImportSupplierMatch[]
+}
+
+export interface ProductImportSupplierCandidate {
+  id: string
+  supplier_code: string
+  supplier_name: string
+  main_brands: string
+}
+
+export interface ProductImportConfirmResult {
+  id: string
+  status: "CONFIRMED"
+  imported_count: number
 }
