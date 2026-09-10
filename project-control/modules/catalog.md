@@ -6,7 +6,7 @@ Last Updated：2026-09-10
 
 ## Database
 - [x] `20260909_0008` / `20260909_0009` 创建并对齐 `scm_category` 与 `scm_product`
-- [x] `20260910_0010` 创建 Product Import Staging、供应商匹配决策及任务状态表；`20260910_0011` 支持 Product 直接保存三级类目原文；`20260910_0012` 增加导入图片暂存键
+- [x] `20260910_0013` 创建 Product Import Staging、供应商匹配决策及任务状态表；`20260910_0014` 支持 Product 直接保存三级类目原文；`20260910_0015` 增加导入图片暂存键
 - [x] Product → Category、Product → Source Supplier 均为 `RESTRICT` 外键
 - [x] 未创建独立 Supplier Product Quote 表或报价历史表
 

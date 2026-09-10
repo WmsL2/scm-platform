@@ -1,15 +1,15 @@
 """add product import staging and source supplier matching
 
-Revision ID: 20260910_0010
-Revises: 20260909_0009
+Revision ID: 20260910_0013
+Revises: 20260910_0010
 """
 
 import sqlalchemy as sa
 
 from alembic import op
 
-revision = "20260910_0010"
-down_revision = "20260909_0009"
+revision = "20260910_0013"
+down_revision = "20260910_0010"
 branch_labels = None
 depends_on = None
 

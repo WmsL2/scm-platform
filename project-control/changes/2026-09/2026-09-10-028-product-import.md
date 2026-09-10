@@ -13,7 +13,7 @@ Implement the frozen fixed-template Product Master import workflow: staging only
 
 ## Delivered
 
-- Alembic revision `20260910_0010` creates `scm_product_import_task`, `scm_product_import_row` and `scm_product_import_supplier_match`.
+- Alembic revision `20260910_0013` creates `scm_product_import_task`, `scm_product_import_row` and `scm_product_import_supplier_match`.
 - The backend accepts only the approved 32-column `.xlsx` template. It stores formula/source and cached cell values in staging, keeps `supplier_name_raw` only in staging, validates row fields and uses the frozen Decimal Pricing Service for derived-value checks.
 - Matching is exact after NFKC/trim/whitespace normalization. Only archived, normal and non-deleted Supplier Master records participate. Ambiguous, unmatched and ineligible groups require an explicit manual `supplier_id` resolution.
 - `POST /api/v1/products/imports/preview`, task preview, eligible-supplier candidates, manual resolution and Confirm APIs are protected by `product:import` / `product:import:resolve`.
@@ -27,7 +27,7 @@ Implement the frozen fixed-template Product Master import workflow: staging only
 
 ## Verification
 
-- `alembic upgrade head`, `alembic current`, `alembic heads` — `20260910_0010` is the single local Head.
+- `alembic upgrade head`, `alembic current`, `alembic heads` — `20260910_0013` is the single local Head.
 - `python -m ruff check .` — pass.
 - `python -m mypy app` — pass.
 - `python -m pytest -q` — 109 passed.

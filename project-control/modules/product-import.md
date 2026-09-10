@@ -5,7 +5,7 @@ Owner：feat/product-import
 Last Updated：2026-09-10
 
 ## Database
-- [x] `20260910_0010` 创建 `scm_product_import_task`、`scm_product_import_row`、`scm_product_import_supplier_match`
+- [x] `20260910_0013` 创建 `scm_product_import_task`、`scm_product_import_row`、`scm_product_import_supplier_match`
 - [x] 原始 Excel 行和 `supplier_name_raw` 仅保留在 Staging；正式 `scm_product` 不增加供应商名称字段
 
 ## Backend
@@ -29,7 +29,7 @@ Last Updated：2026-09-10
 ## Known Issues
 - Category Source Loader 不是商品大表导入前置条件；固定模板中的三级类目直接保存到 Product 的原文字段。
 - 2026-09-10 对用户提供的 50 行模板进行了事务回滚预检：34 行通过，16 行因供应商为空或未解析而未通过；预检未保留任何暂存或正式数据。
-- 旧的预览任务不会回填图片；重新上传后才会按 `20260910_0012` 提取并保存图片。未 Confirm 的预览任务产生的本地媒体后续需要独立的清理策略。
+- 旧的预览任务不会回填图片；重新上传后才会按 `20260910_0015` 提取并保存图片。未 Confirm 的预览任务产生的本地媒体后续需要独立的清理策略。
 
 ## Next Step
 维护/归档有效 Supplier Master，并为 Excel 的空供应商补齐来源供应商后重新上传该固定模板；不可绕过预览直接导入。

@@ -82,7 +82,7 @@ Supplier：
 - `scm_product_import_row`（以 `source_data`、`calculated_data`、`supplier_name_raw`、`image_storage_key` 和行级错误/警告保存 Staging）
 - `scm_product_import_supplier_match`（按 import_task_id + supplier_name_normalized 的来源供应商匹配决策）
 
-由 Alembic `20260910_0010` 创建，并由 `20260910_0012` 增加图片暂存键。Import 表只保留导入过程；Confirm 后正式数据写入 `scm_product`，不会新增报价表或把供应商原名称写入 Product。
+由 Alembic `20260910_0013` 创建，并由 `20260910_0015` 增加图片暂存键。Import 表只保留导入过程；Confirm 后正式数据写入 `scm_product`，不会新增报价表或把供应商原名称写入 Product。
 
 ---
 

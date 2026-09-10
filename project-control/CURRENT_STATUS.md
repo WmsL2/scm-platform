@@ -19,7 +19,7 @@ Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Su
 Sprint 1 — Auth/RBAC + Supplier
 
 状态：IN_PROGRESS
-进度：Auth Kernel DONE；Web Admin Auth DONE / REAL API VERIFIED；Business Sequence DONE / IMPLEMENTED（Revision `20260907_0003`）；Supplier Master Backend DONE / MERGED via PR #13（Revision `20260907_0004`）；Supplier Delete & Import Patch MERGED / IMPLEMENTED（Revision `20260908_0005`）；Account / Registration / Profile IMPLEMENTED / VERIFIED（Revision `20260908_0006`）；Custom Role Create IMPLEMENTED（Revision `20260908_0007`）；Post-Merge P1 Transaction / Validation Hardening VERIFIED（无 Migration）；Product Master 与 Product Import IMPLEMENTED（Revision `20260909_0008` → `20260910_0012`）。当前 Alembic 迁移链为单 Head：`20260907_0004` → `20260908_0005` → `20260908_0006` → `20260908_0007` → `20260909_0008` → `20260909_0009` → `20260910_0010` → `20260910_0011` → `20260910_0012`。分支与合入状态以 GitHub / `main` 历史为准。
+进度：Auth Kernel DONE；Web Admin Auth DONE / REAL API VERIFIED；Business Sequence DONE / IMPLEMENTED（Revision `20260907_0003`）；Supplier Master Backend DONE / MERGED via PR #13（Revision `20260907_0004`）；Supplier Delete & Import Patch MERGED / IMPLEMENTED（Revision `20260908_0005`）；Account / Registration / Profile IMPLEMENTED / VERIFIED（Revision `20260908_0006`）；Custom Role Create IMPLEMENTED（Revision `20260908_0007`）；Post-Merge P1 Transaction / Validation Hardening VERIFIED（无 Migration）；Product Master 与 Product Import IMPLEMENTED（Revision `20260909_0008` → `20260910_0015`）。当前 Alembic 迁移链为单 Head：`20260907_0004` → `20260908_0005` → `20260908_0006` → `20260908_0007` → `20260909_0008` → `20260909_0009` → `20260910_0010`（用户逻辑删除）→ `20260910_0013` → `20260910_0014` → `20260910_0015`。分支与合入状态以 GitHub / `main` 历史为准。
 
 ## 已冻结
 
@@ -43,7 +43,7 @@ Sprint 1 — Auth/RBAC + Supplier
 
 ## 下一步
 
-- 主任务：Product Import 已实现固定 32 列 Staging、类目/价格直接保存、WPS/Excel 内嵌图片相对本地保存、来源供应商精确匹配、预览、人工解析和原子 Confirm（Revision `20260910_0012`，ADR-0010/0011）。
+- 主任务：Product Import 已实现固定 32 列 Staging、类目/价格直接保存、WPS/Excel 内嵌图片相对本地保存、来源供应商精确匹配、预览、人工解析和原子 Confirm（Revision `20260910_0015`，ADR-0010/0011）。
 - 后续任务：准备真实商品大表需要的有效 Supplier Master，并处理 Excel 的空供应商；类目 Source Loader 不再是商品 Confirm 前置条件。
 - 业务冻结：Supplier Product Quote 已取消；后续供应商新报价直接更新正式 Product 的 `cost_price`，并原子重算派生价格；不创建报价历史、有效期或比价模块。
 - Auth 后续范围：Refresh Token、Session、Multi-device Logout 与 Role Delete / disable policy 仍待后续冻结；User Logical Delete 已实现。

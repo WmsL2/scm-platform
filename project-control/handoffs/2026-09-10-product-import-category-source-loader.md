@@ -8,7 +8,7 @@
 
 ## Completed
 
-- 固定 32 列商品大表的 Staging、来源供应商精确匹配、预览、人工解析和原子 Confirm 已实现；迁移更新为 `20260910_0011`。
+- 固定 32 列商品大表的 Staging、来源供应商精确匹配、预览、人工解析和原子 Confirm 已实现；迁移更新为 `20260910_0014`。
 - 正式商品只写 `source_supplier_id`，Excel 的 `supplier_name_raw` 只保存于 Import Staging。
 - 用户提供的 Excel 已进行只读、事务回滚预检，未改变文件，也没有保留导入任务或商品。
 

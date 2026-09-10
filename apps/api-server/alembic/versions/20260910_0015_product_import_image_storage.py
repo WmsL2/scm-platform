@@ -1,15 +1,15 @@
 """add staged product import image storage key
 
-Revision ID: 20260910_0012
-Revises: 20260910_0011
+Revision ID: 20260910_0015
+Revises: 20260910_0014
 """
 
 import sqlalchemy as sa
 
 from alembic import op
 
-revision = "20260910_0012"
-down_revision = "20260910_0011"
+revision = "20260910_0015"
+down_revision = "20260910_0014"
 branch_labels = None
 depends_on = None
 

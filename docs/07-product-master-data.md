@@ -41,7 +41,7 @@ Supplier Excel -> Supplier Import -> scm_supplier
 `scm_product_import_row`
 `scm_product_import_supplier_match`
 
-以上已由 Alembic `20260910_0010` 实现。行以 `supplier_match_id` 关联一个导入批次内每个标准化供应商名称的一次匹配决策，而不是重复保存 `matched_supplier_id`。行级错误、警告和源/缓存单元格值随暂存行保存，不另建 `scm_import_row_error`。
+以上已由 Alembic `20260910_0013` 实现。行以 `supplier_match_id` 关联一个导入批次内每个标准化供应商名称的一次匹配决策，而不是重复保存 `matched_supplier_id`。行级错误、警告和源/缓存单元格值随暂存行保存，不另建 `scm_import_row_error`。
 
 只是导入过程，不是正式商品库。
 
