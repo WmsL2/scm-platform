@@ -23,11 +23,18 @@ const loading = ref(false)
 const executing = ref<SupplierCommand>()
 const supplierId = String(route.params.id)
 
-const commands: Array<{ key: SupplierCommand; label: string; permission: string; type?: "warning" | "danger" }> = [
+const commands: Array<{
+  key: SupplierCommand
+  label: string
+  permission: string
+  type?: "warning" | "danger"
+}> = [
   { key: "submit", label: "提交归档", permission: "supplier:submit" },
   { key: "archive", label: "归档", permission: "supplier:archive" },
-  { key: "stop", label: "停用", permission: "supplier:stop", type: "warning" },
+  { key: "stop", label: "停止合作", permission: "supplier:stop", type: "warning" },
   { key: "blacklist", label: "加入黑名单", permission: "supplier:blacklist", type: "danger" },
+  { key: "resume", label: "恢复合作", permission: "supplier:resume", type: "warning" },
+  { key: "unblacklist", label: "移出黑名单", permission: "supplier:unblacklist" },
 ]
 
 const availableCommands = computed(() =>
@@ -38,7 +45,9 @@ function isAvailable(command: SupplierCommand): boolean {
   if (!supplier.value) return false
   if (command === "submit") return supplier.value.archive_status === "DRAFT"
   if (command === "archive") return supplier.value.archive_status === "PENDING"
-  return supplier.value.cooperation_status === "NORMAL"
+  if (command === "stop" || command === "blacklist") return supplier.value.cooperation_status === "NORMAL"
+  if (command === "resume") return supplier.value.cooperation_status === "STOPPED"
+  return supplier.value.cooperation_status === "BLACKLIST"
 }
 
 function contactsText(current: SupplierDetail): string {
@@ -63,8 +72,15 @@ async function execute(command: SupplierCommand): Promise<void> {
   if (!supplier.value) return
   try {
     let reason: string | undefined
-    if (commandRequiresReason(command)) {
-      const result = await ElMessageBox.prompt("请填写操作原因", command === "stop" ? "停用供应商" : "加入黑名单", {
+    if (command === "stop" || command === "blacklist" || command === "resume" || command === "unblacklist") {
+      const promptCopy: Record<Extract<SupplierCommand, "stop" | "blacklist" | "resume" | "unblacklist">, [string, string]> = {
+        stop: ["请填写停止合作原因", "停止合作"],
+        blacklist: ["请填写加入黑名单原因", "加入黑名单"],
+        resume: ["请填写恢复合作原因", "恢复合作"],
+        unblacklist: ["请填写移出黑名单原因", "移出黑名单"],
+      }
+      const [message, title] = promptCopy[command]
+      const result = await ElMessageBox.prompt(message, title, {
         confirmButtonText: "确认",
         cancelButtonText: "取消",
         inputPattern: /\S+/,

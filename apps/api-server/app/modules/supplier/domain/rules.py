@@ -28,9 +28,11 @@ def assert_archive_transition(current: str, target: ArchiveStatus) -> None:
 
 
 def assert_cooperation_transition(current: str, target: CooperationStatus) -> None:
-    if current != CooperationStatus.NORMAL or target not in {
-        CooperationStatus.STOPPED,
-        CooperationStatus.BLACKLIST,
+    if (current, target) not in {
+        (CooperationStatus.NORMAL, CooperationStatus.STOPPED),
+        (CooperationStatus.NORMAL, CooperationStatus.BLACKLIST),
+        (CooperationStatus.STOPPED, CooperationStatus.NORMAL),
+        (CooperationStatus.BLACKLIST, CooperationStatus.NORMAL),
     }:
         raise AppError(
             "SUPPLIER_COOPERATION_TRANSITION_NOT_ALLOWED",

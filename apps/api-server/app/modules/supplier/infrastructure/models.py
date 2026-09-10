@@ -119,7 +119,8 @@ class SupplierCooperationRecord(Base):
     __tablename__ = "scm_supplier_cooperation_record"
     __table_args__ = (
         CheckConstraint(
-            "from_status = 'NORMAL' AND to_status IN ('STOPPED', 'BLACKLIST')",
+            "(from_status = 'NORMAL' AND to_status IN ('STOPPED', 'BLACKLIST')) "
+            "OR (from_status IN ('STOPPED', 'BLACKLIST') AND to_status = 'NORMAL')",
             name="ck_scm_supplier_cooperation_record_transition",
         ),
         CheckConstraint(

@@ -161,3 +161,29 @@ async def blacklist_supplier(
     return success(
         await SupplierService(session).blacklist(supplier_id, payload.reason, current.user_id)
     )
+
+
+@router.post("/{supplier_id}/commands/resume", response_model=ApiResponse[SupplierDetailResponse])
+async def resume_supplier(
+    supplier_id: uuid.UUID,
+    payload: CooperationCommand,
+    current: Annotated[CurrentUser, Depends(require_permission("supplier:resume"))],
+    session: SessionDep,
+) -> ApiResponse[SupplierDetailResponse]:
+    return success(
+        await SupplierService(session).resume(supplier_id, payload.reason, current.user_id)
+    )
+
+
+@router.post(
+    "/{supplier_id}/commands/unblacklist", response_model=ApiResponse[SupplierDetailResponse]
+)
+async def unblacklist_supplier(
+    supplier_id: uuid.UUID,
+    payload: CooperationCommand,
+    current: Annotated[CurrentUser, Depends(require_permission("supplier:unblacklist"))],
+    session: SessionDep,
+) -> ApiResponse[SupplierDetailResponse]:
+    return success(
+        await SupplierService(session).unblacklist(supplier_id, payload.reason, current.user_id)
+    )

@@ -28,7 +28,10 @@ Supplier code is generated only through BusinessSequence with key SUPPLIER, form
 | archive | reverse transitions | PENDING | no implementation until review policy is confirmed |
 | cooperation | NORMAL -> STOPPED | supplier:stop | reason, actor/time, cooperation record, audit |
 | cooperation | NORMAL -> BLACKLIST | supplier:blacklist | reason, actor/time, cooperation record, audit |
-| cooperation | STOPPED/BLACKLIST -> NORMAL | PENDING | recovery policy required |
+| cooperation | STOPPED -> NORMAL | supplier:resume | reason, actor/time, cooperation record, audit |
+| cooperation | BLACKLIST -> NORMAL | supplier:unblacklist | reason, actor/time, cooperation record, audit |
+
+There is no STOPPED <-> BLACKLIST transition. All four cooperation commands require a non-blank reason.
 
 Effective selectable supplier is ARCHIVED + NORMAL + not deleted.
 
@@ -45,7 +48,7 @@ All business APIs use /api/v1 and the shared response/error envelope. Command en
 | GET /api/v1/suppliers; GET /api/v1/suppliers/{id} | supplier:list/detail |
 | POST /api/v1/suppliers; PATCH /api/v1/suppliers/{id} | supplier:create/update |
 | DELETE /api/v1/suppliers/{id} | supplier:delete；仅逻辑删除，正常查询过滤但记录保留 |
-| POST /api/v1/suppliers/{id}/commands/submit, archive, stop, blacklist | matching action code |
+| POST /api/v1/suppliers/{id}/commands/submit, archive, stop, blacklist, resume, unblacklist | matching action code |
 | GET /api/v1/suppliers/imports/template；POST /api/v1/suppliers/imports/preview；POST /api/v1/suppliers/imports/{batch_id}/confirm | supplier:create；模板下载、校验预览、上传者确认导入 |
 
 Page designs only: /suppliers, /suppliers/new, /suppliers/:id, /suppliers/:id/edit. UI permission control is not the security boundary; backend require_permission is.

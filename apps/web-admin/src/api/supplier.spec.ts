@@ -71,6 +71,8 @@ describe("supplier api", () => {
     await supplierApi.create(payload)
     await supplierApi.update("supplier-1", payload)
     await supplierApi.command("supplier-1", "stop", "合作终止")
+    await supplierApi.command("supplier-1", "resume", "重新签订合作协议")
+    await supplierApi.command("supplier-1", "unblacklist", "移出黑名单原因")
     await supplierApi.command("supplier-1", "submit")
 
     expect(http.post).toHaveBeenNthCalledWith(1, "/api/v1/suppliers", payload)
@@ -82,6 +84,16 @@ describe("supplier api", () => {
     )
     expect(http.post).toHaveBeenNthCalledWith(
       3,
+      "/api/v1/suppliers/supplier-1/commands/resume",
+      { reason: "重新签订合作协议" },
+    )
+    expect(http.post).toHaveBeenNthCalledWith(
+      4,
+      "/api/v1/suppliers/supplier-1/commands/unblacklist",
+      { reason: "移出黑名单原因" },
+    )
+    expect(http.post).toHaveBeenNthCalledWith(
+      5,
       "/api/v1/suppliers/supplier-1/commands/submit",
       undefined,
     )
