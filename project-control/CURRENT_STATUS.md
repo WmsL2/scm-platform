@@ -62,6 +62,6 @@ Sprint 1 — Auth/RBAC + Supplier
 - Auth/RBAC：Auth Sprint 1 当前范围 IMPLEMENTED / VERIFIED（Revision `20260908_0006`），包括注册审批、用户角色/角色权限管理、动态权限目录、Profile 与修改密码；Web Admin UI Optimization 分支已完成内部 UUID 隐藏、中文用户状态、角色名称展示（只读 `role_names` 响应字段）、待审批数字角标与审批历史列表的前后端本地验证；角色只可分配给 `ENABLED` 用户，浏览器验收待完成；Refresh Token、Session、Multi-device Logout 仍属未来范围。
 - Role Management：自定义角色创建 IMPLEMENTED（Revision `20260908_0007`）。新增 `system:role:create`，角色编码不可修改且符合小写英文/数字/下划线规范，角色初始无权限；系统管理员内置角色存在时由迁移自动获得创建权限。角色编辑、停用与删除仍属未来范围。
 - Post-Merge Hardening：Request transaction ownership、Service caller-owned transaction participation、Account association ID 幂等去重与 Supplier UUID Router validation 已验证；ADR-0007 冻结事务规则，无 Migration 变化。
-- Catalog：`IMPLEMENTED / PRODUCT_IMPORT_DIRECT_VALUE_MODE`；固定商品大表直接保存三级类目文字和价格值，`source_supplier_id` 仍是正式关系；Product 列表、详情、导入预览、供应商人工解析和原子 Confirm 已可用，真实类目源数据无需作为 Confirm 前置条件。
+- Catalog：`IMPLEMENTED / PRODUCT_IMPORT_DIRECT_VALUE_MODE`；固定商品大表直接保存三级类目文字和价格值，`source_supplier_id` 仍是正式关系；Product 列表、详情、导入预览、供应商人工解析和原子 Confirm 已可用，真实类目源数据无需作为 Confirm 前置条件。Supplier Detail Related Products IMPLEMENTED：`product:list` 可按来源供应商精确筛选正式商品。
 - Product Cost Pricing：`cost_price` 是当前成本价和当前供应商报价，不建设 `scm_supplier_product_quote`；成本价更新已受 `product:cost:update` 保护，并原子重算已冻结派生值。
 - Web Admin Data Refresh：统一 API 客户端已设置 `cache: no-store`；新增、编辑、删除和导入确认后的页面重新加载不会复用浏览器中的旧 GET 响应，前端测试、类型检查和生产构建已验证。

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, EditPen } from "@element-plus/icons-vue"
+import { ArrowLeft, EditPen, Goods } from "@element-plus/icons-vue"
 import { computed, onMounted, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { useRoute, useRouter } from "vue-router"
@@ -97,6 +97,10 @@ onMounted(() => void load())
     <header class="page-heading">
       <div><p>SUPPLIER MASTER</p><h1>供应商详情</h1><span>查看供应商基础资料、归档和合作状态。</span></div>
       <div class="header-actions">
+        <RouterLink
+          v-if="supplier && auth.hasPermission('product:list')"
+          :to="{ name: 'product-list', query: { source_supplier_id: supplier.id } }"
+        ><el-button :icon="Goods">相关商品</el-button></RouterLink>
         <RouterLink v-if="supplier && auth.hasPermission('supplier:update')" :to="`${$route.path}/edit`"><el-button :icon="EditPen">编辑</el-button></RouterLink>
         <RouterLink to="/suppliers"><el-button :icon="ArrowLeft">返回列表</el-button></RouterLink>
       </div>

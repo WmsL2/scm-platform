@@ -28,11 +28,13 @@ class ProductService:
         *,
         keyword: str | None,
         category_id: uuid.UUID | None,
+        source_supplier_id: uuid.UUID | None,
     ) -> PageResult[ProductListItem]:
         products, total = await self.repository.list(
             page_params,
             keyword=keyword.strip() if keyword else None,
             category_id=category_id,
+            source_supplier_id=source_supplier_id,
         )
         return PageResult(
             items=[await self._list_item(product) for product in products],
@@ -101,6 +103,7 @@ class ProductService:
             id=product.id,
             listed_at=product.listed_at,
             brand=product.brand,
+            image_reference=product.image_reference,
             model=product.model,
             sku=product.sku,
             product_name=product.product_name,

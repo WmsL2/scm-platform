@@ -31,9 +31,15 @@ async def list_products(
     page_params: Annotated[PageParams, Depends()],
     keyword: Annotated[str | None, Query(max_length=255)] = None,
     category_id: uuid.UUID | None = None,
+    source_supplier_id: uuid.UUID | None = None,
 ) -> ApiResponse[PageResult[ProductListItem]]:
     return success(
-        await ProductService(session).list(page_params, keyword=keyword, category_id=category_id)
+        await ProductService(session).list(
+            page_params,
+            keyword=keyword,
+            category_id=category_id,
+            source_supplier_id=source_supplier_id,
+        )
     )
 
 
