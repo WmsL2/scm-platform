@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn() }))
+const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() }))
 vi.mock("../shared/http/runtime", () => ({ http }))
 
 describe("account api contracts", () => {
@@ -26,5 +26,10 @@ describe("account api contracts", () => {
     const { accountApi } = await import("./account")
     await accountApi.registrationHistory(2, 20)
     expect(http.get).toHaveBeenCalledWith("/api/v1/admin/registration-history?page=2&page_size=20")
+  })
+  it("uses DELETE for user logical deletion", async () => {
+    const { accountApi } = await import("./account")
+    await accountApi.deleteUser("u")
+    expect(http.delete).toHaveBeenCalledWith("/api/v1/admin/users/u")
   })
 })

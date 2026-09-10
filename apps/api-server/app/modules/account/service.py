@@ -59,6 +59,23 @@ class AccountService:
             user.token_version += 1
             user.updated_by = user_id
 
+    async def delete_user(self, user_id: uuid.UUID, actor: uuid.UUID) -> None:
+        if user_id == actor:
+            raise AppError(
+                "ACCOUNT_USER_SELF_DELETE_FORBIDDEN",
+                "不能删除当前登录账号，请使用其他管理员账号操作",
+                409,
+            )
+        async with transaction_scope(self.session):
+            user = await self.repository.active_user_for_update(user_id)
+            if user is None:
+                raise AppError("ACCOUNT_USER_NOT_FOUND", "User not found", 404)
+            user.is_deleted = True
+            user.deleted_by = actor
+            user.deleted_at = datetime.now()
+            user.updated_by = actor
+            user.token_version += 1
+
     async def list_users(
         self, page: PageParams, pending_only: bool = False
     ) -> PageResult[UserResponse]:

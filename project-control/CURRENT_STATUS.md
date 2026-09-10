@@ -46,7 +46,7 @@ Sprint 1 — Auth/RBAC + Supplier
 - 主任务：Product Import 已实现固定 32 列 Staging、类目/价格直接保存、WPS/Excel 内嵌图片相对本地保存、来源供应商精确匹配、预览、人工解析和原子 Confirm（Revision `20260910_0012`，ADR-0010/0011）。
 - 后续任务：准备真实商品大表需要的有效 Supplier Master，并处理 Excel 的空供应商；类目 Source Loader 不再是商品 Confirm 前置条件。
 - 业务冻结：Supplier Product Quote 已取消；后续供应商新报价直接更新正式 Product 的 `cost_price`，并原子重算派生价格；不创建报价历史、有效期或比价模块。
-- Auth 后续范围：Refresh Token、Session、Multi-device Logout 与 Role Delete / disable policy 仍待后续冻结。
+- Auth 后续范围：Refresh Token、Session、Multi-device Logout 与 Role Delete / disable policy 仍待后续冻结；User Logical Delete 已实现。
 
 ## Blocker
 

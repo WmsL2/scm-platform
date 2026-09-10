@@ -4,6 +4,8 @@
 
 ## Backend
 
+- [x] User logical delete：`DELETE /api/v1/admin/users/{user_id}` requires `system:user:delete`; self-delete is rejected, deletion audits `deleted_by`/`deleted_at`, increments token_version, and preserves user/role history.
+
 - 数据库：五张 Auth/RBAC 表，Revision `20260903_0002`。
 - API：login、me、logout。
 - 权限：CurrentUser、get_current_user、require_permission。

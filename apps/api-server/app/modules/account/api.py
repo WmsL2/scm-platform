@@ -66,6 +66,16 @@ async def user_roles(
     )
 
 
+@admin_router.delete("/users/{user_id}", response_model=ApiResponse[dict[str, str]])
+async def delete_user(
+    user_id: uuid.UUID,
+    current: Annotated[CurrentUser, Depends(require_permission("system:user:delete"))],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> ApiResponse[dict[str, str]]:
+    await AccountService(session).delete_user(user_id, current.user_id)
+    return success({"status": "deleted"})
+
+
 @admin_router.get("/roles", response_model=ApiResponse[list[RoleResponse]])
 async def roles(
     _: Annotated[CurrentUser, Depends(require_permission("system:role:list"))],

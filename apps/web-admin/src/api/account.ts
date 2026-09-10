@@ -6,6 +6,7 @@ export const accountApi = {
   changePassword: (current_password: string, new_password: string) => http.post<{ status: string }>("/api/v1/auth/change-password", { current_password, new_password }),
   users: () => http.get<Page<AccountUser>>("/api/v1/admin/users"),
   setUserRoles: (id: string, role_ids: string[]) => http.put<AccountUser>(`/api/v1/admin/users/${id}/roles`, { role_ids }),
+  deleteUser: (id: string) => http.delete<{ status: string }>(`/api/v1/admin/users/${id}`),
   roles: () => http.get<AccountRole[]>("/api/v1/admin/roles"),
   createRole: (payload: RoleCreateRequest) => http.post<AccountRole>("/api/v1/admin/roles", payload),
   setRolePermissions: (id: string, permission_ids: string[]) => http.put<AccountRole>(`/api/v1/admin/roles/${id}/permissions`, { permission_ids }),
