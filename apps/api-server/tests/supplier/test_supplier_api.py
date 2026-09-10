@@ -307,8 +307,84 @@ async def test_supplier_delete_is_logical_and_requires_permission() -> None:
         await cleanup_user(unprivileged_user)
 
 
+async def test_supplier_name_is_unique_and_deleted_supplier_is_restored() -> None:
+    user_id, headers = await create_user_with_permissions(
+        ("supplier:create", "supplier:detail", "supplier:delete")
+    )
+    supplier_ids: list[str] = []
+    supplier_name = f"恢复供应商-{uuid.uuid4()}"
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = await client.post(
+                "/api/v1/suppliers",
+                headers=headers,
+                json={
+                    "supplier_name": supplier_name,
+                    "main_brands": "旧品牌",
+                    "advantage": "旧优势",
+                    "contacts": [{"contact_name": "旧联系人", "contact_phone": "13000000000"}],
+                },
+            )
+            assert created.status_code == 201
+            original = created.json()["data"]
+            supplier_ids.append(original["id"])
+
+            deleted = await client.delete(f"/api/v1/suppliers/{original['id']}", headers=headers)
+            assert deleted.status_code == 200
+
+            restored = await client.post(
+                "/api/v1/suppliers",
+                headers=headers,
+                json={
+                    "supplier_name": supplier_name,
+                    "main_brands": "新品牌",
+                    "advantage": "新优势",
+                    "contacts": [{"contact_name": "新联系人", "contact_phone": "13100000000"}],
+                },
+            )
+            assert restored.status_code == 201
+            restored_data = restored.json()["data"]
+            assert restored_data["id"] == original["id"]
+            assert restored_data["supplier_code"] == original["supplier_code"]
+            assert restored_data["main_brands"] == "新品牌"
+            assert restored_data["archive_status"] == "DRAFT"
+            assert restored_data["cooperation_status"] == "NORMAL"
+            assert restored_data["contacts"] == [
+                {
+                    "id": restored_data["contacts"][0]["id"],
+                    "contact_name": "新联系人",
+                    "contact_phone": "13100000000",
+                }
+            ]
+
+            duplicate = await client.post(
+                "/api/v1/suppliers",
+                headers=headers,
+                json={
+                    "supplier_name": supplier_name,
+                    "main_brands": "重复品牌",
+                    "advantage": "重复优势",
+                },
+            )
+            assert duplicate.status_code == 409
+            assert duplicate.json()["code"] == "SUPPLIER_NAME_EXISTS"
+            assert duplicate.json()["message"] == "该供应商已存在"
+
+        async with SessionLocal() as session:
+            supplier = await session.get(Supplier, original["id"])
+            assert supplier is not None
+            assert supplier.is_deleted is False
+            assert supplier.deleted_by is None
+            assert supplier.deleted_at is None
+    finally:
+        await cleanup_suppliers(supplier_ids)
+        await cleanup_user(user_id)
+
+
 async def test_supplier_excel_preview_and_confirm() -> None:
-    user_id, headers = await create_user_with_permissions(("supplier:create", "supplier:list"))
+    user_id, headers = await create_user_with_permissions(
+        ("supplier:create", "supplier:list", "supplier:delete")
+    )
     another_user, another_headers = await create_user_with_permissions(("supplier:create",))
     batch_ids: list[str] = []
     supplier_ids: list[str] = []
@@ -348,6 +424,41 @@ async def test_supplier_excel_preview_and_confirm() -> None:
             )
             assert invalid_confirm.status_code == 409
 
+            existing = await client.post(
+                "/api/v1/suppliers",
+                headers=headers,
+                json={
+                    "supplier_name": "已存在供应商",
+                    "main_brands": "品牌",
+                    "advantage": "优势",
+                },
+            )
+            assert existing.status_code == 201
+            supplier_ids.append(existing.json()["data"]["id"])
+            duplicate_preview = await client.post(
+                "/api/v1/suppliers/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "duplicate.xlsx",
+                        workbook_bytes(
+                            [
+                                ("已存在供应商", "品牌", "优势", None, None),
+                                ("Excel 重复供应商", "品牌", "优势", None, None),
+                                ("Excel 重复供应商", "品牌", "优势", None, None),
+                            ]
+                        ),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert duplicate_preview.status_code == 200
+            duplicate_batch = duplicate_preview.json()["data"]
+            batch_ids.append(duplicate_batch["id"])
+            assert duplicate_batch["invalid_rows"] == 2
+            assert duplicate_batch["rows"][0]["error_message"] == "该供应商已存在"
+            assert duplicate_batch["rows"][2]["error_message"] == "与 Excel 第 3 行供应商名称重复"
+
             valid_preview = await client.post(
                 "/api/v1/suppliers/imports/preview",
                 headers=headers,
@@ -379,6 +490,83 @@ async def test_supplier_excel_preview_and_confirm() -> None:
                 f"/api/v1/suppliers/imports/{valid_batch['id']}/confirm", headers=headers
             )
             assert repeated.status_code == 409
+
+            deleted = await client.post(
+                "/api/v1/suppliers",
+                headers=headers,
+                json={
+                    "supplier_name": "导入恢复供应商",
+                    "main_brands": "旧品牌",
+                    "advantage": "旧优势",
+                },
+            )
+            assert deleted.status_code == 201
+            deleted_supplier = deleted.json()["data"]
+            supplier_ids.append(deleted_supplier["id"])
+            assert (
+                await client.delete(f"/api/v1/suppliers/{deleted_supplier['id']}", headers=headers)
+            ).status_code == 200
+            restore_preview = await client.post(
+                "/api/v1/suppliers/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "restore.xlsx",
+                        workbook_bytes([("导入恢复供应商", "新品牌", "新优势", "赵六", None)]),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert restore_preview.status_code == 200
+            restore_batch = restore_preview.json()["data"]
+            batch_ids.append(restore_batch["id"])
+            assert restore_batch["invalid_rows"] == 0
+            restored = await client.post(
+                f"/api/v1/suppliers/imports/{restore_batch['id']}/confirm", headers=headers
+            )
+            assert restored.status_code == 200
+
+            integrity_preview = await client.post(
+                "/api/v1/suppliers/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "integrity.xlsx",
+                        workbook_bytes([("完整性校验供应商", "品牌", "优势", None, None)]),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert integrity_preview.status_code == 200
+            integrity_batch = integrity_preview.json()["data"]
+            batch_ids.append(integrity_batch["id"])
+            async with SessionLocal() as session:
+                batch = await session.get(SupplierImportBatch, integrity_batch["id"])
+                assert batch is not None
+                batch.valid_rows = 0
+                await session.commit()
+            integrity_confirm = await client.post(
+                f"/api/v1/suppliers/imports/{integrity_batch['id']}/confirm", headers=headers
+            )
+            assert integrity_confirm.status_code == 409
+            assert integrity_confirm.json()["code"] == "SUPPLIER_IMPORT_BATCH_INTEGRITY_ERROR"
+
+        async with SessionLocal() as session:
+            restored_supplier = await session.get(Supplier, deleted_supplier["id"])
+            assert restored_supplier is not None
+            assert restored_supplier.is_deleted is False
+            assert restored_supplier.main_brands == "新品牌"
+            assert restored_supplier.archive_status == "ARCHIVED"
+            integrity_batch_after_failure = await session.get(
+                SupplierImportBatch, integrity_batch["id"]
+            )
+            assert integrity_batch_after_failure is not None
+            assert integrity_batch_after_failure.status == "VALIDATED"
+            assert await session.scalar(
+                select(func.count())
+                .select_from(Supplier)
+                .where(Supplier.supplier_name == "完整性校验供应商")
+            ) == 0
 
         async with SessionLocal() as session:
             imported = list(

@@ -109,25 +109,15 @@ async function previewImport(event: Event): Promise<void> {
     importDialogVisible.value = true
     if (importPreview.value.invalid_rows) {
       ElMessage.warning(`发现 ${importPreview.value.invalid_rows} 行错误，请修正 Excel 后重新上传`)
+      return
     }
-  } catch (error) {
-    ElMessage.error(error instanceof HttpError ? error.response.message : "Excel 导入预览失败")
-  } finally {
-    importing.value = false
-  }
-}
-
-async function confirmImport(): Promise<void> {
-  if (!importPreview.value || importPreview.value.invalid_rows) return
-  importing.value = true
-  try {
     const result = await supplierApi.confirmImport(importPreview.value.id)
     ElMessage.success(`成功导入 ${result.imported_count} 家供应商`)
     importDialogVisible.value = false
     importPreview.value = null
     await loadSuppliers(1)
   } catch (error) {
-    ElMessage.error(error instanceof HttpError ? error.response.message : "确认导入失败")
+    ElMessage.error(error instanceof HttpError ? error.response.message : "Excel 导入预览失败")
   } finally {
     importing.value = false
   }
@@ -203,7 +193,7 @@ onMounted(() => void loadSuppliers())
       <template v-if="importPreview">
         <el-alert :type="importPreview.invalid_rows ? 'warning' : 'success'" :closable="false" show-icon>
           共 {{ importPreview.total_rows }} 行；有效 {{ importPreview.valid_rows }} 行；错误 {{ importPreview.invalid_rows }} 行。
-          仅无错误时可以确认导入，导入后的供应商固定为“已归档 / 正常合作”。
+          有错误时请修正 Excel 后重新上传；无错误的文件会自动导入。导入后的供应商固定为“已归档 / 正常合作”。
         </el-alert>
         <el-table :data="importPreview.rows" max-height="380" class="import-preview-table">
           <el-table-column prop="source_row_number" label="Excel 行" width="90" />
@@ -219,7 +209,6 @@ onMounted(() => void loadSuppliers())
       </template>
       <template #footer>
         <el-button @click="importDialogVisible = false">关闭</el-button>
-        <el-button type="primary" :loading="importing" :disabled="!importPreview || importPreview.invalid_rows > 0" @click="confirmImport">确认导入</el-button>
       </template>
     </el-dialog>
   </div>

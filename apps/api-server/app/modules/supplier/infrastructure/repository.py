@@ -12,6 +12,7 @@ from app.modules.supplier.infrastructure.models import (
     SupplierContact,
     SupplierCooperationRecord,
     SupplierImportBatch,
+    SupplierImportRow,
     SupplierQualification,
 )
 
@@ -40,6 +41,27 @@ class SupplierRepository:
                 .with_for_update()
             ),
         )
+
+    async def by_name_for_update(self, supplier_name: str) -> Supplier | None:
+        """Return an active or logically deleted supplier while holding a row lock."""
+        return cast(
+            Supplier | None,
+            await self.session.scalar(
+                select(Supplier)
+                .options(selectinload(Supplier.contacts))
+                .where(Supplier.supplier_name == supplier_name)
+                .with_for_update()
+            ),
+        )
+
+    async def active_supplier_names(self, supplier_names: set[str]) -> set[str]:
+        if not supplier_names:
+            return set()
+        statement = select(Supplier.supplier_name).where(
+            Supplier.supplier_name.in_(supplier_names),
+            Supplier.is_deleted.is_(False),
+        )
+        return set((await self.session.scalars(statement)).all())
 
     async def eligible_source_suppliers(self) -> list[Supplier]:
         statement = (
@@ -95,11 +117,22 @@ class SupplierRepository:
             SupplierImportBatch | None,
             await self.session.scalar(
                 select(SupplierImportBatch)
-                .options(selectinload(SupplierImportBatch.rows))
                 .where(SupplierImportBatch.id == batch_id)
                 .with_for_update()
             ),
         )
+
+    async def import_rows_by_batch_id_for_update(
+        self, batch_id: uuid.UUID
+    ) -> list[SupplierImportRow]:
+        """Load persisted rows explicitly for the atomic import-confirm workflow."""
+        statement = (
+            select(SupplierImportRow)
+            .where(SupplierImportRow.batch_id == batch_id)
+            .order_by(SupplierImportRow.source_row_number)
+            .with_for_update()
+        )
+        return list((await self.session.scalars(statement)).all())
 
     async def logical_delete_children(self, supplier_id: uuid.UUID, actor_id: uuid.UUID) -> None:
         await self.session.execute(

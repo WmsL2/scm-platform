@@ -19,7 +19,7 @@ Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Su
 Sprint 1 — Auth/RBAC + Supplier
 
 状态：IN_PROGRESS
-进度：Auth Kernel DONE；Web Admin Auth DONE / REAL API VERIFIED；Business Sequence DONE / IMPLEMENTED（Revision `20260907_0003`）；Supplier Master Backend DONE / MERGED via PR #13（Revision `20260907_0004`）；Supplier Delete & Import Patch MERGED / IMPLEMENTED（Revision `20260908_0005`）；Account / Registration / Profile IMPLEMENTED / VERIFIED（Revision `20260908_0006`）；Custom Role Create IMPLEMENTED（Revision `20260908_0007`）；Post-Merge P1 Transaction / Validation Hardening VERIFIED（无 Migration）；Product Master 与 Product Import IMPLEMENTED（Revision `20260909_0008` → `20260910_0015`）。当前 Alembic 迁移链为单 Head：`20260907_0004` → `20260908_0005` → `20260908_0006` → `20260908_0007` → `20260909_0008` → `20260909_0009` → `20260910_0010`（用户逻辑删除）→ `20260910_0013` → `20260910_0014` → `20260910_0015`。分支与合入状态以 GitHub / `main` 历史为准。
+进度：Auth Kernel DONE；Web Admin Auth DONE / REAL API VERIFIED；Business Sequence DONE / IMPLEMENTED（Revision `20260907_0003`）；Supplier Master Backend DONE / MERGED via PR #13（Revision `20260907_0004`）；Supplier Delete & Import Patch MERGED / IMPLEMENTED（Revision `20260908_0005`）；Supplier Name Uniqueness / Deleted-Record Recovery IMPLEMENTED（Revision `20260910_0016`）；Account / Registration / Profile IMPLEMENTED / VERIFIED（Revision `20260908_0006`）；Custom Role Create IMPLEMENTED（Revision `20260908_0007`）；Post-Merge P1 Transaction / Validation Hardening VERIFIED（无 Migration）；Product Master 与 Product Import IMPLEMENTED（Revision `20260909_0008` → `20260910_0015`）。当前 Alembic 迁移链为单 Head：`20260907_0004` → `20260908_0005` → `20260908_0006` → `20260908_0007` → `20260909_0008` → `20260909_0009` → `20260910_0010`（用户逻辑删除）→ `20260910_0013` → `20260910_0014` → `20260910_0015` → `20260910_0016`（供应商名称唯一）。分支与合入状态以 GitHub / `main` 历史为准。
 
 ## 已冻结
 
@@ -51,14 +51,14 @@ Sprint 1 — Auth/RBAC + Supplier
 ## Blocker
 
 - Repository：无代码合并 Blocker。
-- Supplier：Delete & Import 已合入；未确认的企业、税务、地址、银行、资质等字段仍不得自行添加。资质业务字段及其 API 继续冻结。
+- Supplier：名称唯一与重复数据清理已实现：同名只保留最早历史记录，后建重复记录已物理删除；创建/导入遇到已逻辑删除的同名记录会恢复并覆盖。Import Confirm 已按原子持久化加固：锁定实际导入行、flush 成功和数量一致后才确认批次，异常整批回滚。未确认的企业、税务、地址、银行、资质等字段仍不得自行添加。资质业务字段及其 API 继续冻结。
 - Product / Catalog：Product Master 与 Product Import 已实现；实际 Confirm 仅受空/无效来源供应商阻塞，Product 删除策略和无受控类目关联 Product 的独立成本价维护仍待后续范围。
 
 ## Workstreams / Implementation Context
 
 - Auth Real API Integration：已完成真实 Auth API 联调；分支与合入状态以 GitHub / `main` 历史为准。
 - Business Sequence：`sys_biz_sequence` Migration、并发安全取号服务与 MySQL 并发测试已完成；分支与合入状态以 GitHub / `main` 历史为准。
-- Supplier：Backend MERGED / Frontend REAL_API_IMPLEMENTED；Delete & Import Patch MERGED / IMPLEMENTED（Revision `20260908_0005`），新增逻辑删除、`supplier:delete`、Excel 模板/校验预览/确认导入和 Web Admin 控制。
+- Supplier：Backend MERGED / Frontend REAL_API_IMPLEMENTED；Delete & Import Patch MERGED / IMPLEMENTED（Revision `20260908_0005`），新增逻辑删除、`supplier:delete`、Excel 模板/校验预览和 Web Admin 控制。Name Uniqueness Patch IMPLEMENTED（Revision `20260910_0016`）：活动同名创建/编辑受阻，逻辑删除同名记录可恢复覆盖；Excel 活动重名/表内重名按行提示，无错误文件自动导入。Import Confirm Integrity Fix IMPLEMENTED：确认时直接锁定批次行、flush 并核验实际处理数后才置为成功；历史异常确认批次不自动重放。
 - Auth/RBAC：Auth Sprint 1 当前范围 IMPLEMENTED / VERIFIED（Revision `20260908_0006`），包括注册审批、用户角色/角色权限管理、动态权限目录、Profile 与修改密码；Web Admin UI Optimization 分支已完成内部 UUID 隐藏、中文用户状态、角色名称展示（只读 `role_names` 响应字段）、待审批数字角标与审批历史列表的前后端本地验证；角色只可分配给 `ENABLED` 用户，浏览器验收待完成；Refresh Token、Session、Multi-device Logout 仍属未来范围。
 - Role Management：自定义角色创建 IMPLEMENTED（Revision `20260908_0007`）。新增 `system:role:create`，角色编码不可修改且符合小写英文/数字/下划线规范，角色初始无权限；系统管理员内置角色存在时由迁移自动获得创建权限。角色编辑、停用与删除仍属未来范围。
 - Post-Merge Hardening：Request transaction ownership、Service caller-owned transaction participation、Account association ID 幂等去重与 Supplier UUID Router validation 已验证；ADR-0007 冻结事务规则，无 Migration 变化。

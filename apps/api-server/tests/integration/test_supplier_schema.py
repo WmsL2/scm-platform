@@ -62,6 +62,15 @@ async def test_supplier_schema_and_permission_directory() -> None:
             "deleted_at",
         } == supplier_columns
 
+        unique_index_rows = await session.execute(
+            text(
+                "SELECT index_name FROM information_schema.statistics "
+                "WHERE table_schema = DATABASE() AND table_name = 'scm_supplier' "
+                "AND column_name = 'supplier_name' AND non_unique = 0"
+            )
+        )
+        assert {row[0] for row in unique_index_rows} == {"uq_scm_supplier_supplier_name"}
+
         qualification_columns = {
             row[0]
             for row in (
