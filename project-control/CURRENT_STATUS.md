@@ -64,3 +64,4 @@ Sprint 1 — Auth/RBAC + Supplier
 - Post-Merge Hardening：Request transaction ownership、Service caller-owned transaction participation、Account association ID 幂等去重与 Supplier UUID Router validation 已验证；ADR-0007 冻结事务规则，无 Migration 变化。
 - Catalog：`IMPLEMENTED / PRODUCT_IMPORT_DIRECT_VALUE_MODE`；固定商品大表直接保存三级类目文字和价格值，`source_supplier_id` 仍是正式关系；Product 列表、详情、导入预览、供应商人工解析和原子 Confirm 已可用，真实类目源数据无需作为 Confirm 前置条件。
 - Product Cost Pricing：`cost_price` 是当前成本价和当前供应商报价，不建设 `scm_supplier_product_quote`；成本价更新已受 `product:cost:update` 保护，并原子重算已冻结派生值。
+- Web Admin Data Refresh：统一 API 客户端已设置 `cache: no-store`；新增、编辑、删除和导入确认后的页面重新加载不会复用浏览器中的旧 GET 响应，前端测试、类型检查和生产构建已验证。

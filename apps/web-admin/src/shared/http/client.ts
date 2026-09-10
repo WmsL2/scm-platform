@@ -50,6 +50,9 @@ export class HttpClient {
       const baseUrl = (this.options.baseUrl ?? import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")
       const response = await fetch(`${baseUrl}${path}`, {
         method,
+        // API responses drive interactive lists and details. Never let a browser
+        // reuse a stale GET response after a successful create/update/delete.
+        cache: "no-store",
         headers: {
           Accept: "application/json",
           ...(body === undefined || isFormData ? {} : { "Content-Type": "application/json" }),
