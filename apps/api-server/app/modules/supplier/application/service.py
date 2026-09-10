@@ -165,16 +165,46 @@ class SupplierService:
             supplier_id, CooperationStatus.BLACKLIST, reason, actor_id
         )
 
+    async def resume(
+        self, supplier_id: uuid.UUID, reason: str, actor_id: uuid.UUID
+    ) -> SupplierDetailResponse:
+        return await self._change_cooperation_status(
+            supplier_id,
+            CooperationStatus.NORMAL,
+            reason,
+            actor_id,
+            expected_current=CooperationStatus.STOPPED,
+        )
+
+    async def unblacklist(
+        self, supplier_id: uuid.UUID, reason: str, actor_id: uuid.UUID
+    ) -> SupplierDetailResponse:
+        return await self._change_cooperation_status(
+            supplier_id,
+            CooperationStatus.NORMAL,
+            reason,
+            actor_id,
+            expected_current=CooperationStatus.BLACKLIST,
+        )
+
     async def _change_cooperation_status(
         self,
         supplier_id: uuid.UUID,
         target_status: CooperationStatus,
         reason: str,
         actor_id: uuid.UUID,
+        expected_current: CooperationStatus | None = None,
     ) -> SupplierDetailResponse:
         normalized_reason = normalize_reason(reason)
         async with transaction_scope(self.session):
             supplier = await self._active_for_update(supplier_id)
+            if expected_current is not None and supplier.cooperation_status != expected_current:
+                raise AppError(
+                    "SUPPLIER_COOPERATION_TRANSITION_NOT_ALLOWED",
+                    "Cannot change cooperation status from "
+                    f"{supplier.cooperation_status} to {target_status}",
+                    409,
+                )
             assert_cooperation_transition(supplier.cooperation_status, target_status)
             self.repository.add_cooperation_record(
                 supplier_id=supplier.id,

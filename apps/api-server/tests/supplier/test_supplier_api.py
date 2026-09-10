@@ -31,6 +31,8 @@ SUPPLIER_PERMISSIONS = (
     "supplier:archive",
     "supplier:stop",
     "supplier:blacklist",
+    "supplier:resume",
+    "supplier:unblacklist",
     "supplier:delete",
 )
 
@@ -243,6 +245,139 @@ async def test_supplier_api_returns_403_for_authenticated_user_without_supplier_
             assert response.status_code == 403
             assert response.json()["code"] == "AUTH_FORBIDDEN"
     finally:
+        await cleanup_user(user_id)
+
+
+async def test_supplier_cooperation_recovery_preserves_history_and_eligibility() -> None:
+    user_id, headers = await create_user_with_permissions(SUPPLIER_PERMISSIONS)
+    limited_user, limited_headers = await create_user_with_permissions(("supplier:list",))
+    supplier_ids: list[str] = []
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = await client.post(
+                "/api/v1/suppliers",
+                headers=headers,
+                json={"supplier_name": "恢复合作测试", "main_brands": "品牌", "advantage": "优势"},
+            )
+            assert created.status_code == 201, created.text
+            supplier_id = created.json()["data"]["id"]
+            supplier_ids.append(supplier_id)
+            resume_from_normal = await client.post(
+                f"/api/v1/suppliers/{supplier_id}/commands/resume",
+                headers=headers,
+                json={"reason": "不允许正常状态恢复"},
+            )
+            assert resume_from_normal.status_code == 409, resume_from_normal.text
+            assert (
+                await client.post(
+                    f"/api/v1/suppliers/{supplier_id}/commands/unblacklist",
+                    headers=headers,
+                    json={"reason": "不允许正常状态移出黑名单"},
+                )
+            ).status_code == 409
+            assert (
+                await client.post(
+                    f"/api/v1/suppliers/{supplier_id}/commands/stop",
+                    headers=headers,
+                    json={"reason": "   "},
+                )
+            ).status_code == 422
+            assert (
+                await client.post(
+                    f"/api/v1/suppliers/{supplier_id}/commands/stop",
+                    headers=headers,
+                    json={"reason": "停止合作原因"},
+                )
+            ).status_code == 200
+            assert (
+                await client.post(
+                    f"/api/v1/suppliers/{supplier_id}/commands/unblacklist",
+                    headers=headers,
+                    json={"reason": "状态不匹配"},
+                )
+            ).status_code == 409
+            assert (
+                await client.post(
+                    f"/api/v1/suppliers/{supplier_id}/commands/resume",
+                    headers=limited_headers,
+                    json={"reason": "没有恢复权限"},
+                )
+            ).status_code == 403
+            resumed = await client.post(
+                f"/api/v1/suppliers/{supplier_id}/commands/resume",
+                headers=headers,
+                json={"reason": "恢复合作原因"},
+            )
+            assert resumed.status_code == 200
+            assert resumed.json()["data"]["cooperation_status"] == "NORMAL"
+            assert (
+                await client.post(
+                    f"/api/v1/suppliers/{supplier_id}/commands/resume",
+                    headers=headers,
+                    json={"reason": "不能重复恢复"},
+                )
+            ).status_code == 409
+            await client.post(f"/api/v1/suppliers/{supplier_id}/commands/submit", headers=headers)
+            await client.post(f"/api/v1/suppliers/{supplier_id}/commands/archive", headers=headers)
+            assert (
+                await client.post(
+                    f"/api/v1/suppliers/{supplier_id}/commands/blacklist",
+                    headers=headers,
+                    json={"reason": "加入黑名单原因"},
+                )
+            ).status_code == 200
+            assert (
+                await client.post(
+                    f"/api/v1/suppliers/{supplier_id}/commands/resume",
+                    headers=headers,
+                    json={"reason": "状态不匹配"},
+                )
+            ).status_code == 409
+            assert (
+                await client.post(
+                    f"/api/v1/suppliers/{supplier_id}/commands/unblacklist",
+                    headers=limited_headers,
+                    json={"reason": "没有移出权限"},
+                )
+            ).status_code == 403
+            unblacklisted = await client.post(
+                f"/api/v1/suppliers/{supplier_id}/commands/unblacklist",
+                headers=headers,
+                json={"reason": "移出黑名单原因"},
+            )
+            assert unblacklisted.status_code == 200
+            assert unblacklisted.json()["data"]["cooperation_status"] == "NORMAL"
+            assert (
+                await client.post(
+                    f"/api/v1/suppliers/{supplier_id}/commands/unblacklist",
+                    headers=headers,
+                    json={"reason": "不能重复移出"},
+                )
+            ).status_code == 409
+
+        async with SessionLocal() as session:
+            records = list(
+                (
+                    await session.scalars(
+                        select(SupplierCooperationRecord)
+                        .where(SupplierCooperationRecord.supplier_id == supplier_id)
+                    )
+                ).all()
+            )
+            assert {
+                (record.from_status, record.to_status, record.reason) for record in records
+            } == {
+                ("NORMAL", "STOPPED", "停止合作原因"),
+                ("STOPPED", "NORMAL", "恢复合作原因"),
+                ("NORMAL", "BLACKLIST", "加入黑名单原因"),
+                ("BLACKLIST", "NORMAL", "移出黑名单原因"),
+            }
+            assert all(record.actor_id == user_id for record in records)
+            eligible = await SupplierService(session).repository.eligible_source_suppliers()
+            assert supplier_id in {str(supplier.id) for supplier in eligible}
+    finally:
+        await cleanup_suppliers(supplier_ids)
+        await cleanup_user(limited_user)
         await cleanup_user(user_id)
 
 

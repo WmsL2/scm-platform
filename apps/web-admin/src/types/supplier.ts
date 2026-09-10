@@ -1,6 +1,6 @@
 export type ArchiveStatus = "DRAFT" | "PENDING" | "ARCHIVED"
 export type CooperationStatus = "NORMAL" | "STOPPED" | "BLACKLIST"
-export type SupplierCommand = "submit" | "archive" | "stop" | "blacklist"
+export type SupplierCommand = "submit" | "archive" | "stop" | "blacklist" | "resume" | "unblacklist"
 
 export interface SupplierContactInput {
   contact_name: string | null
@@ -91,7 +91,7 @@ export const ARCHIVE_STATUS_LABELS: Record<ArchiveStatus, string> = {
 
 export const COOPERATION_STATUS_LABELS: Record<CooperationStatus, string> = {
   NORMAL: "正常合作",
-  STOPPED: "已停用",
+  STOPPED: "已停止合作",
   BLACKLIST: "黑名单",
 }
 
@@ -139,5 +139,5 @@ export function supplierDraftValidationMessage(draft: SupplierFormDraft): string
 }
 
 export function commandRequiresReason(command: SupplierCommand): boolean {
-  return command === "stop" || command === "blacklist"
+  return ["stop", "blacklist", "resume", "unblacklist"].includes(command)
 }

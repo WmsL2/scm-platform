@@ -1,6 +1,11 @@
-from sqlalchemy import text
+import uuid
+
+import pytest
+from sqlalchemy import delete, text
+from sqlalchemy.exc import DBAPIError
 
 from app.core.database import SessionLocal
+from app.modules.supplier.infrastructure.models import Supplier, SupplierCooperationRecord
 
 
 async def test_supplier_schema_and_permission_directory() -> None:
@@ -21,6 +26,8 @@ async def test_supplier_schema_and_permission_directory() -> None:
         "supplier:archive",
         "supplier:stop",
         "supplier:blacklist",
+        "supplier:resume",
+        "supplier:unblacklist",
         "supplier:delete",
     }
     async with SessionLocal() as session:
@@ -100,3 +107,60 @@ async def test_supplier_schema_and_permission_directory() -> None:
             )
         )
         assert {row[0] for row in permission_rows} == expected_permissions
+
+
+async def test_supplier_cooperation_history_constraint_allows_only_frozen_pairs() -> None:
+    supplier_id = uuid.uuid4()
+    async with SessionLocal() as session:
+        session.add(
+            Supplier(
+                id=supplier_id,
+                supplier_code=f"TST{str(supplier_id).replace('-', '')[:9]}",
+                supplier_name=f"状态约束测试-{supplier_id}",
+                main_brands="测试",
+                advantage="测试",
+            )
+        )
+        await session.flush()
+        for from_status, to_status in [
+            ("NORMAL", "STOPPED"),
+            ("NORMAL", "BLACKLIST"),
+            ("STOPPED", "NORMAL"),
+            ("BLACKLIST", "NORMAL"),
+        ]:
+            session.add(
+                SupplierCooperationRecord(
+                    supplier_id=supplier_id,
+                    from_status=from_status,
+                    to_status=to_status,
+                    reason="状态约束测试",
+                    actor_id=uuid.uuid4(),
+                )
+            )
+        await session.flush()
+        for from_status, to_status in [
+            ("STOPPED", "BLACKLIST"),
+            ("BLACKLIST", "STOPPED"),
+            ("NORMAL", "NORMAL"),
+            ("STOPPED", "STOPPED"),
+            ("BLACKLIST", "BLACKLIST"),
+        ]:
+            with pytest.raises(DBAPIError):
+                async with session.begin_nested():
+                    session.add(
+                        SupplierCooperationRecord(
+                            supplier_id=supplier_id,
+                            from_status=from_status,
+                            to_status=to_status,
+                            reason="非法状态约束测试",
+                            actor_id=uuid.uuid4(),
+                        )
+                    )
+                    await session.flush()
+        await session.execute(
+            delete(SupplierCooperationRecord).where(
+                SupplierCooperationRecord.supplier_id == supplier_id
+            )
+        )
+        await session.execute(delete(Supplier).where(Supplier.id == supplier_id))
+        await session.commit()

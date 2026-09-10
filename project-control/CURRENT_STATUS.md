@@ -51,7 +51,7 @@ Sprint 1 — Auth/RBAC + Supplier
 ## Blocker
 
 - Repository：无代码合并 Blocker。
-- Supplier：名称唯一与重复数据清理已实现：同名只保留最早历史记录，后建重复记录已物理删除；创建/导入遇到已逻辑删除的同名记录会恢复并覆盖。Import Confirm 已按原子持久化加固：锁定实际导入行、flush 成功和数量一致后才确认批次，异常整批回滚。未确认的企业、税务、地址、银行、资质等字段仍不得自行添加。资质业务字段及其 API 继续冻结。
+- Supplier：名称唯一与重复数据清理已实现：同名只保留最早历史记录，后建重复记录已物理删除；创建/导入遇到已逻辑删除的同名记录会恢复并覆盖。合作状态已冻结为 NORMAL ↔ STOPPED / BLACKLIST，恢复均保留原因和历史；Import Confirm 已按原子持久化加固：锁定实际导入行、flush 成功和数量一致后才确认批次，异常整批回滚。未确认的企业、税务、地址、银行、资质等字段仍不得自行添加。资质业务字段及其 API 继续冻结。
 - Product / Catalog：Product Master 与 Product Import 已实现；实际 Confirm 仅受空/无效来源供应商阻塞，Product 删除策略和无受控类目关联 Product 的独立成本价维护仍待后续范围。
 
 ## Workstreams / Implementation Context
