@@ -91,6 +91,7 @@ async def create_product_fixture() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
                 id=product_id,
                 product_name="商品成本价测试",
                 brand="测试品牌",
+                image_reference="local-media/product-images/test-product.png",
                 model="MODEL-1",
                 sku="SKU-1",
                 category_id=category_id,
@@ -122,6 +123,22 @@ async def test_product_api_lists_details_and_recalculates_cost_atomically() -> N
             listing = await client.get("/api/v1/products?keyword=成本价", headers=headers)
             assert listing.status_code == 200
             assert any(item["id"] == str(product_id) for item in listing.json()["data"]["items"])
+            listed_product = next(
+                item for item in listing.json()["data"]["items"] if item["id"] == str(product_id)
+            )
+            assert listed_product["image_reference"] == (
+                "local-media/product-images/test-product.png"
+            )
+
+            supplier_products = await client.get(
+                f"/api/v1/products?source_supplier_id={supplier_id}", headers=headers
+            )
+            assert supplier_products.status_code == 200
+            supplier_product_items = supplier_products.json()["data"]["items"]
+            assert any(item["id"] == str(product_id) for item in supplier_product_items)
+            assert {item["source_supplier_id"] for item in supplier_product_items} == {
+                str(supplier_id)
+            }
 
             detail = await client.get(f"/api/v1/products/{product_id}", headers=headers)
             assert detail.status_code == 200

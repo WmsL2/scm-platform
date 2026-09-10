@@ -2,6 +2,7 @@
 import { EditPen, Refresh, Search, Upload } from "@element-plus/icons-vue"
 import { onMounted, reactive, ref } from "vue"
 import { ElMessage } from "element-plus"
+import { useRoute, useRouter } from "vue-router"
 
 import { productApi } from "../../api/catalog"
 import { HttpError } from "../../shared/http"
@@ -13,12 +14,17 @@ import type {
 } from "../../types/catalog"
 
 const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 const loading = ref(false)
 const products = ref<ProductListItem[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = 20
-const filters = reactive({ keyword: "" })
+const filters = reactive({
+  keyword: "",
+  source_supplier_id: typeof route.query.source_supplier_id === "string" ? route.query.source_supplier_id : "",
+})
 const importInput = ref<HTMLInputElement>()
 const importing = ref(false)
 const importDialogVisible = ref(false)
@@ -31,6 +37,7 @@ async function loadProducts(targetPage = page.value): Promise<void> {
   try {
     const result = await productApi.list({
       keyword: filters.keyword,
+      source_supplier_id: filters.source_supplier_id || undefined,
       page: targetPage,
       page_size: pageSize,
     })
@@ -46,11 +53,20 @@ async function loadProducts(targetPage = page.value): Promise<void> {
 
 function reset(): void {
   filters.keyword = ""
+  filters.source_supplier_id = ""
+  void router.replace({ name: "product-list" })
   void loadProducts(1)
 }
 
 function money(value: string | null): string {
   return value === null ? "—" : `¥ ${value}`
+}
+
+function productImageUrl(reference: string | null): string | undefined {
+  if (!reference) return undefined
+  if (/^https?:\/\//i.test(reference)) return reference
+  const baseUrl = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")
+  return `${baseUrl}/${reference.replace(/^\//, "")}`
 }
 
 function openImport(): void {
@@ -135,6 +151,15 @@ onMounted(() => void loadProducts())
     </header>
 
     <el-card class="page-card filter-card">
+      <el-alert
+        v-if="filters.source_supplier_id"
+        title="正在查看当前供应商的相关商品"
+        description="此列表仅显示商品来源供应商为当前供应商的正式商品。"
+        type="info"
+        :closable="false"
+        show-icon
+        class="supplier-filter-notice"
+      />
       <el-form :inline="true" label-position="top" @submit.prevent="loadProducts(1)">
         <el-form-item label="关键字">
           <el-input
@@ -148,7 +173,7 @@ onMounted(() => void loadProducts())
           <el-button type="primary" :icon="Search" :loading="loading" @click="loadProducts(1)">
             查询
           </el-button>
-          <el-button :icon="Refresh" @click="reset">重置</el-button>
+          <el-button :icon="Refresh" @click="reset">{{ filters.source_supplier_id ? "查看全部商品" : "重置" }}</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -156,6 +181,21 @@ onMounted(() => void loadProducts())
     <el-card class="page-card table-card">
       <template #header><strong>商品列表</strong></template>
       <el-table v-loading="loading" :data="products" empty-text="暂无正式商品数据">
+        <el-table-column label="商品图片" width="108" fixed="left">
+          <template #default="{ row }">
+            <el-image
+              v-if="productImageUrl(row.image_reference)"
+              class="product-thumbnail"
+              :src="productImageUrl(row.image_reference)"
+              fit="contain"
+              :preview-src-list="[productImageUrl(row.image_reference)]"
+              preview-teleported
+            >
+              <template #error><div class="image-placeholder">加载失败</div></template>
+            </el-image>
+            <div v-else class="image-placeholder">暂无图片</div>
+          </template>
+        </el-table-column>
         <el-table-column prop="product_name" label="商品名称" min-width="200" show-overflow-tooltip />
         <el-table-column prop="brand" label="品牌" min-width="120" />
         <el-table-column prop="model" label="型号" min-width="150" />
@@ -257,10 +297,13 @@ onMounted(() => void loadProducts())
 .page-heading h1 { margin: 0 0 8px; color: #172b4d; font-size: 26px; }
 .page-heading span { color: var(--text-secondary); font-size: 14px; }
 .filter-card :deep(.el-card__body) { padding-bottom: 4px; }
+.supplier-filter-notice { margin-bottom: 16px; }
 .filter-action { align-self: end; }
 .table-card strong { color: #344054; }
 .pagination { display: flex; justify-content: flex-end; margin-top: 16px; }
 .header-actions { display: flex; align-items: flex-start; }
 .file-input { display: none; }
 .import-warning { display: block; margin-top: 5px; color: var(--text-secondary); }
+.product-thumbnail, .image-placeholder { width: 68px; height: 68px; border: 1px solid var(--border); border-radius: 6px; }
+.image-placeholder { display: grid; place-items: center; padding: 6px; box-sizing: border-box; color: var(--text-secondary); background: #f8fafc; font-size: 12px; text-align: center; }
 </style>

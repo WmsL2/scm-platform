@@ -20,6 +20,7 @@ class ProductListItem(BaseModel):
     id: uuid.UUID
     listed_at: date | None
     brand: str | None
+    image_reference: str | None
     model: str | None
     sku: str | None
     product_name: str | None

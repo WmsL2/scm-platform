@@ -69,6 +69,7 @@ class ProductRepository:
         *,
         keyword: str | None,
         category_id: uuid.UUID | None,
+        source_supplier_id: uuid.UUID | None,
     ) -> tuple[list[Product], int]:
         statement: Select[tuple[Product]] = select(Product)
         count_statement = select(func.count()).select_from(Product)
@@ -86,6 +87,11 @@ class ProductRepository:
         if category_id:
             statement = statement.where(Product.category_id == category_id)
             count_statement = count_statement.where(Product.category_id == category_id)
+        if source_supplier_id:
+            statement = statement.where(Product.source_supplier_id == source_supplier_id)
+            count_statement = count_statement.where(
+                Product.source_supplier_id == source_supplier_id
+            )
         statement = (
             statement.order_by(Product.updated_at.desc(), Product.id.desc())
             .offset((page_params.page - 1) * page_params.page_size)

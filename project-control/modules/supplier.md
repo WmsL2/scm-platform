@@ -12,6 +12,7 @@ Last Updated：2026-09-10
 
 ## Backend
 - [x] 创建、编辑、详情、分页列表 API；活跃同名创建/改名返回“该供应商已存在”
+- [x] 详情页“相关商品”入口：仅拥有 `product:list` 的用户可进入，跳转后只显示该供应商作为来源供应商的正式商品
 - [x] DRAFT → PENDING → ARCHIVED；NORMAL → STOPPED / BLACKLIST 状态机
 - [x] 创建/编辑/归档 Actor 与时间审计；停用/拉黑写合作状态历史
 - [x] 逻辑删除 API：保留数据库记录，正常查询过滤 `is_deleted = true`；同名再次创建时复用该历史记录、恢复并覆盖业务数据，编码不变

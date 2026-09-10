@@ -34,4 +34,15 @@ describe("product import api", () => {
     )
     expect(http.post).toHaveBeenNthCalledWith(3, "/api/v1/products/imports/task-1/confirm")
   })
+
+  it("passes the related supplier filter to the product list API", async () => {
+    http.get.mockResolvedValue({ items: [] })
+    const { productApi } = await import("./catalog")
+
+    await productApi.list({ source_supplier_id: "supplier-1", page: 1, page_size: 20 })
+
+    expect(http.get).toHaveBeenCalledWith(
+      "/api/v1/products?source_supplier_id=supplier-1&page=1&page_size=20",
+    )
+  })
 })

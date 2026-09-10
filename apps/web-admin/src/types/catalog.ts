@@ -12,6 +12,7 @@ export interface ProductListItem {
   id: string
   listed_at: string | null
   brand: string | null
+  image_reference: string | null
   model: string | null
   sku: string | null
   product_name: string | null
@@ -27,7 +28,6 @@ export interface ProductListItem {
 }
 
 export interface ProductDetail extends Omit<ProductListItem, "category_path"> {
-  image_reference: string | null
   category: CategorySummary | null
   category_level1_name: string | null
   category_level2_name: string | null
@@ -59,6 +59,7 @@ export interface ProductListParams {
   page_size?: number
   keyword?: string
   category_id?: string
+  source_supplier_id?: string
 }
 
 export interface ProductPage {
