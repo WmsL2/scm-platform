@@ -37,7 +37,7 @@ class Supplier(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
     supplier_code: Mapped[str] = mapped_column(String(16), nullable=False, unique=True)
-    supplier_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    supplier_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     main_brands: Mapped[str] = mapped_column(Text, nullable=False)
     advantage: Mapped[str] = mapped_column(Text, nullable=False)
     archive_status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="DRAFT")

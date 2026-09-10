@@ -63,19 +63,36 @@ class SupplierService:
         self, payload: SupplierCreateRequest, actor_id: uuid.UUID
     ) -> SupplierDetailResponse:
         async with transaction_scope(self.session):
-            supplier = Supplier(
-                supplier_code=await BusinessSequenceService(self.session).issue_code("SUPPLIER"),
-                supplier_name=payload.supplier_name.strip(),
-                main_brands=payload.main_brands.strip(),
-                advantage=payload.advantage.strip(),
-                created_by=actor_id,
-                updated_by=actor_id,
-                contacts=[
-                    self._contact_from_input(contact_input, actor_id)
-                    for contact_input in payload.contacts
-                ],
-            )
-            self.session.add(supplier)
+            supplier_name = self._required_text(payload.supplier_name, "supplier_name")
+            existing = await self.repository.by_name_for_update(supplier_name)
+            if existing is not None:
+                if not existing.is_deleted:
+                    raise AppError("SUPPLIER_NAME_EXISTS", "该供应商已存在", 409)
+                supplier = existing
+                self._restore_deleted_supplier(
+                    supplier,
+                    supplier_name=supplier_name,
+                    main_brands=self._required_text(payload.main_brands, "main_brands"),
+                    advantage=self._required_text(payload.advantage, "advantage"),
+                    contacts=payload.contacts,
+                    actor_id=actor_id,
+                )
+            else:
+                supplier = Supplier(
+                    supplier_code=await BusinessSequenceService(self.session).issue_code(
+                        "SUPPLIER"
+                    ),
+                    supplier_name=supplier_name,
+                    main_brands=self._required_text(payload.main_brands, "main_brands"),
+                    advantage=self._required_text(payload.advantage, "advantage"),
+                    created_by=actor_id,
+                    updated_by=actor_id,
+                    contacts=[
+                        self._contact_from_input(contact_input, actor_id)
+                        for contact_input in payload.contacts
+                    ],
+                )
+                self.session.add(supplier)
             await self.session.flush()
             result = await self.get(supplier.id)
         return result
@@ -88,7 +105,12 @@ class SupplierService:
         async with transaction_scope(self.session):
             supplier = await self._active_for_update(supplier_id)
             if "supplier_name" in payload.model_fields_set:
-                supplier.supplier_name = self._required_text(payload.supplier_name, "supplier_name")
+                supplier_name = self._required_text(payload.supplier_name, "supplier_name")
+                if supplier_name != supplier.supplier_name:
+                    existing = await self.repository.by_name_for_update(supplier_name)
+                    if existing is not None and existing.id != supplier.id:
+                        raise AppError("SUPPLIER_NAME_EXISTS", "该供应商已存在", 409)
+                    supplier.supplier_name = supplier_name
             if "main_brands" in payload.model_fields_set:
                 supplier.main_brands = self._required_text(payload.main_brands, "main_brands")
             if "advantage" in payload.model_fields_set:
@@ -181,6 +203,30 @@ class SupplierService:
                 contact.updated_by = actor_id
         for contact_input in contacts:
             supplier.contacts.append(self._contact_from_input(contact_input, actor_id))
+
+    def _restore_deleted_supplier(
+        self,
+        supplier: Supplier,
+        *,
+        supplier_name: str,
+        main_brands: str,
+        advantage: str,
+        contacts: Sequence[SupplierContactInput],
+        actor_id: uuid.UUID,
+    ) -> None:
+        """Reuse the sole historical row for a deleted supplier name and keep its code."""
+        supplier.supplier_name = supplier_name
+        supplier.main_brands = main_brands
+        supplier.advantage = advantage
+        supplier.archive_status = ArchiveStatus.DRAFT
+        supplier.cooperation_status = CooperationStatus.NORMAL
+        supplier.is_deleted = False
+        supplier.deleted_by = None
+        supplier.deleted_at = None
+        supplier.archived_by = None
+        supplier.archived_at = None
+        supplier.updated_by = actor_id
+        self._replace_contacts(supplier, contacts, actor_id)
 
     @staticmethod
     def _contact_from_input(

@@ -63,6 +63,7 @@ class SupplierImportService:
         if len(file_bytes) > MAX_IMPORT_FILE_BYTES:
             raise AppError("SUPPLIER_IMPORT_FILE_TOO_LARGE", "The import file exceeds 5 MB", 422)
         rows = self._parse_rows(file_bytes)
+        await self._mark_duplicate_supplier_names(rows)
         valid_rows = sum(row.is_valid for row in rows)
         batch = SupplierImportBatch(
             original_filename=filename[:255],
@@ -98,38 +99,72 @@ class SupplierImportService:
                     "Import batch has already been confirmed",
                     409,
                 )
-            if batch.invalid_rows:
+            rows = await self.repository.import_rows_by_batch_id_for_update(batch.id)
+            if len(rows) != batch.total_rows:
+                raise AppError(
+                    "SUPPLIER_IMPORT_BATCH_INTEGRITY_ERROR",
+                    "Import batch row count does not match its header",
+                    409,
+                )
+            invalid_rows = [row for row in rows if not row.is_valid]
+            if invalid_rows or batch.invalid_rows:
                 raise AppError(
                     "SUPPLIER_IMPORT_HAS_INVALID_ROWS",
                     "Correct invalid rows and upload a new file before confirmation",
                     409,
                 )
-            if not batch.valid_rows:
+            if not rows:
                 raise AppError("SUPPLIER_IMPORT_NO_VALID_ROWS", "No valid import rows found", 409)
-            for row in batch.rows:
-                supplier = Supplier(
-                    supplier_code=await BusinessSequenceService(self.session).issue_code(
-                        "SUPPLIER"
-                    ),
-                    supplier_name=self._required_value(row.supplier_name),
-                    main_brands=self._required_value(row.main_brands),
-                    advantage=self._required_value(row.advantage),
-                    archive_status=ArchiveStatus.ARCHIVED,
-                    cooperation_status=CooperationStatus.NORMAL,
-                    created_by=actor_id,
-                    updated_by=actor_id,
-                    archived_by=actor_id,
-                    archived_at=datetime.now(),
-                    contacts=self._contacts_from_row(row, actor_id),
+            if batch.valid_rows != len(rows):
+                raise AppError(
+                    "SUPPLIER_IMPORT_BATCH_INTEGRITY_ERROR",
+                    "Import batch valid row count does not match persisted rows",
+                    409,
                 )
-                self.session.add(supplier)
+            processed_count = 0
+            for row in rows:
+                supplier_name = self._required_value(row.supplier_name)
+                existing = await self.repository.by_name_for_update(supplier_name)
+                if existing is not None:
+                    if not existing.is_deleted:
+                        raise AppError("SUPPLIER_NAME_EXISTS", "该供应商已存在", 409)
+                    supplier = existing
+                    self._restore_deleted_supplier(supplier, row, actor_id)
+                else:
+                    supplier = Supplier(
+                        supplier_code=await BusinessSequenceService(self.session).issue_code(
+                            "SUPPLIER"
+                        ),
+                        supplier_name=supplier_name,
+                        main_brands=self._required_value(row.main_brands),
+                        advantage=self._required_value(row.advantage),
+                        archive_status=ArchiveStatus.ARCHIVED,
+                        cooperation_status=CooperationStatus.NORMAL,
+                        created_by=actor_id,
+                        updated_by=actor_id,
+                        archived_by=actor_id,
+                        archived_at=datetime.now(),
+                        contacts=self._contacts_from_row(row, actor_id),
+                    )
+                    self.session.add(supplier)
+                processed_count += 1
+
+            # Write every supplier before success is returned. A persistence error
+            # rolls back both Supplier rows and the batch status together.
+            await self.session.flush()
+            if processed_count != len(rows):
+                raise AppError(
+                    "SUPPLIER_IMPORT_BATCH_INTEGRITY_ERROR",
+                    "Import batch processing count does not match persisted rows",
+                    409,
+                )
             batch.status = "CONFIRMED"
             batch.confirmed_by = actor_id
             batch.confirmed_at = datetime.now()
             response = SupplierImportConfirmResponse(
                 id=batch.id,
                 status=batch.status,
-                imported_count=batch.valid_rows,
+                imported_count=processed_count,
             )
         return response
 
@@ -181,6 +216,48 @@ class SupplierImportService:
         if not rows:
             raise AppError("SUPPLIER_IMPORT_NO_DATA_ROWS", "The workbook has no data rows", 422)
         return rows
+
+    async def _mark_duplicate_supplier_names(self, rows: list[SupplierImportRow]) -> None:
+        active_names = await self.repository.active_supplier_names(
+            {row.supplier_name for row in rows if row.supplier_name is not None}
+        )
+        first_excel_row_by_name: dict[str, int] = {}
+        for row in rows:
+            supplier_name = row.supplier_name
+            if not supplier_name:
+                continue
+            errors: list[str] = []
+            if supplier_name in active_names:
+                errors.append("该供应商已存在")
+            first_row = first_excel_row_by_name.get(supplier_name)
+            if first_row is None:
+                first_excel_row_by_name[supplier_name] = row.source_row_number
+            else:
+                errors.append(f"与 Excel 第 {first_row} 行供应商名称重复")
+            if errors:
+                row.is_valid = False
+                row.error_message = "；".join(
+                    filter(None, [row.error_message, *errors])
+                )
+
+    def _restore_deleted_supplier(
+        self, supplier: Supplier, row: SupplierImportRow, actor_id: uuid.UUID
+    ) -> None:
+        supplier.main_brands = self._required_value(row.main_brands)
+        supplier.advantage = self._required_value(row.advantage)
+        supplier.archive_status = ArchiveStatus.ARCHIVED
+        supplier.cooperation_status = CooperationStatus.NORMAL
+        supplier.is_deleted = False
+        supplier.deleted_by = None
+        supplier.deleted_at = None
+        supplier.archived_by = actor_id
+        supplier.archived_at = datetime.now()
+        supplier.updated_by = actor_id
+        for contact in supplier.contacts:
+            if not contact.is_deleted:
+                contact.is_deleted = True
+                contact.updated_by = actor_id
+        supplier.contacts.extend(self._contacts_from_row(row, actor_id))
 
     @staticmethod
     def _row_errors(cells: tuple[object, ...], values: list[str]) -> list[str]:
