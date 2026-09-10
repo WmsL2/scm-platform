@@ -1,11 +1,12 @@
 # 商品主数据 / Catalog
 
-状态：IMPLEMENTED / PRODUCT_IMPORT_PENDING
-Owner：feat/product-master
-Last Updated：2026-09-09
+状态：IMPLEMENTED / PRODUCT_IMPORT_DIRECT_VALUE_MODE
+Owner：feat/product-import
+Last Updated：2026-09-10
 
 ## Database
 - [x] `20260909_0008` / `20260909_0009` 创建并对齐 `scm_category` 与 `scm_product`
+- [x] `20260910_0013` 创建 Product Import Staging、供应商匹配决策及任务状态表；`20260910_0014` 支持 Product 直接保存三级类目原文；`20260910_0015` 增加导入图片暂存键
 - [x] Product → Category、Product → Source Supplier 均为 `RESTRICT` 外键
 - [x] 未创建独立 Supplier Product Quote 表或报价历史表
 
@@ -13,23 +14,24 @@ Last Updated：2026-09-09
 - [x] Pricing Service（定价服务）已实现
 - [x] Product 查询、详情与成本价更新 API
 - [x] 成本价更新在同一事务中调用 Pricing Service 并保存全部派生值
+- [x] 固定 32 列商品大表导入、直接保存类目/价格正式值、保存 WPS/Excel 内嵌图片、严格供应商精确匹配、预览和全批次 Confirm
 
 ## Frontend
-- [x] 商品列表、详情与按权限显示的成本价更新页面
+- [x] 商品列表、详情（含本地图片预览）、按权限显示的成本价更新及导入预览/供应商解析页面
 
 ## Permissions
-- [x] `product:list`、`product:detail`、`product:cost:update`
+- [x] `product:list`、`product:detail`、`product:cost:update`、`product:import`、`product:import:resolve`
 
 ## Tests
 - [x] Pricing Unit Tests（定价单元测试）已完成
-- [x] Product / Catalog Integration Tests（商品目录集成测试）已完成
+- [x] Product / Catalog Integration Tests（含导入预览与 Confirm）已完成
 
 ## Known Issues
-- Category Source Data Preflight 已完成；商城 external ID UNIQUE 预检通过，工业品完整路径已按导入去重规则收口。Category Source Loader 仍属后续 Product Import 范围。
+- Category Source Data Preflight 已完成；商城 external ID UNIQUE 预检通过，工业品完整路径已按导入去重规则收口。依据 ADR-0010，Category Source Loader 不再阻止固定商品大表 Confirm。
 - Product / Category 删除策略和除已冻结字段外的最终业务必填规则尚未得到业务决策；不得在 C1 Migration 自行补充删除列或强行收紧 NULL。
 
 ## Next Step
-推进 Product Import：类目源加载、商品大表 Staging、来源供应商匹配、预览、差异校验与全批次 Confirm。不得绕过已实现的正式 Product Schema 或新增独立报价库。
+维护真实模板中所需的有效 Supplier Master，并补齐空供应商；随后从 Product Import 页面重新预览并 Confirm。不得绕过供应商解析或新增独立报价库。
 
 ## 已冻结业务规则
 - 商品大表是正式商品主数据来源；
@@ -51,4 +53,4 @@ Last Updated：2026-09-09
 
 ## Current Gate
 
-`IMPLEMENTED / PRODUCT_IMPORT_PENDING`：Category/Product Migration、ORM、Product API、权限、成本价原子重算与前端查询页面均已实现。商品创建、商品大表导入、类目来源加载、Supplier Matching 与删除策略仍未实现或未冻结，不得以本模块补齐。
+`IMPLEMENTED / PRODUCT_IMPORT_DIRECT_VALUE_MODE`：固定模板 Staging、Supplier Matching、预览、权限和全批次 Confirm 已实现。依据 ADR-0010，类目和价格直接以大表正式值写入 Product，空的 `scm_category` 不阻止 Confirm；空或不合格供应商仍不得绕过导入校验。Category Source Loader、Product 删除策略及无受控类目关联 Product 的独立成本价维护仍属后续范围。

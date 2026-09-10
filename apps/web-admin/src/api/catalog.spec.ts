@@ -1,0 +1,37 @@
+import { afterEach, describe, expect, it, vi } from "vitest"
+
+const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn() }))
+vi.mock("../shared/http/runtime", () => ({ http }))
+
+describe("product import api", () => {
+  afterEach(() => {
+    http.get.mockReset()
+    http.post.mockReset()
+    http.patch.mockReset()
+  })
+
+  it("uses preview, candidate, resolve and confirm Product Import routes", async () => {
+    http.post.mockResolvedValue({ id: "task-1" })
+    http.get.mockResolvedValue([])
+    const { productApi } = await import("./catalog")
+    const file = new File(["content"], "products.xlsx")
+
+    await productApi.previewImport(file)
+    await productApi.importSupplierCandidates()
+    await productApi.resolveImportSupplier("task-1", "match-1", "supplier-1")
+    await productApi.confirmImport("task-1")
+
+    expect(http.post).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/products/imports/preview",
+      expect.any(FormData),
+    )
+    expect(http.get).toHaveBeenCalledWith("/api/v1/products/imports/supplier-candidates")
+    expect(http.post).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/products/imports/task-1/supplier-matches/match-1/resolve",
+      { supplier_id: "supplier-1" },
+    )
+    expect(http.post).toHaveBeenNthCalledWith(3, "/api/v1/products/imports/task-1/confirm")
+  })
+})

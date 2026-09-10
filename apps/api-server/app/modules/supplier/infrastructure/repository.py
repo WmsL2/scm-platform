@@ -41,6 +41,18 @@ class SupplierRepository:
             ),
         )
 
+    async def eligible_source_suppliers(self) -> list[Supplier]:
+        statement = (
+            select(Supplier)
+            .where(
+                Supplier.is_deleted.is_(False),
+                Supplier.archive_status == ArchiveStatus.ARCHIVED,
+                Supplier.cooperation_status == CooperationStatus.NORMAL,
+            )
+            .order_by(Supplier.supplier_name, Supplier.id)
+        )
+        return list((await self.session.scalars(statement)).all())
+
     async def list_active(
         self,
         page_params: PageParams,

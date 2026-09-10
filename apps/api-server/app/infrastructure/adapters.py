@@ -31,13 +31,20 @@ class LocalFileStorage:
         self.root = root.resolve()
 
     def _target(self, key: str) -> Path:
+        relative = Path(key)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("Storage key must stay inside configured root")
         target = (self.root / key).resolve()
         if self.root not in target.parents:
             raise ValueError("Storage key must stay inside configured root")
         return target
 
     async def save(self, name: str, content: bytes) -> str:
-        key = f"{uuid4()}-{Path(name).name}"
+        requested = Path(name.replace("\\", "/"))
+        if requested.is_absolute() or ".." in requested.parts:
+            raise ValueError("Storage key must stay inside configured root")
+        suffix = requested.suffix.lower()
+        key = (requested.parent / f"{uuid4()}{suffix}").as_posix()
         target = self._target(key)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
@@ -58,6 +65,17 @@ class MinioStorage:
     async def read(self, key: str) -> bytes:
         del key
         raise RuntimeError("MinIO storage is not configured")
+
+
+def get_object_storage() -> ObjectStorage:
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    if settings.storage_mode == "local":
+        return LocalFileStorage(settings.local_storage_path)
+    if settings.storage_mode == "minio":
+        return MinioStorage()
+    raise RuntimeError(f"Unsupported storage mode: {settings.storage_mode}")
 
 
 class Cache(Protocol):

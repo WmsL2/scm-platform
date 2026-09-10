@@ -1,7 +1,9 @@
 # Product / Category / Pricing Schema Review
 
-状态：SCHEMA FINALIZATION COMPLETE — Migration preflight required
+状态：PARTIALLY SUPERSEDED BY ADR-0010
 范围：一期商品、三级类目与当前价格快照的数据库结构评审稿；不包含 Migration、ORM、API、UI 或 Pricing Service。
+
+> 2026-09-10 起，ADR-0010 替代本评审中关于固定商品大表导入必须解析 `category_id`、不得保留三级类目原文、以及导入必须按公式重算价格的结论。实际实现以 `20260910_0014` 为准：Product 直接保存三级类目原文，`category_id` 可空；导入直接保存 Excel 价格值。Pricing Service 仍用于单独成本价更新。
 
 ## 术语与评审结论
 

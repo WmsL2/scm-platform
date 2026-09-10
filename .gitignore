@@ -6,6 +6,7 @@ __pycache__/
 .env
 node_modules/
 dist/
+# 本机上传的商品图片和其他媒体：仅保留目录占位文件，不提交实际内容。
 local-data/*
 !local-data/.gitkeep
 .idea/

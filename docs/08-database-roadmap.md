@@ -54,10 +54,12 @@ Supplier：
 
 # Sprint 3：Product Master（已实现基础查询与成本价维护）
 
-至少存在：
+当前存在：
 
 - `scm_product`
 - `scm_product.source_supplier_id` FK → `scm_supplier.id`（来源供应商，不是当前报价或唯一供应商）
+- `scm_product.category_level1_name`、`category_level2_name`、`category_level3_name`（固定商品大表直接保存的完整类目文字）
+- 可空的 `scm_product.category_id`（未来受控类目关联，不是导入前置条件）
 - `scm_product.cost_price`（当前成本价；业务确认等同当前供应商报价）
 - `scm_category`
 - 品牌相关表（如需要）
@@ -65,7 +67,7 @@ Supplier：
 
 是否拆品牌、分类、参数表，必须以真实大表字段和检索需求决定。
 
-当前已实现 Product 列表、详情和成本价更新。商品创建、商品大表导入、类目 Source Loader、供应商匹配与删除策略仍为后续范围。
+当前已实现 Product 列表、详情、成本价更新和商品大表导入。固定商品大表直接保存完整类目和价格值；Category Source Loader 不是 Confirm 前置条件。
 
 明确：
 
@@ -74,12 +76,13 @@ Supplier：
 
 ---
 
-# Sprint 4：Product Import
+# Sprint 4：Product Import（已实现）
 
-- `scm_import_task`
-- `scm_import_row`
-- `scm_import_row_error`
+- `scm_product_import_task`
+- `scm_product_import_row`（以 `source_data`、`calculated_data`、`supplier_name_raw`、`image_storage_key` 和行级错误/警告保存 Staging）
 - `scm_product_import_supplier_match`（按 import_task_id + supplier_name_normalized 的来源供应商匹配决策）
+
+由 Alembic `20260910_0013` 创建，并由 `20260910_0015` 增加图片暂存键。Import 表只保留导入过程；Confirm 后正式数据写入 `scm_product`，不会新增报价表或把供应商原名称写入 Product。
 
 ---
 
