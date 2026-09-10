@@ -39,6 +39,7 @@ describe("HttpClient", () => {
       "http://api.test/api/v1/auth/login",
       expect.objectContaining({
         method: "POST",
+        cache: "no-store",
         body: JSON.stringify({ username: "admin" }),
         headers: expect.objectContaining({
           Authorization: "Bearer current-token",
