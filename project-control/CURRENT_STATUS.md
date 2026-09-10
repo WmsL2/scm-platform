@@ -46,7 +46,7 @@ Sprint 1 — Auth/RBAC + Supplier
 - 主任务：Product Master 已实现 Category / Product Migration、查询 API、成本价原子重算、权限及 Web Admin 页面（Revision `20260909_0009`，对齐最新 32 列 Excel）。
 - 后续任务：推进 Product Import；Pricing Service 与真实类目源数据 UNIQUE 预检已完成。
 - 业务冻结：Supplier Product Quote 已取消；后续供应商新报价直接更新正式 Product 的 `cost_price`，并原子重算派生价格；不创建报价历史、有效期或比价模块。
-- Auth 后续范围：Refresh Token、Session、Multi-device Logout 与 Role Delete / disable policy 仍待后续冻结。
+- Auth 后续范围：Refresh Token、Session、Multi-device Logout 与 Role Delete / disable policy 仍待后续冻结；User Logical Delete 已实现。
 
 ## Blocker
 

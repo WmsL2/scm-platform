@@ -1,12 +1,12 @@
 import uuid
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.core.database import SessionLocal
 from app.modules.auth.security import hash_password
-from app.modules.system.models import User
+from app.modules.system.models import Permission, User
 
 AUTH_TABLES = {
     "sys_user",
@@ -17,7 +17,7 @@ AUTH_TABLES = {
 }
 
 UUID_COLUMNS = {
-    "sys_user": {"id", "created_by", "updated_by"},
+    "sys_user": {"id", "created_by", "updated_by", "deleted_by"},
     "sys_role": {"id", "created_by", "updated_by"},
     "sys_permission": {"id", "created_by", "updated_by"},
     "sys_user_role": {"user_id", "role_id", "created_by"},
@@ -56,6 +56,12 @@ async def test_auth_schema_contract_and_active_username_unique() -> None:
         for table, columns in UUID_COLUMNS.items():
             for column in columns:
                 assert uuid_metadata[(table, column)] == ("char", 36)
+        assert ("sys_user", "deleted_at") in uuid_metadata
+        delete_permission = await session.scalar(
+            select(Permission).where(Permission.permission_code == "system:user:delete")
+        )
+        assert delete_permission is not None
+        assert delete_permission.permission_type == "ACTION"
 
         foreign_keys = {
             (row[0], row[1]): (row[2], row[3], row[4])

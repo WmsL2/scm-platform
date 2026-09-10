@@ -499,3 +499,50 @@ async def test_review_standalone_service_does_not_leave_transaction_active() -> 
         async with SessionLocal() as session:
             await session.execute(delete(User).where(User.id == user_id))
             await session.commit()
+
+
+async def test_user_logical_delete_contract() -> None:
+    admin_id, admin_role = await _admin()
+    target_id, target_role = uuid.uuid4(), uuid.uuid4()
+    target_username = f"delete-target-{target_id}"
+    headers = {"Authorization": f"Bearer {create_token(admin_id, 1)}"}
+    try:
+        async with SessionLocal() as session:
+            session.add_all(
+                [
+                    User(id=target_id, username=target_username, password_hash=hash_password("secret")),
+                    Role(id=target_role, role_code=f"delete-role-{target_role}", role_name="delete role"),
+                    UserRole(user_id=target_id, role_id=target_role),
+                ]
+            )
+            await session.commit()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            forbidden = await client.delete(
+                f"/api/v1/admin/users/{target_id}",
+                headers={"Authorization": f"Bearer {create_token(target_id, 1)}"},
+            )
+            assert forbidden.status_code == 403
+            assert forbidden.json()["code"] == "AUTH_FORBIDDEN"
+            deleted = await client.delete(f"/api/v1/admin/users/{target_id}", headers=headers)
+            assert deleted.status_code == 200
+            assert deleted.json()["data"] == {"status": "deleted"}
+            assert str(target_id) not in {
+                item["id"] for item in (await client.get("/api/v1/admin/users", headers=headers)).json()["data"]["items"]
+            }
+            assert (await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {create_token(target_id, 1)}"})).status_code == 401
+            assert (await client.post("/api/v1/auth/login", json={"username": target_username, "password": "secret"})).status_code == 401
+            assert (await client.delete(f"/api/v1/admin/users/{target_id}", headers=headers)).json()["code"] == "ACCOUNT_USER_NOT_FOUND"
+            self_delete = await client.delete(f"/api/v1/admin/users/{admin_id}", headers=headers)
+            assert self_delete.status_code == 409
+            assert self_delete.json()["code"] == "ACCOUNT_USER_SELF_DELETE_FORBIDDEN"
+            assert (await client.delete(f"/api/v1/admin/users/{uuid.uuid4()}", headers=headers)).json()["code"] == "ACCOUNT_USER_NOT_FOUND"
+        async with SessionLocal() as session:
+            target = await session.get(User, target_id)
+            assert target is not None and target.is_deleted
+            assert target.deleted_by == admin_id and target.deleted_at is not None
+            assert target.updated_by == admin_id and target.token_version == 2
+            assert await session.get(UserRole, {"user_id": target_id, "role_id": target_role}) is not None
+            admin = await session.get(User, admin_id)
+            assert admin is not None and admin.is_deleted is False
+    finally:
+        await _cleanup([admin_id, target_id], [admin_role, target_role])

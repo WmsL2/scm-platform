@@ -32,6 +32,8 @@ class User(Base):
     user_status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="ENABLED")
     token_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    deleted_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
     updated_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
     reviewed_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
