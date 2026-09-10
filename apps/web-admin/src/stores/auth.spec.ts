@@ -20,7 +20,9 @@ const user: CurrentUser = {
   user_id: "00000000-0000-0000-0000-000000000001",
   username: "tester",
   roles: ["tester"],
+  role_names: { tester: "测试角色" },
   permissions: ["supplier:list"],
+  permission_names: { "supplier:list": "查看供应商" },
 }
 
 describe("auth store", () => {
@@ -58,6 +60,16 @@ describe("auth store", () => {
     expect(apiMocks.me).toHaveBeenCalledOnce()
     expect(store.username).toBe("tester")
     expect(store.status).toBe("authenticated")
+  })
+
+  it("continues to check permission codes rather than display names", async () => {
+    setAccessToken("existing-token")
+    apiMocks.me.mockResolvedValue(user)
+    const store = useAuthStore()
+    await store.restoreSession()
+
+    expect(store.hasPermission("supplier:list")).toBe(true)
+    expect(store.hasPermission("查看供应商")).toBe(false)
   })
 
   it("clears local state when session restoration fails", async () => {

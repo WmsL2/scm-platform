@@ -28,9 +28,14 @@ async def get_current_user(
     user = await repo.active_by_id(user_id)
     if user is None or user.user_status != "ENABLED" or user.token_version != version:
         raise AppError("AUTH_UNAUTHORIZED", "Invalid access token", 401)
-    roles, permissions = await repo.codes(user.id)
+    roles, role_names, permissions, permission_names = await repo.codes(user.id)
     return CurrentUser(
-        user_id=user.id, username=user.username, roles=roles, permissions=permissions
+        user_id=user.id,
+        username=user.username,
+        roles=roles,
+        role_names=role_names,
+        permissions=permissions,
+        permission_names=permission_names,
     )
 
 

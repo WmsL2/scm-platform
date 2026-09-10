@@ -54,7 +54,9 @@ describe("router guards", () => {
       user_id: "00000000-0000-0000-0000-000000000002",
       username: "limited-user",
       roles: ["viewer"],
+      role_names: { viewer: "查看者" },
       permissions: ["supplier:list"],
+      permission_names: { "supplier:list": "查看供应商" },
     }
     const router = createTestRouter()
     installRouterGuards(router, pinia)

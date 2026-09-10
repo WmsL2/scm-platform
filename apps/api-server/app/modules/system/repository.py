@@ -34,17 +34,22 @@ class UserRepository:
             ),
         )
 
-    async def codes(self, user_id: uuid.UUID) -> tuple[list[str], list[str]]:
-        roles = (
-            await self.session.scalars(
-                select(Role.role_code)
+    async def codes(
+        self, user_id: uuid.UUID
+    ) -> tuple[list[str], dict[str, str], list[str], dict[str, str]]:
+        role_rows = (
+            await self.session.execute(
+                select(Role.role_code, Role.role_name)
                 .join(UserRole, UserRole.role_id == Role.id)
                 .where(UserRole.user_id == user_id, Role.is_deleted.is_(False))
             )
         ).all()
-        permissions = (
-            await self.session.scalars(
-                select(Permission.permission_code)
+        role_names: dict[str, str] = {
+            role_code: role_name for role_code, role_name in role_rows
+        }
+        permission_rows = (
+            await self.session.execute(
+                select(Permission.permission_code, Permission.permission_name)
                 .join(RolePermission, RolePermission.permission_id == Permission.id)
                 .join(Role, Role.id == RolePermission.role_id)
                 .join(UserRole, UserRole.role_id == RolePermission.role_id)
@@ -55,7 +60,11 @@ class UserRepository:
                 )
             )
         ).all()
-        return sorted(set(roles)), sorted(set(permissions))
+        permission_names: dict[str, str] = {
+            permission_code: permission_name
+            for permission_code, permission_name in permission_rows
+        }
+        return sorted(role_names), role_names, sorted(permission_names), permission_names
 
 
 class BusinessSequenceRepository:

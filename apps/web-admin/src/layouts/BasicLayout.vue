@@ -37,6 +37,11 @@ const hasSystemMenu = computed(() => ["system:user:list", "system:role:list", "s
 const sidebarWidth = computed(() => collapsed.value ? "72px" : "232px")
 const activeMenu = computed(() => route.path.startsWith("/dashboard") ? "/dashboard" : route.path)
 const pageTitle = computed(() => typeof route.meta.title === "string" ? route.meta.title : "工作台")
+const primaryRoleName = computed(() => {
+  const roleCode = auth.currentUser?.roles[0]
+  if (!roleCode) return "已认证用户"
+  return auth.currentUser?.role_names?.[roleCode] ?? roleCode
+})
 
 watch(
   () => route.fullPath,
@@ -125,7 +130,7 @@ async function changePassword(): Promise<void> { if (passwordForm.new_password !
             <span class="avatar"><el-icon><UserFilled /></el-icon></span>
             <span class="user-copy">
               <strong>{{ auth.username }}</strong>
-              <small>{{ auth.currentUser?.roles[0] ?? "已认证用户" }}</small>
+              <small>{{ primaryRoleName }}</small>
             </span>
             <el-icon class="user-arrow"><ArrowDown /></el-icon>
           </button>
@@ -141,7 +146,7 @@ async function changePassword(): Promise<void> { if (passwordForm.new_password !
 
       <WorkspaceTabs />
 
-      <el-dialog v-model="profileVisible" title="个人信息"><p>用户名：{{ auth.currentUser?.username }}</p><p>角色：</p><el-tag v-for="role in auth.currentUser?.roles" :key="role" class="tag">{{ role }}</el-tag><span v-if="!auth.currentUser?.roles.length">暂无角色</span><p>权限：</p><div class="permission-list"><el-tag v-for="permission in auth.currentUser?.permissions" :key="permission" class="tag">{{ permission }}</el-tag><span v-if="!auth.currentUser?.permissions.length">暂无权限</span></div></el-dialog>
+      <el-dialog v-model="profileVisible" title="个人信息"><p>用户名：{{ auth.currentUser?.username }}</p><p>角色：</p><el-tag v-for="role in auth.currentUser?.roles" :key="role" class="tag">{{ auth.currentUser?.role_names?.[role] ?? role }}</el-tag><span v-if="!auth.currentUser?.roles.length">暂无角色</span><p>权限：</p><div class="permission-list"><el-tag v-for="permission in auth.currentUser?.permissions" :key="permission" class="tag">{{ auth.currentUser?.permission_names?.[permission] ?? permission }}</el-tag><span v-if="!auth.currentUser?.permissions.length">暂无权限</span></div></el-dialog>
       <el-dialog v-model="passwordVisible" title="修改密码"><el-input v-model="passwordForm.current_password" type="password" placeholder="当前密码"/><el-input v-model="passwordForm.new_password" type="password" placeholder="新密码"/><el-input v-model="passwordForm.confirm_new_password" type="password" placeholder="确认新密码"/><template #footer><el-button @click="passwordVisible=false">取消</el-button><el-button type="primary" :loading="passwordSubmitting" @click="changePassword">保存</el-button></template></el-dialog>
 
       <el-main class="main-content">
