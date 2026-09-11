@@ -116,7 +116,7 @@
 
 上传公司标准大表。
 
-页面已实现固定 `.xlsx` 模板上传、预览、供应商解析和 Confirm。导入页不创建供应商实体；供应商必须先存在于 Supplier Master，且为 `ARCHIVED + NORMAL + not deleted`。
+页面已实现固定 `.xlsx` 模板下载、上传、预览、供应商解析和 Confirm。导入页不创建供应商实体；供应商必须先存在于 Supplier Master，且为 `ARCHIVED + NORMAL + not deleted`。下载返回后端版本控制的批准原始模板，不依赖用户电脑路径。
 
 ## 4.4 导入校验/预览
 
@@ -128,13 +128,13 @@
 - 重复
 - 冲突
 
-可查看行级错误与警告。三级类目和价格显示为固定大表的直接正式值，不要求匹配系统类目或通过系统公式复算。只有预览状态为 `READY_TO_CONFIRM` 时显示 Confirm；Confirm 前后会重新校验来源供应商，失败时不写入任何正式商品。
+可查看行级“通过 / 不通过 / 已导入”状态、错误与警告，并按通过或不通过筛选。三级类目和价格显示为固定大表的直接正式值，不要求匹配系统类目或通过系统公式复算。“导入通过的 N 行”只对当前无阻断错误且尚未导入的行可用；Confirm 前后会重新校验这些行的来源供应商和重复键，失败时本次不写入任何正式商品。不通过行始终保留在 Staging，绝不入库。
 
 同一“来源供应商 + SKU”存在正常或已停用商品时均视为重复并阻止导入。停用商品必须显式启用，或在永久删除后才能以新 Excel 创建同键商品；导入不会恢复或覆盖已有商品字段。
 
 对于 WPS/Excel 内嵌 `DISPIMG`，预览行显示“已保存”；Confirm 后商品详情展示可预览的本地图片。数据库只保存相对媒体引用，项目下 `local-data/` 的实际图片不进入 Git。
 
-“供应商解析”区域按标准化供应商名称分组显示 Excel 原值、涉及行数、匹配状态、供应商编码/名称。`AMBIGUOUS`、`UNMATCHED`、`INELIGIBLE` 可打开“选择供应商”，仅显示当前 `ARCHIVED + NORMAL + not deleted` 的 Supplier Master；候选展示 supplier_code、supplier_name、main_brands。界面不突出 UUID，但提交的是 supplier_id UUID；同组只处理一次。全部解析完成且其余校验通过后才显示确认入口。
+“供应商解析”区域按标准化供应商名称分组显示 Excel 原值、涉及行数、匹配状态、供应商编码/名称。`AMBIGUOUS`、`UNMATCHED`、`INELIGIBLE` 可打开“选择供应商”，仅显示当前 `ARCHIVED + NORMAL + not deleted` 的 Supplier Master；候选展示 supplier_code、supplier_name、main_brands。界面不突出 UUID，但提交的是 supplier_id UUID；同组只处理一次。解析后产生的通过行可继续导入，已经导入的行不会再次导入。
 
 ## 4.5 导入记录
 

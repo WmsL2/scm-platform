@@ -19,7 +19,7 @@ Supplier Excel -> Supplier Import -> scm_supplier
  -> Import Staging（保留 `supplier_name_raw`）
  -> Supplier Matching（按批次及标准化供应商名称）
  -> 错误/冲突/供应商解析预览
- -> 全部解析后人工 Confirm
+ -> 通过行人工 Confirm（保留不通过行）
  -> scm_product（保存 `source_supplier_id`）
 ```
 
@@ -41,7 +41,7 @@ Supplier Excel -> Supplier Import -> scm_supplier
 `scm_product_import_row`
 `scm_product_import_supplier_match`
 
-以上已由 Alembic `20260910_0013` 实现。行以 `supplier_match_id` 关联一个导入批次内每个标准化供应商名称的一次匹配决策，而不是重复保存 `matched_supplier_id`。行级错误、警告和源/缓存单元格值随暂存行保存，不另建 `scm_import_row_error`。
+以上已由 Alembic `20260910_0013` 实现；Revision `20260911_0022` 追加 Task 的 `imported_rows`，以及行的 `is_imported`、`imported_by`、`imported_at`。行以 `supplier_match_id` 关联一个导入批次内每个标准化供应商名称的一次匹配决策，而不是重复保存 `matched_supplier_id`。行级错误、警告和源/缓存单元格值随暂存行保存，不另建 `scm_import_row_error`。
 
 只是导入过程，不是正式商品库。
 
@@ -93,6 +93,6 @@ Excel“供应商”原值只写入 Staging 的 `supplier_name_raw`，用于审�
 
 有效候选必须同时为 `ARCHIVED`、`NORMAL`、未逻辑删除。多个有效候选为 `AMBIGUOUS`；没有同名供应商为 `UNMATCHED`；存在同名但均不符合有效条件为 `INELIGIBLE`。后三者必须由用户从当前有效 Supplier Master 中人工选择（`MANUAL`），或先在 Supplier Master 处理后重试；不得在导入页面创建、归档或恢复供应商，也不得创建独立报价记录。
 
-当前实现的 Import Task 状态为 `VALIDATED`、`NEEDS_RESOLUTION`、`READY_TO_CONFIRM`、`CONFIRMED`。Confirm 必须为全批次原子事务：重新校验全部行必要字段和全部 Match Decision 为 `MATCHED`，并重新查询每个 `matched_supplier_id` 仍是有效候选后，才写正式商品并将其作为 `source_supplier_id`。类目和 Excel 价格不再被二次解析或重算。任一供应商/必要字段失败不得部分写入；先前匹配成功后供应商变为 STOPPED、BLACKLIST 或删除也必须使 Confirm 失败。
+当前实现的 Import Task 状态为 `VALIDATED`、`NEEDS_RESOLUTION`、`READY_TO_CONFIRM`、`PARTIALLY_CONFIRMED`、`CONFIRMED`。Confirm 对当前所有通过且尚未导入的行保持单事务原子性：重新校验必要字段、Match Decision 和每个 `matched_supplier_id` 仍为有效候选后，才写正式商品并将其作为 `source_supplier_id`。类目和 Excel 价格不再被二次解析或重算。任一拟导入行的供应商/必要字段失败不得让本次其他通过行部分写入；不通过行保留在 Staging，绝不入库。已导入行不再参与后续校验，避免被其自身的正式 Product 防重键阻塞或重复写入。
 
-已实现 API：`POST /api/v1/products/imports/preview`、`GET /api/v1/products/imports/{task_id}`、`GET /api/v1/products/imports/supplier-candidates`、`POST /api/v1/products/imports/{task_id}/supplier-matches/{match_id}/resolve`、`POST /api/v1/products/imports/{task_id}/confirm`。人工解析请求只提交 `{ "supplier_id": "<UUID>" }`；Backend 必须再次验证该 UUID 当前有效，前端不得把 supplier_name 作为正式选择结果。
+已实现 API：`GET /api/v1/products/imports/template`、`POST /api/v1/products/imports/preview`、`GET /api/v1/products/imports/{task_id}`、`GET /api/v1/products/imports/supplier-candidates`、`POST /api/v1/products/imports/{task_id}/supplier-matches/{match_id}/resolve`、`POST /api/v1/products/imports/{task_id}/confirm`。模板下载与其他导入 API 均要求 `product:import`；人工解析请求只提交 `{ "supplier_id": "<UUID>" }`；Backend 必须再次验证该 UUID 当前有效，前端不得把 supplier_name 作为正式选择结果。

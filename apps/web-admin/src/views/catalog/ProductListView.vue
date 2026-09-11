@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { Delete, EditPen, Refresh, Search, Upload } from "@element-plus/icons-vue"
-import { onMounted, reactive, ref } from "vue"
+import { Delete, Download, EditPen, Refresh, Search, Upload } from "@element-plus/icons-vue"
+import { computed, onMounted, reactive, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { useRoute, useRouter } from "vue-router"
 
@@ -32,6 +32,14 @@ const importDialogVisible = ref(false)
 const importPreview = ref<ProductImportPreview>()
 const supplierCandidates = ref<ProductImportSupplierCandidate[]>([])
 const selections = reactive<Record<string, string>>({})
+const importRowFilter = ref<"ALL" | "PASSED" | "FAILED">("ALL")
+
+const filteredImportRows = computed(() => {
+  const rows = importPreview.value?.rows ?? []
+  if (importRowFilter.value === "PASSED") return rows.filter((row) => row.is_valid && !row.is_imported)
+  if (importRowFilter.value === "FAILED") return rows.filter((row) => !row.is_valid && !row.is_imported)
+  return rows
+})
 
 async function loadProducts(targetPage = page.value): Promise<void> {
   loading.value = true
@@ -76,6 +84,23 @@ function openImport(): void {
   importInput.value?.click()
 }
 
+async function downloadImportTemplate(): Promise<void> {
+  importing.value = true
+  try {
+    const blob = await productApi.downloadImportTemplate()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = "商品大表模板.xlsx"
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    ElMessage.error(error instanceof HttpError ? error.response.message : "下载模板失败")
+  } finally {
+    importing.value = false
+  }
+}
+
 async function previewImport(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement
   const [file] = Array.from(input.files ?? [])
@@ -84,6 +109,7 @@ async function previewImport(event: Event): Promise<void> {
   importing.value = true
   try {
     importPreview.value = await productApi.previewImport(file)
+    importRowFilter.value = "ALL"
     if (auth.hasPermission("product:import:resolve")) {
       supplierCandidates.value = await productApi.importSupplierCandidates()
     }
@@ -117,9 +143,12 @@ async function confirmImport(): Promise<void> {
   importing.value = true
   try {
     const result = await productApi.confirmImport(importPreview.value.id)
+    importPreview.value = await productApi.getImportPreview(importPreview.value.id)
     ElMessage.success(`已正式导入 ${result.imported_count} 条商品`)
-    importDialogVisible.value = false
-    importPreview.value = undefined
+    if (result.status === "CONFIRMED") {
+      importDialogVisible.value = false
+      importPreview.value = undefined
+    }
     await loadProducts(1)
   } catch (error) {
     ElMessage.error(error instanceof HttpError ? error.response.message : "确认导入失败")
@@ -187,6 +216,14 @@ onMounted(() => void loadProducts())
         <span>查询正式商品；停用商品保留 SKU 防重键，永久删除后才能重新导入同键商品。</span>
       </div>
       <div class="header-actions">
+        <el-button
+          v-if="auth.hasPermission('product:import')"
+          :icon="Download"
+          :loading="importing"
+          @click="downloadImportTemplate"
+        >
+          下载模板
+        </el-button>
         <el-button
           v-if="auth.hasPermission('product:import')"
           type="primary"
@@ -301,9 +338,9 @@ onMounted(() => void loadProducts())
       :close-on-click-modal="false"
     >
       <template v-if="importPreview">
-        <el-alert :type="importPreview.status === 'READY_TO_CONFIRM' ? 'success' : 'warning'" :closable="false" show-icon>
-          共 {{ importPreview.total_rows }} 行；通过 {{ importPreview.valid_rows }} 行；待处理 {{ importPreview.invalid_rows }} 行。
-          只有全部校验通过后才会写入正式商品库。
+        <el-alert :type="importPreview.valid_rows > 0 ? 'success' : 'warning'" :closable="false" show-icon>
+          共 {{ importPreview.total_rows }} 行；已导入 {{ importPreview.imported_rows }} 行；通过 {{ importPreview.valid_rows }} 行；不通过 {{ importPreview.invalid_rows }} 行。
+          仅“通过”行会写入正式商品库；不通过行保留在当前预览中，不会入库。
         </el-alert>
 
         <h3>来源供应商解析</h3>
@@ -328,7 +365,12 @@ onMounted(() => void loadProducts())
         </el-table>
 
         <h3>行校验结果</h3>
-        <el-table :data="importPreview.rows" max-height="300">
+        <el-radio-group v-model="importRowFilter" class="import-row-filter">
+          <el-radio-button label="ALL">全部（{{ importPreview.total_rows }}）</el-radio-button>
+          <el-radio-button label="PASSED">通过（{{ importPreview.valid_rows }}）</el-radio-button>
+          <el-radio-button label="FAILED">不通过（{{ importPreview.invalid_rows }}）</el-radio-button>
+        </el-radio-group>
+        <el-table :data="filteredImportRows" max-height="300">
           <el-table-column prop="source_row_number" label="Excel 行" width="90" />
           <el-table-column prop="product_name" label="商品名称" min-width="180" show-overflow-tooltip />
           <el-table-column label="图片" width="85">
@@ -336,9 +378,17 @@ onMounted(() => void loadProducts())
           </el-table-column>
           <el-table-column prop="category_path" label="类目" min-width="220" show-overflow-tooltip />
           <el-table-column prop="supplier_name_raw" label="供应商原值" min-width="180" />
+          <el-table-column label="状态" width="105">
+            <template #default="{ row }">
+              <el-tag v-if="row.is_imported" type="info">已导入</el-tag>
+              <el-tag v-else :type="row.is_valid ? 'success' : 'danger'">{{ row.is_valid ? '通过' : '不通过' }}</el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="结果" min-width="260">
             <template #default="{ row }">
-              <el-tag :type="row.is_valid ? 'success' : 'danger'">{{ row.is_valid ? '通过' : row.error_message }}</el-tag>
+              <span v-if="row.is_imported">已写入正式商品库</span>
+              <span v-else-if="!row.is_valid" class="import-error">{{ row.error_message }}</span>
+              <span v-else>校验通过</span>
               <small v-if="row.warning_message" class="import-warning">{{ row.warning_message }}</small>
             </template>
           </el-table-column>
@@ -346,7 +396,9 @@ onMounted(() => void loadProducts())
       </template>
       <template #footer>
         <el-button :disabled="importing" @click="importDialogVisible = false">关闭</el-button>
-        <el-button type="primary" :loading="importing" :disabled="importPreview?.status !== 'READY_TO_CONFIRM'" @click="confirmImport">确认导入</el-button>
+        <el-button type="primary" :loading="importing" :disabled="!importPreview || importPreview.valid_rows === 0" @click="confirmImport">
+          导入通过的 {{ importPreview?.valid_rows ?? 0 }} 行
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -366,6 +418,8 @@ onMounted(() => void loadProducts())
 .header-actions { display: flex; align-items: flex-start; }
 .file-input { display: none; }
 .import-warning { display: block; margin-top: 5px; color: var(--text-secondary); }
+.import-error { color: var(--el-color-danger); }
+.import-row-filter { margin: -4px 0 12px; }
 .product-thumbnail, .image-placeholder { width: 68px; height: 68px; border: 1px solid var(--border); border-radius: 6px; }
 .image-placeholder { display: grid; place-items: center; padding: 6px; box-sizing: border-box; color: var(--text-secondary); background: #f8fafc; font-size: 12px; text-align: center; }
 </style>
