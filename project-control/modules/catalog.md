@@ -1,14 +1,15 @@
 # 商品主数据 / Catalog
 
-状态：IMPLEMENTED / PRODUCT_IMPORT_DIRECT_VALUE_MODE
+状态：IMPLEMENTED / PRODUCT_LOGICAL_DELETE
 Owner：feat/product-import
-Last Updated：2026-09-10
+Last Updated：2026-09-11
 
 ## Database
 - [x] `20260909_0008` / `20260909_0009` 创建并对齐 `scm_category` 与 `scm_product`
 - [x] `20260910_0013` 创建 Product Import Staging、供应商匹配决策及任务状态表；`20260910_0014` 支持 Product 直接保存三级类目原文；`20260910_0015` 增加导入图片暂存键
 - [x] Product → Category、Product → Source Supplier 均为 `RESTRICT` 外键
 - [x] `20260911_0018` 增加 `UNIQUE(source_supplier_id, sku)`；迁移会先拒绝历史重复键，禁止静默清理
+- [x] `20260911_0019` 增加 Product 逻辑删除审计列与 `product:delete` 权限
 - [x] 未创建独立 Supplier Product Quote 表或报价历史表
 
 ## Backend
@@ -18,13 +19,15 @@ Last Updated：2026-09-10
 - [x] 成本价更新在同一事务中调用 Pricing Service 并保存全部派生值
 - [x] 固定 32 列商品大表导入、直接保存类目/价格正式值、保存 WPS/Excel 内嵌图片、严格供应商精确匹配、SKU 防重预览和全批次 Confirm
 - [x] Supplier 为 `STOPPED` / `BLACKLIST` / 逻辑删除时，关联 Product 不能列表、详情、编辑或更新成本价；恢复 `NORMAL` 后自动恢复可见
+- [x] Product 删除采用逻辑删除；已删除商品不能列表、详情、编辑或更新成本价
 
 ## Frontend
 - [x] 商品列表、详情（含本地图片预览）、按权限显示的基础资料编辑/成本价更新及导入预览/供应商解析页面；商品列表首列显示本地图片缩略图及无图/加载失败占位，供应商详情可跳转至其相关商品的筛选列表
+- [x] 商品列表按 `product:delete` 展示删除确认操作；页面保留普通纵向滚动，左侧导航固定于视口左侧
 - [x] 统一 API 请求禁用浏览器缓存，商品导入 Confirm 后重新加载列表可立即读取最新商品数据
 
 ## Permissions
-- [x] `product:list`、`product:detail`、`product:update`、`product:cost:update`、`product:import`、`product:import:resolve`
+- [x] `product:list`、`product:detail`、`product:update`、`product:cost:update`、`product:delete`、`product:import`、`product:import:resolve`
 
 ## Tests
 - [x] Pricing Unit Tests（定价单元测试）已完成
@@ -32,7 +35,7 @@ Last Updated：2026-09-10
 
 ## Known Issues
 - Category Source Data Preflight 已完成；商城 external ID UNIQUE 预检通过，工业品完整路径已按导入去重规则收口。依据 ADR-0010，Category Source Loader 不再阻止固定商品大表 Confirm。
-- Product / Category 删除策略和除已冻结字段外的最终业务必填规则尚未得到业务决策；不得在 C1 Migration 自行补充删除列或强行收紧 NULL。
+- Product 恢复策略和已删除 Product 的 SKU 复用规则仍未得到业务决策；当前逻辑删除保留来源供应商 + SKU 防重键。
 
 ## Next Step
 维护真实模板中所需的有效 Supplier Master，并补齐空供应商；随后从 Product Import 页面重新预览并 Confirm。不得绕过供应商解析或新增独立报价库。
@@ -58,4 +61,4 @@ Last Updated：2026-09-10
 
 ## Current Gate
 
-`IMPLEMENTED / PRODUCT_IMPORT_DIRECT_VALUE_MODE`：固定模板 Staging、Supplier Matching、供应商 + SKU 防重预览、权限和全批次 Confirm 已实现；Product 基础资料编辑与 Supplier 合作状态可见性联动已实现。依据 ADR-0010，类目和价格直接以大表正式值写入 Product，空的 `scm_category` 不阻止 Confirm；空或不合格供应商仍不得绕过导入校验。Category Source Loader、Product 删除策略及无受控类目关联 Product 的独立成本价维护仍属后续范围。
+`IMPLEMENTED / PRODUCT_LOGICAL_DELETE`：固定模板 Staging、Supplier Matching、供应商 + SKU 防重预览、权限和全批次 Confirm 已实现；Product 基础资料编辑、逻辑删除和 Supplier 合作状态可见性联动已实现。依据 ADR-0010，类目和价格直接以大表正式值写入 Product，空的 `scm_category` 不阻止 Confirm；空或不合格供应商仍不得绕过导入校验。Category Source Loader、Product 恢复策略及无受控类目关联 Product 的独立成本价维护仍属后续范围。

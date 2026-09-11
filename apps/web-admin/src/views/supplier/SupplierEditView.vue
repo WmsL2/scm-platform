@@ -54,7 +54,7 @@ onMounted(() => void load())
 <template>
   <div class="supplier-page">
     <header class="page-heading">
-      <div><p>SUPPLIER MASTER</p><h1>编辑供应商</h1><span>系统供应商编码与状态不可在编辑页修改。</span></div>
+      <div><p>SUPPLIER MASTER</p><h1>编辑供应商</h1><span>供应商编码由系统生成不可修改；可按实际业务调整归档状态。</span></div>
       <RouterLink :to="$route.path.replace(/\/edit$/, '')"><el-button :icon="ArrowLeft">返回详情</el-button></RouterLink>
     </header>
     <el-card v-loading="loading" class="page-card"><SupplierFormFields v-model="draft" /><el-button type="primary" :loading="submitting" :disabled="loading" @click="save">保存修改</el-button></el-card>

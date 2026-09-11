@@ -24,6 +24,6 @@
 - 来源旧供应商编码、来源状态文本及任何未冻结字段不会被保存或映射。
 - 上传先创建 `scm_supplier_import_batch` 和 `scm_supplier_import_row` 暂存记录，返回逐行校验结果；存在错误行时不能确认。
 - 只有上传该批次的同一用户才能确认；确认只能执行一次。
-- 确认导入在一个事务中为每条有效行调用 `BusinessSequenceService` 生成不可回收的 `supplier_code`，并创建 `ARCHIVED + NORMAL` 的正式供应商。
+- 上传者在预览通过后选择整批初始归档状态并显式确认导入；确认事务为每条有效行调用 `BusinessSequenceService` 生成不可回收的 `supplier_code`。归档状态可选 `DRAFT`、`PENDING`、`ARCHIVED`，未传 API 请求仍默认 `ARCHIVED`；合作状态固定为 `NORMAL`。
 
-前端在供应商列表页提供“下载模板”“导入 Excel”、错误预览表和“确认导入”按钮；导入不是静默入库。
+前端在供应商列表页提供“下载模板”“导入 Excel”、错误预览表、归档状态选择和“确认导入”按钮；导入不是静默入库。

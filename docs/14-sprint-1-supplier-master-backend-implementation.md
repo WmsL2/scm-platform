@@ -19,8 +19,8 @@ The source supplier code is not persisted or used as `supplier_code`. The backen
 |---|---|---|
 | `GET /api/v1/suppliers` | `supplier:list` | paged list with optional keyword/status filters |
 | `GET /api/v1/suppliers/{id}` | `supplier:detail` | detail and active contacts |
-| `POST /api/v1/suppliers` | `supplier:create` | creates DRAFT + NORMAL supplier and system code |
-| `PATCH /api/v1/suppliers/{id}` | `supplier:update` | edits frozen business fields and replaces active contacts; cannot alter code or statuses |
+| `POST /api/v1/suppliers` | `supplier:create` | creates a NORMAL supplier and system code; `archive_status` defaults to DRAFT and can be selected |
+| `PATCH /api/v1/suppliers/{id}` | `supplier:update` | edits frozen business fields, archive status and active contacts; cannot alter code or cooperation status |
 | `POST .../commands/submit` | `supplier:submit` | DRAFT → PENDING |
 | `POST .../commands/archive` | `supplier:archive` | PENDING → ARCHIVED and records archive actor/time |
 | `POST .../commands/stop` | `supplier:stop` | NORMAL → STOPPED with required reason/history |
@@ -28,12 +28,12 @@ The source supplier code is not persisted or used as `supplier_code`. The backen
 | `POST .../commands/resume` | `supplier:resume` | STOPPED → NORMAL with required reason/history |
 | `POST .../commands/unblacklist` | `supplier:unblacklist` | BLACKLIST → NORMAL with required reason/history |
 
-The Migration seeds these ten permissions into `sys_permission`; role assignment remains system authorization administration scope. The API rejects unrecognized request fields, so callers cannot silently supply a supplier code or bypass the command state machine.
+The Migration seeds these ten permissions into `sys_permission`; role assignment remains system authorization administration scope. The API rejects unrecognized request fields, so callers cannot silently supply a supplier code or alter cooperation status.
 
 ## State and audit behavior
 
-- Reverse archive transitions remain intentionally unimplemented. Stop/blacklist and their reverse recovery commands insert independent cooperation history rows; STOPPED and BLACKLIST cannot transition directly to one another.
-- Create/edit/submit update audit actor/time. Archive additionally writes `archived_by` and `archived_at`.
+- Create and Excel confirmation select an initial archive status; edit can subsequently adjust it under `supplier:create` / `supplier:update`. An ARCHIVED result writes `archived_by` and `archived_at`; DRAFT or PENDING clears them.
+- Stop/blacklist and their reverse recovery commands insert independent cooperation history rows; STOPPED and BLACKLIST cannot transition directly to one another.
 - No physical supplier delete endpoint is exposed. No CASCADE foreign keys are used.
 
 ## Verification

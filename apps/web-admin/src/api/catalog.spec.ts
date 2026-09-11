@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn() }))
+const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() }))
 vi.mock("../shared/http/runtime", () => ({ http }))
 
 describe("product import api", () => {
@@ -8,6 +8,7 @@ describe("product import api", () => {
     http.get.mockReset()
     http.post.mockReset()
     http.patch.mockReset()
+    http.delete.mockReset()
   })
 
   it("uses preview, candidate, resolve and confirm Product Import routes", async () => {
@@ -44,5 +45,14 @@ describe("product import api", () => {
     expect(http.get).toHaveBeenCalledWith(
       "/api/v1/products?source_supplier_id=supplier-1&page=1&page_size=20",
     )
+  })
+
+  it("uses the product delete route", async () => {
+    http.delete.mockResolvedValue({ id: "product-1", status: "deleted" })
+    const { productApi } = await import("./catalog")
+
+    await productApi.delete("product-1")
+
+    expect(http.delete).toHaveBeenCalledWith("/api/v1/products/product-1")
   })
 })

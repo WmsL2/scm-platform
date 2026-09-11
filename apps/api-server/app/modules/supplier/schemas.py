@@ -37,6 +37,7 @@ class SupplierCreateRequest(BaseModel):
     supplier_name: str = Field(min_length=1, max_length=255)
     main_brands: str = Field(min_length=1)
     advantage: str = Field(min_length=1)
+    archive_status: ArchiveStatus = ArchiveStatus.DRAFT
     contacts: list[SupplierContactInput] = Field(default_factory=list, max_length=100)
 
     @field_validator("supplier_name", "main_brands", "advantage")
@@ -51,6 +52,7 @@ class SupplierUpdateRequest(BaseModel):
     supplier_name: str | None = Field(default=None, min_length=1, max_length=255)
     main_brands: str | None = Field(default=None, min_length=1)
     advantage: str | None = Field(default=None, min_length=1)
+    archive_status: ArchiveStatus | None = None
     contacts: list[SupplierContactInput] | None = Field(default=None, max_length=100)
 
     @field_validator("supplier_name", "main_brands", "advantage")
@@ -121,6 +123,12 @@ class SupplierImportConfirmResponse(BaseModel):
     id: uuid.UUID
     status: str
     imported_count: int
+
+
+class SupplierImportConfirmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    archive_status: ArchiveStatus = ArchiveStatus.ARCHIVED
 
 
 def _normalize_required_text(value: str) -> str:

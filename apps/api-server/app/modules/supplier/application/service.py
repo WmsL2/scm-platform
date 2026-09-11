@@ -74,6 +74,7 @@ class SupplierService:
                     supplier_name=supplier_name,
                     main_brands=self._required_text(payload.main_brands, "main_brands"),
                     advantage=self._required_text(payload.advantage, "advantage"),
+                    archive_status=payload.archive_status,
                     contacts=payload.contacts,
                     actor_id=actor_id,
                 )
@@ -93,6 +94,7 @@ class SupplierService:
                     ],
                 )
                 self.session.add(supplier)
+                self._apply_archive_status(supplier, payload.archive_status, actor_id)
             await self.session.flush()
             result = await self.get(supplier.id)
         return result
@@ -115,6 +117,8 @@ class SupplierService:
                 supplier.main_brands = self._required_text(payload.main_brands, "main_brands")
             if "advantage" in payload.model_fields_set:
                 supplier.advantage = self._required_text(payload.advantage, "advantage")
+            if "archive_status" in payload.model_fields_set and payload.archive_status is not None:
+                self._apply_archive_status(supplier, payload.archive_status, actor_id)
             if "contacts" in payload.model_fields_set:
                 self._replace_contacts(supplier, payload.contacts or [], actor_id)
             supplier.updated_by = actor_id
@@ -241,6 +245,7 @@ class SupplierService:
         supplier_name: str,
         main_brands: str,
         advantage: str,
+        archive_status: ArchiveStatus,
         contacts: Sequence[SupplierContactInput],
         actor_id: uuid.UUID,
     ) -> None:
@@ -248,15 +253,25 @@ class SupplierService:
         supplier.supplier_name = supplier_name
         supplier.main_brands = main_brands
         supplier.advantage = advantage
-        supplier.archive_status = ArchiveStatus.DRAFT
         supplier.cooperation_status = CooperationStatus.NORMAL
         supplier.is_deleted = False
         supplier.deleted_by = None
         supplier.deleted_at = None
-        supplier.archived_by = None
-        supplier.archived_at = None
         supplier.updated_by = actor_id
+        self._apply_archive_status(supplier, archive_status, actor_id)
         self._replace_contacts(supplier, contacts, actor_id)
+
+    @staticmethod
+    def _apply_archive_status(
+        supplier: Supplier, archive_status: ArchiveStatus, actor_id: uuid.UUID
+    ) -> None:
+        supplier.archive_status = archive_status
+        if archive_status == ArchiveStatus.ARCHIVED:
+            supplier.archived_by = actor_id
+            supplier.archived_at = datetime.now()
+        else:
+            supplier.archived_by = None
+            supplier.archived_at = None
 
     @staticmethod
     def _contact_from_input(

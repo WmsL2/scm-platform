@@ -81,7 +81,7 @@ class SupplierImportService:
         return response
 
     async def confirm(
-        self, batch_id: uuid.UUID, actor_id: uuid.UUID
+        self, batch_id: uuid.UUID, actor_id: uuid.UUID, archive_status: ArchiveStatus
     ) -> SupplierImportConfirmResponse:
         async with transaction_scope(self.session):
             batch = await self.repository.import_batch_by_id_for_update(batch_id)
@@ -129,7 +129,7 @@ class SupplierImportService:
                     if not existing.is_deleted:
                         raise AppError("SUPPLIER_NAME_EXISTS", "该供应商已存在", 409)
                     supplier = existing
-                    self._restore_deleted_supplier(supplier, row, actor_id)
+                    self._restore_deleted_supplier(supplier, row, actor_id, archive_status)
                 else:
                     supplier = Supplier(
                         supplier_code=await BusinessSequenceService(self.session).issue_code(
@@ -138,12 +138,14 @@ class SupplierImportService:
                         supplier_name=supplier_name,
                         main_brands=self._required_value(row.main_brands),
                         advantage=self._required_value(row.advantage),
-                        archive_status=ArchiveStatus.ARCHIVED,
+                        archive_status=archive_status,
                         cooperation_status=CooperationStatus.NORMAL,
                         created_by=actor_id,
                         updated_by=actor_id,
-                        archived_by=actor_id,
-                        archived_at=datetime.now(),
+                        archived_by=actor_id if archive_status == ArchiveStatus.ARCHIVED else None,
+                        archived_at=datetime.now()
+                        if archive_status == ArchiveStatus.ARCHIVED
+                        else None,
                         contacts=self._contacts_from_row(row, actor_id),
                     )
                     self.session.add(supplier)
@@ -241,17 +243,21 @@ class SupplierImportService:
                 )
 
     def _restore_deleted_supplier(
-        self, supplier: Supplier, row: SupplierImportRow, actor_id: uuid.UUID
+        self,
+        supplier: Supplier,
+        row: SupplierImportRow,
+        actor_id: uuid.UUID,
+        archive_status: ArchiveStatus,
     ) -> None:
         supplier.main_brands = self._required_value(row.main_brands)
         supplier.advantage = self._required_value(row.advantage)
-        supplier.archive_status = ArchiveStatus.ARCHIVED
+        supplier.archive_status = archive_status
         supplier.cooperation_status = CooperationStatus.NORMAL
         supplier.is_deleted = False
         supplier.deleted_by = None
         supplier.deleted_at = None
-        supplier.archived_by = actor_id
-        supplier.archived_at = datetime.now()
+        supplier.archived_by = actor_id if archive_status == ArchiveStatus.ARCHIVED else None
+        supplier.archived_at = datetime.now() if archive_status == ArchiveStatus.ARCHIVED else None
         supplier.updated_by = actor_id
         for contact in supplier.contacts:
             if not contact.is_deleted:

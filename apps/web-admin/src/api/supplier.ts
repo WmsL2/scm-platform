@@ -1,6 +1,7 @@
 import { http } from "../shared/http/runtime"
 import type {
   SupplierCommand,
+  ArchiveStatus,
   SupplierDetail,
   SupplierDeleteResult,
   SupplierFormDraft,
@@ -61,9 +62,10 @@ export const supplierApi = {
     return http.post<SupplierImportPreview, FormData>(supplierPath("/imports/preview"), formData)
   },
 
-  confirmImport(batchId: string): Promise<SupplierImportConfirmResult> {
-    return http.post<SupplierImportConfirmResult>(
+  confirmImport(batchId: string, archiveStatus: ArchiveStatus): Promise<SupplierImportConfirmResult> {
+    return http.post<SupplierImportConfirmResult, { archive_status: ArchiveStatus }>(
       supplierPath(`/imports/${batchId}/confirm`),
+      { archive_status: archiveStatus },
     )
   },
 }

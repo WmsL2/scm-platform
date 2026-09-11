@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from typing import List
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +12,7 @@ from app.modules.catalog.infrastructure.repository import ProductRepository
 from app.modules.catalog.schemas import (
     CategoryResponse,
     ProductCostUpdateRequest,
+    ProductDeleteResponse,
     ProductDetailResponse,
     ProductListItem,
     ProductSourceSupplierCandidateResponse,
@@ -152,6 +154,17 @@ class ProductService:
             product.updated_by = actor_id
             await self.session.flush()
             return await self._detail(product, category=category)
+
+    async def delete(self, product_id: uuid.UUID, actor_id: uuid.UUID) -> ProductDeleteResponse:
+        async with transaction_scope(self.session):
+            product = await self.repository.by_id_for_update(product_id)
+            if product is None:
+                raise AppError("PRODUCT_NOT_FOUND", "Product not found", 404)
+            product.is_deleted = True
+            product.deleted_by = actor_id
+            product.deleted_at = datetime.now()
+            product.updated_by = actor_id
+        return ProductDeleteResponse(id=product.id)
 
     async def _list_item(self, product: Product) -> ProductListItem:
         category = await self._category(product.category_id)

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { EditPen, Refresh, Search, Upload } from "@element-plus/icons-vue"
+import { Delete, EditPen, Refresh, Search, Upload } from "@element-plus/icons-vue"
 import { onMounted, reactive, ref } from "vue"
-import { ElMessage } from "element-plus"
+import { ElMessage, ElMessageBox } from "element-plus"
 import { useRoute, useRouter } from "vue-router"
 
 import { productApi } from "../../api/catalog"
@@ -125,6 +125,22 @@ async function confirmImport(): Promise<void> {
   }
 }
 
+async function deleteProduct(product: ProductListItem): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `删除后“${product.product_name ?? product.sku ?? "该商品"}”将不再出现在商品列表，历史记录会保留。`,
+      "确认删除商品",
+      { confirmButtonText: "删除", cancelButtonText: "取消", type: "warning" },
+    )
+    await productApi.delete(product.id)
+    ElMessage.success("商品已删除")
+    await loadProducts(products.value.length === 1 && page.value > 1 ? page.value - 1 : page.value)
+  } catch (error) {
+    if (error === "cancel" || error === "close") return
+    ElMessage.error(error instanceof HttpError ? error.response.message : "删除商品失败")
+  }
+}
+
 onMounted(() => void loadProducts())
 </script>
 
@@ -208,7 +224,7 @@ onMounted(() => void loadProducts())
           <template #default="{ row }">{{ money(row.agreement_price) }}</template>
         </el-table-column>
         <el-table-column prop="source_supplier_name" label="来源供应商" min-width="160" />
-        <el-table-column label="操作" width="155" fixed="right">
+        <el-table-column label="操作" width="215" fixed="right">
           <template #default="{ row }">
             <RouterLink :to="`/products/${row.id}`"><el-button link type="primary">详情</el-button></RouterLink>
             <RouterLink
@@ -217,6 +233,7 @@ onMounted(() => void loadProducts())
             >
               <el-button link type="warning" :icon="EditPen">更新成本</el-button>
             </RouterLink>
+            <el-button v-if="auth.hasPermission('product:delete')" link type="danger" :icon="Delete" @click="deleteProduct(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

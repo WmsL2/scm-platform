@@ -1,6 +1,7 @@
 import { http } from "../shared/http/runtime"
 import type {
   ProductDetail,
+  ProductDeleteResult,
   ProductImportConfirmResult,
   ProductImportPreview,
   ProductImportSupplierCandidate,
@@ -40,6 +41,10 @@ export const productApi = {
 
   update(id: string, payload: ProductUpdatePayload): Promise<ProductDetail> {
     return http.patch<ProductDetail, ProductUpdatePayload>(path(`/${id}`), payload)
+  },
+
+  delete(id: string): Promise<ProductDeleteResult> {
+    return http.delete<ProductDeleteResult>(path(`/${id}`))
   },
 
   sourceSupplierCandidates(): Promise<ProductSourceSupplierCandidate[]> {

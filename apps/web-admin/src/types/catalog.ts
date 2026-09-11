@@ -69,6 +69,11 @@ export interface ProductPage {
   page_size: number
 }
 
+export interface ProductDeleteResult {
+  id: string
+  status: "deleted"
+}
+
 export interface ProductImportSupplierMatch {
   id: string
   supplier_name_normalized: string

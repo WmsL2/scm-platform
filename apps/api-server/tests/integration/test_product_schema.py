@@ -13,7 +13,7 @@ async def test_product_schema_and_permission_directory() -> None:
         "product_specification", "selling_points", "gross_margin", "remark", "discount_rate",
         "restricted_regions", "jd_self_operated_price", "reference_url", "storefront_type",
         "price_inflation_rate", "deduction_rate", "created_by", "updated_by", "created_at",
-        "updated_at",
+        "updated_at", "is_deleted", "deleted_by", "deleted_at",
     }
     async with SessionLocal() as session:
         table_rows = await session.execute(
@@ -75,6 +75,7 @@ async def test_product_schema_and_permission_directory() -> None:
             "product:detail",
                 "product:cost:update",
                 "product:update",
+                "product:delete",
                 "product:import",
             "product:import:resolve",
         }
