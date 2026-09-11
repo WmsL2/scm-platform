@@ -43,7 +43,8 @@ def upgrade() -> None:
     for permission_id, code, name, permission_type in permissions:
         op.execute(
             sa.text(
-                "INSERT INTO sys_permission (id, permission_code, permission_name, permission_type) "
+                "INSERT INTO sys_permission "
+                "(id, permission_code, permission_name, permission_type) "
                 "VALUES (:id, :code, :name, :permission_type)"
             ).bindparams(
                 id=permission_id, code=code, name=name, permission_type=permission_type
@@ -63,7 +64,9 @@ def upgrade() -> None:
 def downgrade() -> None:
     permission_ids = [PRODUCT_UPDATE_PERMISSION_ID, ROLE_DELETE_PERMISSION_ID]
     op.execute(
-        sa.text("DELETE FROM sys_role_permission WHERE permission_id IN :permission_ids").bindparams(
+        sa.text(
+            "DELETE FROM sys_role_permission WHERE permission_id IN :permission_ids"
+        ).bindparams(
             sa.bindparam("permission_ids", expanding=True, value=permission_ids)
         )
     )
