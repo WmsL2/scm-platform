@@ -80,18 +80,21 @@ class ProductRepository:
         )
         return cast(ProductImportTask | None, await self.session.scalar(statement))
 
-    async def existing_supplier_sku_keys(
-        self, keys: set[tuple[uuid.UUID, str]]
-    ) -> set[tuple[uuid.UUID, str]]:
+    async def products_by_supplier_sku(
+        self, keys: set[tuple[uuid.UUID, str]], *, for_update: bool = False
+    ) -> dict[tuple[uuid.UUID, str], Product]:
         if not keys:
-            return set()
-        statement = select(Product.source_supplier_id, Product.sku).where(
+            return {}
+        statement = select(Product).where(
             tuple_(Product.source_supplier_id, Product.sku).in_(keys)
         )
+        if for_update:
+            statement = statement.with_for_update()
+        products = list((await self.session.scalars(statement)).all())
         return {
-            (supplier_id, sku)
-            for supplier_id, sku in (await self.session.execute(statement)).all()
-            if sku is not None
+            (product.source_supplier_id, product.sku): product
+            for product in products
+            if product.sku is not None
         }
 
     async def other_product_with_supplier_sku(

@@ -12,7 +12,10 @@ describe("product import api", () => {
   })
 
   it("uses preview, candidate, resolve and confirm Product Import routes", async () => {
-    http.post.mockResolvedValue({ id: "task-1" })
+    http.post
+      .mockResolvedValueOnce({ id: "task-1" })
+      .mockResolvedValueOnce({ id: "task-1" })
+      .mockResolvedValueOnce({ id: "task-1", status: "CONFIRMED", imported_count: 0, restored_count: 1 })
     http.get.mockResolvedValue([])
     const { productApi } = await import("./catalog")
     const file = new File(["content"], "products.xlsx")
@@ -20,7 +23,7 @@ describe("product import api", () => {
     await productApi.previewImport(file)
     await productApi.importSupplierCandidates()
     await productApi.resolveImportSupplier("task-1", "match-1", "supplier-1")
-    await productApi.confirmImport("task-1")
+    const confirmed = await productApi.confirmImport("task-1")
 
     expect(http.post).toHaveBeenNthCalledWith(
       1,
@@ -34,6 +37,7 @@ describe("product import api", () => {
       { supplier_id: "supplier-1" },
     )
     expect(http.post).toHaveBeenNthCalledWith(3, "/api/v1/products/imports/task-1/confirm")
+    expect(confirmed).toMatchObject({ imported_count: 0, restored_count: 1 })
   })
 
   it("passes the related supplier filter to the product list API", async () => {

@@ -63,7 +63,7 @@ Supplier Excel -> Supplier Import -> scm_supplier
 
 商品删除使用 `DELETE /api/v1/products/{product_id}`，需要 `product:delete` 权限。Revision `20260911_0019` 在 `scm_product` 增加 `is_deleted`、`deleted_by`、`deleted_at`：删除不物理移除商品、导入审计或本地图片，只记录操作人和时间并从正常商品列表、详情、编辑及成本价更新中隐藏该商品。
 
-删除后仍保留 `source_supplier_id + sku` 防重业务键；当前不提供恢复或复用已删除 SKU 的能力，后续如需支持必须另行冻结规则和 API。
+删除后仍保留 `source_supplier_id + sku` 防重业务键。依据 ADR-0014，固定商品大表 Confirm 遇到仅有逻辑删除记录的同键商品时，可在上传者显式确认后恢复原记录：`is_deleted` 改回 `false`，`deleted_by`、`deleted_at` 清空并更新 `updated_by`。该流程保留原商品 ID 和全部既有业务字段，不用 Excel 覆盖；正常同键商品仍阻止导入。普通页面/API 恢复与已删除 SKU 复用仍不提供。
 
 ## 当前成本价
 

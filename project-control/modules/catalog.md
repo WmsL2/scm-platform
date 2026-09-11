@@ -20,6 +20,7 @@ Last Updated：2026-09-11
 - [x] 固定 32 列商品大表导入、直接保存类目/价格正式值、保存 WPS/Excel 内嵌图片、严格供应商精确匹配、SKU 防重预览和全批次 Confirm
 - [x] Supplier 为 `STOPPED` / `BLACKLIST` / 逻辑删除时，关联 Product 不能列表、详情、编辑或更新成本价；恢复 `NORMAL` 后自动恢复可见
 - [x] Product 删除采用逻辑删除；已删除商品不能列表、详情、编辑或更新成本价
+- [x] Product Import Confirm 遇到同来源供应商 + SKU 的已删除商品时，仅恢复原商品可见状态，不覆盖既有字段；正常同键商品仍阻止导入
 
 ## Frontend
 - [x] 商品列表、详情（含本地图片预览）、按权限显示的基础资料编辑/成本价更新及导入预览/供应商解析页面；商品列表首列显示本地图片缩略图及无图/加载失败占位，供应商详情可跳转至其相关商品的筛选列表
@@ -35,7 +36,7 @@ Last Updated：2026-09-11
 
 ## Known Issues
 - Category Source Data Preflight 已完成；商城 external ID UNIQUE 预检通过，工业品完整路径已按导入去重规则收口。依据 ADR-0010，Category Source Loader 不再阻止固定商品大表 Confirm。
-- Product 恢复策略和已删除 Product 的 SKU 复用规则仍未得到业务决策；当前逻辑删除保留来源供应商 + SKU 防重键。
+- 普通页面/API 恢复策略和已删除 Product 的 SKU 复用规则仍未得到业务决策；仅 Product Import Confirm 可恢复同键已删除商品，且不覆盖字段。
 
 ## Next Step
 维护真实模板中所需的有效 Supplier Master，并补齐空供应商；随后从 Product Import 页面重新预览并 Confirm。不得绕过供应商解析或新增独立报价库。
@@ -61,4 +62,4 @@ Last Updated：2026-09-11
 
 ## Current Gate
 
-`IMPLEMENTED / PRODUCT_LOGICAL_DELETE`：固定模板 Staging、Supplier Matching、供应商 + SKU 防重预览、权限和全批次 Confirm 已实现；Product 基础资料编辑、逻辑删除和 Supplier 合作状态可见性联动已实现。依据 ADR-0010，类目和价格直接以大表正式值写入 Product，空的 `scm_category` 不阻止 Confirm；空或不合格供应商仍不得绕过导入校验。Category Source Loader、Product 恢复策略及无受控类目关联 Product 的独立成本价维护仍属后续范围。
+`IMPLEMENTED / PRODUCT_LOGICAL_DELETE`：固定模板 Staging、Supplier Matching、供应商 + SKU 防重预览、权限和全批次 Confirm 已实现；Product 基础资料编辑、逻辑删除、已删除同键商品的 Confirm 恢复和 Supplier 合作状态可见性联动已实现。依据 ADR-0010，类目和价格直接以大表正式值写入 Product，空的 `scm_category` 不阻止 Confirm；空或不合格供应商仍不得绕过导入校验。Category Source Loader、普通页面/API 恢复策略及无受控类目关联 Product 的独立成本价维护仍属后续范围。
