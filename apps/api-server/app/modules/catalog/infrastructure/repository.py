@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.common.contracts import PageParams
+from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Category, Product, ProductImportTask
 from app.modules.supplier.domain.rules import CooperationStatus
 from app.modules.supplier.infrastructure.models import Supplier
@@ -18,7 +19,7 @@ class ProductRepository:
     async def by_id(self, product_id: uuid.UUID) -> Product | None:
         statement = select(Product).join(Supplier).where(
             Product.id == product_id,
-            Product.is_deleted.is_(False),
+            Product.status == ProductStatus.ACTIVE,
             Supplier.is_deleted.is_(False),
             Supplier.cooperation_status == CooperationStatus.NORMAL,
         )
@@ -30,12 +31,16 @@ class ProductRepository:
             .join(Supplier)
             .where(
                 Product.id == product_id,
-                Product.is_deleted.is_(False),
+                Product.status == ProductStatus.ACTIVE,
                 Supplier.is_deleted.is_(False),
                 Supplier.cooperation_status == CooperationStatus.NORMAL,
             )
             .with_for_update()
         )
+        return cast(Product | None, await self.session.scalar(statement))
+
+    async def by_id_any_status_for_update(self, product_id: uuid.UUID) -> Product | None:
+        statement = select(Product).where(Product.id == product_id).with_for_update()
         return cast(Product | None, await self.session.scalar(statement))
 
     async def category_by_id(self, category_id: uuid.UUID) -> Category | None:
@@ -114,19 +119,24 @@ class ProductRepository:
         keyword: str | None,
         category_id: uuid.UUID | None,
         source_supplier_id: uuid.UUID | None,
+        status: ProductStatus,
     ) -> tuple[list[Product], int]:
-        visible_supplier_criteria = (
-            Supplier.is_deleted.is_(False),
-            Supplier.cooperation_status == CooperationStatus.NORMAL,
+        supplier_criteria = (
+            (
+                Supplier.is_deleted.is_(False),
+                Supplier.cooperation_status == CooperationStatus.NORMAL,
+            )
+            if status == ProductStatus.ACTIVE
+            else ()
         )
         statement: Select[tuple[Product]] = select(Product).join(Supplier).where(
-            Product.is_deleted.is_(False), *visible_supplier_criteria
+            Product.status == status, *supplier_criteria
         )
         count_statement = (
             select(func.count())
             .select_from(Product)
             .join(Supplier)
-            .where(Product.is_deleted.is_(False), *visible_supplier_criteria)
+            .where(Product.status == status, *supplier_criteria)
         )
         if keyword:
             criteria = or_(

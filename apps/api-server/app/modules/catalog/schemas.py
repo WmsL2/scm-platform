@@ -1,8 +1,11 @@
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.modules.catalog.domain.lifecycle import ProductStatus
 
 
 class CategoryResponse(BaseModel):
@@ -32,6 +35,7 @@ class ProductListItem(BaseModel):
     cost_price: Decimal
     agreement_price: Decimal | None
     jd_price: Decimal | None
+    status: ProductStatus
     updated_at: datetime
 
 
@@ -76,9 +80,20 @@ class ProductDetailResponse(BaseModel):
     updated_at: datetime
 
 
-class ProductDeleteResponse(BaseModel):
+class ProductLifecycleResponse(BaseModel):
     id: uuid.UUID
-    status: str = "deleted"
+    status: ProductStatus
+
+
+class ProductPurgeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm: Literal[True]
+
+
+class ProductPurgeResponse(BaseModel):
+    id: uuid.UUID
+    status: str = "PURGED"
 
 
 class ProductCostUpdateRequest(BaseModel):
@@ -188,4 +203,3 @@ class ProductImportConfirmResponse(BaseModel):
     id: uuid.UUID
     status: str
     imported_count: int
-    restored_count: int

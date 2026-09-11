@@ -15,7 +15,7 @@ describe("product import api", () => {
     http.post
       .mockResolvedValueOnce({ id: "task-1" })
       .mockResolvedValueOnce({ id: "task-1" })
-      .mockResolvedValueOnce({ id: "task-1", status: "CONFIRMED", imported_count: 0, restored_count: 1 })
+      .mockResolvedValueOnce({ id: "task-1", status: "CONFIRMED", imported_count: 1 })
     http.get.mockResolvedValue([])
     const { productApi } = await import("./catalog")
     const file = new File(["content"], "products.xlsx")
@@ -37,7 +37,7 @@ describe("product import api", () => {
       { supplier_id: "supplier-1" },
     )
     expect(http.post).toHaveBeenNthCalledWith(3, "/api/v1/products/imports/task-1/confirm")
-    expect(confirmed).toMatchObject({ imported_count: 0, restored_count: 1 })
+    expect(confirmed).toMatchObject({ imported_count: 1 })
   })
 
   it("passes the related supplier filter to the product list API", async () => {
@@ -51,12 +51,17 @@ describe("product import api", () => {
     )
   })
 
-  it("uses the product delete route", async () => {
-    http.delete.mockResolvedValue({ id: "product-1", status: "deleted" })
+  it("uses product lifecycle routes", async () => {
+    http.post.mockResolvedValue({ id: "product-1", status: "DISABLED" })
+    http.delete.mockResolvedValue({ id: "product-1", status: "PURGED" })
     const { productApi } = await import("./catalog")
 
-    await productApi.delete("product-1")
+    await productApi.disable("product-1")
+    await productApi.enable("product-1")
+    await productApi.purge("product-1")
 
-    expect(http.delete).toHaveBeenCalledWith("/api/v1/products/product-1")
+    expect(http.post).toHaveBeenNthCalledWith(1, "/api/v1/products/product-1/commands/disable")
+    expect(http.post).toHaveBeenNthCalledWith(2, "/api/v1/products/product-1/commands/enable")
+    expect(http.delete).toHaveBeenCalledWith("/api/v1/products/product-1", { confirm: true })
   })
 })

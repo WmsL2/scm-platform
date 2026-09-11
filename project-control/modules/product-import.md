@@ -2,7 +2,7 @@
 
 状态：IMPLEMENTED / SUPPLIER_DATA_PENDING
 Owner：feat/product-import
-Last Updated：2026-09-10
+Last Updated：2026-09-11
 
 ## Database
 - [x] `20260910_0013` 创建 `scm_product_import_task`、`scm_product_import_row`、`scm_product_import_supplier_match`
@@ -14,6 +14,7 @@ Last Updated：2026-09-10
 - [x] 供应商仅按冻结的标准化精确匹配；支持从当前有效 Supplier Master 手动解析
 - [x] `POST /api/v1/products/imports/preview`、`GET /api/v1/products/imports/{task_id}`、`GET /api/v1/products/imports/supplier-candidates`、`POST /api/v1/products/imports/{task_id}/supplier-matches/{match_id}/resolve`、`POST /api/v1/products/imports/{task_id}/confirm`
 - [x] Confirm 锁定任务并重新校验有效来源供应商；全批次单事务写入 `scm_product`
+- [x] 同来源供应商 + SKU 命中停用 Product 时按行报错并阻止 Confirm；不隐式恢复或覆盖，永久删除后才可作为新商品导入
 
 ## Frontend
 - [x] 商品主数据页提供 Excel 上传、行级预览、供应商解析和确认导入入口

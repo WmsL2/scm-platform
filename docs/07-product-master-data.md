@@ -59,11 +59,11 @@ Supplier Excel -> Supplier Import -> scm_supplier
 
 系统生成的 `id` 是主键。`source_supplier_id + sku` 是 Product 防重业务键，并由数据库 UNIQUE 强制；`model`、`product_name`、`brand + model`、货号及源69码文本均不设业务 UNIQUE。不得自行假设型号或品牌+型号唯一。
 
-## 商品逻辑删除
+## 商品停用与永久删除
 
-商品删除使用 `DELETE /api/v1/products/{product_id}`，需要 `product:delete` 权限。Revision `20260911_0019` 在 `scm_product` 增加 `is_deleted`、`deleted_by`、`deleted_at`：删除不物理移除商品、导入审计或本地图片，只记录操作人和时间并从正常商品列表、详情、编辑及成本价更新中隐藏该商品。
+Revision `20260911_0020` 将 Product 生命周期冻结为 `ACTIVE` / `DISABLED`。`POST /api/v1/products/{product_id}/commands/disable` 与 `enable` 均要求 `product:disable`；停用后商品从正常列表、详情、编辑及成本价更新中隐藏，但 Product ID、字段和 `source_supplier_id + sku` 防重业务键继续保留。
 
-删除后仍保留 `source_supplier_id + sku` 防重业务键。依据 ADR-0014，固定商品大表 Confirm 遇到仅有逻辑删除记录的同键商品时，可在上传者显式确认后恢复原记录：`is_deleted` 改回 `false`，`deleted_by`、`deleted_at` 清空并更新 `updated_by`。该流程保留原商品 ID 和全部既有业务字段，不用 Excel 覆盖；正常同键商品仍阻止导入。普通页面/API 恢复与已删除 SKU 复用仍不提供。
+`DELETE /api/v1/products/{product_id}` 是永久删除，要求 `product:purge` 和请求体 `{"confirm": true}`，且仅允许删除已停用商品。服务端会在同一事务锁定商品、写入 `scm_product_purge_audit` 的最小审计信息后物理删除；存在数据库受保护关联时返回冲突。永久删除后同键释放，重新导入会创建一条新商品。正常或停用商品的同键 Excel 行均会在预览阶段阻止 Confirm，导入不恢复也不覆盖既有字段。
 
 ## 当前成本价
 

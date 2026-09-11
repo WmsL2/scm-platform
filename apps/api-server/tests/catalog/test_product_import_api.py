@@ -11,6 +11,7 @@ from app.core.database import SessionLocal
 from app.main import app
 from app.modules.auth.security import create_token, hash_password
 from app.modules.catalog.application.import_service import PRODUCT_IMPORT_HEADERS
+from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import (
     Product,
     ProductImportRow,
@@ -199,46 +200,44 @@ async def test_product_import_direct_values_do_not_require_category_or_recalcula
                 select(Product).where(Product.created_by == user_id)
             )
             assert deleted_product is not None
-            deleted_product_id = deleted_product.id
-            deleted_product.product_name = "删除前商品名称"
+            disabled_product_id = deleted_product.id
+            deleted_product.product_name = "停用前商品名称"
             deleted_product.cost_price = Decimal("321.0000")
-            deleted_product.is_deleted = True
-            deleted_product.deleted_by = user_id
-            deleted_product.deleted_at = datetime.now()
+            deleted_product.status = ProductStatus.DISABLED
+            deleted_product.disabled_by = user_id
+            deleted_product.disabled_at = datetime.now()
             await session.commit()
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            restore_preview = await client.post(
+            disabled_preview = await client.post(
                 "/api/v1/products/imports/preview",
                 headers=headers,
                 files={
                     "file": (
-                        "restore-deleted-product.xlsx",
+                        "disabled-product.xlsx",
                         _workbook_bytes("导入测试供应商"),
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
                 },
             )
-            assert restore_preview.status_code == 200
-            restore_data = restore_preview.json()["data"]
-            assert restore_data["status"] == "READY_TO_CONFIRM"
-            assert restore_data["valid_rows"] == 1
-            assert "已删除商品将于确认导入后恢复" in restore_data["rows"][0]["warning_message"]
-
-            restored = await client.post(
-                f"/api/v1/products/imports/{restore_data['id']}/confirm", headers=headers
+            assert disabled_preview.status_code == 200
+            disabled_data = disabled_preview.json()["data"]
+            assert disabled_data["status"] == "VALIDATED"
+            assert disabled_data["valid_rows"] == 0
+            assert "商品已停用，请启用或永久删除后再导入" in (
+                disabled_data["rows"][0]["error_message"]
             )
-            assert restored.status_code == 200
-            assert restored.json()["data"]["imported_count"] == 0
-            assert restored.json()["data"]["restored_count"] == 1
+            blocked_confirm = await client.post(
+                f"/api/v1/products/imports/{disabled_data['id']}/confirm", headers=headers
+            )
+            assert blocked_confirm.status_code == 409
+            assert blocked_confirm.json()["code"] == "PRODUCT_IMPORT_NOT_READY_TO_CONFIRM"
 
         async with SessionLocal() as session:
-            product = await session.get(Product, deleted_product_id)
+            product = await session.get(Product, disabled_product_id)
             assert product is not None
-            assert product.is_deleted is False
-            assert product.deleted_by is None
-            assert product.deleted_at is None
-            assert product.product_name == "删除前商品名称"
+            assert product.status == ProductStatus.DISABLED
+            assert product.product_name == "停用前商品名称"
             assert product.cost_price == Decimal("321.0000")
             assert product.source_supplier_id == supplier_id
             assert product.category_id is None

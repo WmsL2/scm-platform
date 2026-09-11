@@ -35,7 +35,7 @@
 | Decision | Current Evidence | Status | Final / Recommended Value | Migration Blocker? |
 |---|---|---|---|---|
 | `scm_product.category_id` nullability | 正式 Product 的唯一已冻结写入链路是 Import Confirm；Confirm 必须完成类目解析。定价亦必须经 `category_id` 查询正式 `deduction_rate`。 | FROZEN | `CHAR(36) NOT NULL`，FK → `scm_category.id`；不在 Product 重复存储三级名称。 | NO |
-| Product logical delete | 已冻结资料没有 Product 删除、恢复、审计留存或查询过滤规则。 | BUSINESS_DECISION_REQUIRED | C1 不增加 `is_deleted`、`deleted_by`、`deleted_at`。 | NO（删除模型不进入 C1） |
+| Product lifecycle | ADR-0015 已冻结停用、启用、永久删除和同键导入行为。 | FROZEN | `status` 为 `ACTIVE` / `DISABLED`；停用保留业务键，永久删除后释放；不使用 Product 逻辑删除列。 | NO（Revision `20260911_0020` 已实施） |
 | Category logical / physical delete | 现有来源只有“有效标记”，没有删除、恢复或历史保留语义。 | BUSINESS_DECISION_REQUIRED | C1 仅保留 `is_active`；不新增逻辑删除列，不定义物理删除 API。 | NO（删除模型不进入 C1） |
 | Product → Category delete action | Cascade 会删除正式 Product，违反正式主数据保留原则；现有资料未把该动作提升为业务冻结规则。 | RECOMMENDED | `ON DELETE RESTRICT`；不得使用 `CASCADE`。 | NO |
 | `source_supplier_id` | ADR-0008 已接受；Confirm 仅在来源供应商已解析且仍有效时写正式 Product。 | FROZEN | `CHAR(36) NOT NULL`、索引、FK → `scm_supplier.id ON DELETE RESTRICT`；单独不唯一，但与 `sku` 组成 Product 防重唯一键。 | NO |
@@ -150,7 +150,7 @@ Import Row 尚未冻结时，推荐增加 `supplier_match_id` FK 指向该表，
 
 Confirm 是 all-or-nothing：重新校验行、类目、价格、全部决策均为 `MATCHED`，并重新查询每个已匹配供应商仍有效；任一失败均不得写入任何 `scm_product`。因此匹配成功并不替代 Confirm 时的状态检查。
 
-**BUSINESS_DECISION_REQUIRED：**Product / Category 的逻辑删除策略、未明确的外键删除动作、来源图片的存储形态、品牌与采销员的结构化关系、类目匹配失败的人工修正流程，以及除已冻结 `category_id`、`source_supplier_id`、`cost_price` 外的输入字段最终业务必填规则。不得在 C1 Migration 中自行决定。
+**BUSINESS_DECISION_REQUIRED：**Category 删除策略、未明确的外键删除动作、来源图片的存储形态、品牌与采销员的结构化关系、类目匹配失败的人工修正流程，以及除已冻结 `category_id`、`source_supplier_id`、`cost_price` 外的输入字段最终业务必填规则。Product 生命周期已由 ADR-0015 冻结；不得在 C1 Migration 中自行决定其余未冻结事项。
 
 ## Category Source Data Preflight
 

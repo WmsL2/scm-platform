@@ -22,6 +22,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.models import Base
 from app.common.uuid_type import UUIDChar36
+from app.modules.catalog.domain.lifecycle import ProductStatus
 
 
 class Category(Base):
@@ -76,6 +77,7 @@ class Product(Base):
         UniqueConstraint(
             "source_supplier_id", "sku", name="uq_scm_product_source_supplier_sku"
         ),
+        CheckConstraint("status IN ('ACTIVE', 'DISABLED')", name="ck_scm_product_status"),
         Index("ix_scm_product_listed_at", "listed_at"),
         Index("ix_scm_product_brand", "brand"),
         Index("ix_scm_product_model", "model"),
@@ -84,6 +86,7 @@ class Product(Base):
         Index("ix_scm_product_item_number", "item_number"),
         Index("ix_scm_product_barcode_text", "barcode_text"),
         Index("ix_scm_product_updated_at", "updated_at"),
+        Index("ix_scm_product_status", "status"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
@@ -125,10 +128,12 @@ class Product(Base):
     storefront_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     price_inflation_rate: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
     deduction_rate: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
-    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    status: Mapped[ProductStatus] = mapped_column(
+        String(16), nullable=False, server_default=ProductStatus.ACTIVE.value
+    )
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
     updated_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
-    deleted_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+    disabled_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
@@ -137,7 +142,22 @@ class Product(Base):
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
     )
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ProductPurgeAudit(Base):
+    __tablename__ = "scm_product_purge_audit"
+    __table_args__ = (Index("ix_scm_product_purge_audit_product_id", "product_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), nullable=False)
+    source_supplier_id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), nullable=False)
+    sku: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    product_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    purged_by: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), nullable=False)
+    purged_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
 
 
 class ProductImportTask(Base):
