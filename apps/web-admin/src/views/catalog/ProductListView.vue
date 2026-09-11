@@ -24,6 +24,7 @@ const pageSize = 20
 const filters = reactive({
   keyword: "",
   source_supplier_id: typeof route.query.source_supplier_id === "string" ? route.query.source_supplier_id : "",
+  status: "ACTIVE" as "ACTIVE" | "DISABLED",
 })
 const importInput = ref<HTMLInputElement>()
 const importing = ref(false)
@@ -38,6 +39,7 @@ async function loadProducts(targetPage = page.value): Promise<void> {
     const result = await productApi.list({
       keyword: filters.keyword,
       source_supplier_id: filters.source_supplier_id || undefined,
+      status: filters.status,
       page: targetPage,
       page_size: pageSize,
     })
@@ -54,6 +56,7 @@ async function loadProducts(targetPage = page.value): Promise<void> {
 function reset(): void {
   filters.keyword = ""
   filters.source_supplier_id = ""
+  filters.status = "ACTIVE"
   void router.replace({ name: "product-list" })
   void loadProducts(1)
 }
@@ -114,9 +117,7 @@ async function confirmImport(): Promise<void> {
   importing.value = true
   try {
     const result = await productApi.confirmImport(importPreview.value.id)
-    ElMessage.success(
-      `已正式导入 ${result.imported_count} 条商品${result.restored_count ? `，恢复 ${result.restored_count} 条已删除商品` : ""}`,
-    )
+    ElMessage.success(`已正式导入 ${result.imported_count} 条商品`)
     importDialogVisible.value = false
     importPreview.value = undefined
     await loadProducts(1)
@@ -127,19 +128,50 @@ async function confirmImport(): Promise<void> {
   }
 }
 
-async function deleteProduct(product: ProductListItem): Promise<void> {
+async function disableProduct(product: ProductListItem): Promise<void> {
   try {
     await ElMessageBox.confirm(
-      `删除后“${product.product_name ?? product.sku ?? "该商品"}”将不再出现在商品列表，历史记录会保留。`,
-      "确认删除商品",
-      { confirmButtonText: "删除", cancelButtonText: "取消", type: "warning" },
+      `停用后“${product.product_name ?? product.sku ?? "该商品"}”将不能查询、编辑或通过 Excel 重复导入；商品记录和 SKU 仍会保留。`,
+      "确认停用商品",
+      { confirmButtonText: "停用", cancelButtonText: "取消", type: "warning" },
     )
-    await productApi.delete(product.id)
-    ElMessage.success("商品已删除")
+    await productApi.disable(product.id)
+    ElMessage.success("商品已停用")
     await loadProducts(products.value.length === 1 && page.value > 1 ? page.value - 1 : page.value)
   } catch (error) {
     if (error === "cancel" || error === "close") return
-    ElMessage.error(error instanceof HttpError ? error.response.message : "删除商品失败")
+    ElMessage.error(error instanceof HttpError ? error.response.message : "停用商品失败")
+  }
+}
+
+async function enableProduct(product: ProductListItem): Promise<void> {
+  try {
+    await productApi.enable(product.id)
+    ElMessage.success("商品已启用")
+    await loadProducts()
+  } catch (error) {
+    ElMessage.error(error instanceof HttpError ? error.response.message : "启用商品失败")
+  }
+}
+
+async function purgeProduct(product: ProductListItem): Promise<void> {
+  const verification = product.sku ?? product.product_name ?? ""
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `永久删除后无法恢复，重新导入同一供应商和 SKU 会创建一条新商品。请输入“${verification}”确认。`,
+      "永久删除商品",
+      { confirmButtonText: "永久删除", cancelButtonText: "取消", inputPlaceholder: verification, type: "error" },
+    )
+    if (value !== verification) {
+      ElMessage.error("确认内容不匹配，未执行永久删除")
+      return
+    }
+    await productApi.purge(product.id)
+    ElMessage.success("商品已永久删除")
+    await loadProducts(products.value.length === 1 && page.value > 1 ? page.value - 1 : page.value)
+  } catch (error) {
+    if (error === "cancel" || error === "close") return
+    ElMessage.error(error instanceof HttpError ? error.response.message : "永久删除商品失败")
   }
 }
 
@@ -152,7 +184,7 @@ onMounted(() => void loadProducts())
       <div>
         <p>PRODUCT MASTER</p>
         <h1>商品主数据</h1>
-        <span>查询正式商品；当前成本价更新会同步重算已冻结的定价字段。</span>
+        <span>查询正式商品；停用商品保留 SKU 防重键，永久删除后才能重新导入同键商品。</span>
       </div>
       <div class="header-actions">
         <el-button
@@ -186,6 +218,12 @@ onMounted(() => void loadProducts())
             placeholder="品牌、型号、SKU、名称、货号或69码"
             @keyup.enter="loadProducts(1)"
           />
+        </el-form-item>
+        <el-form-item v-if="auth.hasPermission('product:disable')" label="商品状态">
+          <el-select v-model="filters.status" style="width: 140px">
+            <el-option label="正常" value="ACTIVE" />
+            <el-option label="已停用" value="DISABLED" />
+          </el-select>
         </el-form-item>
         <el-form-item class="filter-action">
           <el-button type="primary" :icon="Search" :loading="loading" @click="loadProducts(1)">
@@ -226,16 +264,21 @@ onMounted(() => void loadProducts())
           <template #default="{ row }">{{ money(row.agreement_price) }}</template>
         </el-table-column>
         <el-table-column prop="source_supplier_name" label="来源供应商" min-width="160" />
-        <el-table-column label="操作" width="215" fixed="right">
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status === 'ACTIVE' ? '正常' : '已停用' }}</el-tag></template>
+        </el-table-column>
+        <el-table-column label="操作" width="270" fixed="right">
           <template #default="{ row }">
-            <RouterLink :to="`/products/${row.id}`"><el-button link type="primary">详情</el-button></RouterLink>
+            <RouterLink v-if="row.status === 'ACTIVE'" :to="`/products/${row.id}`"><el-button link type="primary">详情</el-button></RouterLink>
             <RouterLink
-              v-if="auth.hasPermission('product:cost:update')"
+              v-if="row.status === 'ACTIVE' && auth.hasPermission('product:cost:update')"
               :to="`/products/${row.id}?editCost=1`"
             >
               <el-button link type="warning" :icon="EditPen">更新成本</el-button>
             </RouterLink>
-            <el-button v-if="auth.hasPermission('product:delete')" link type="danger" :icon="Delete" @click="deleteProduct(row)">删除</el-button>
+            <el-button v-if="row.status === 'ACTIVE' && auth.hasPermission('product:disable')" link type="warning" @click="disableProduct(row)">停用</el-button>
+            <el-button v-if="row.status === 'DISABLED' && auth.hasPermission('product:disable')" link type="success" @click="enableProduct(row)">启用</el-button>
+            <el-button v-if="row.status === 'DISABLED' && auth.hasPermission('product:purge')" link type="danger" :icon="Delete" @click="purgeProduct(row)">永久删除</el-button>
           </template>
         </el-table-column>
       </el-table>

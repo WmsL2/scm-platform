@@ -2,19 +2,22 @@ import uuid
 from datetime import datetime
 from typing import List
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError, PageParams, PageResult
 from app.core.transaction import transaction_scope
+from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.domain.pricing import PricingCalculationError, calculate_product_pricing
-from app.modules.catalog.infrastructure.models import Category, Product
+from app.modules.catalog.infrastructure.models import Category, Product, ProductPurgeAudit
 from app.modules.catalog.infrastructure.repository import ProductRepository
 from app.modules.catalog.schemas import (
     CategoryResponse,
     ProductCostUpdateRequest,
-    ProductDeleteResponse,
     ProductDetailResponse,
+    ProductLifecycleResponse,
     ProductListItem,
+    ProductPurgeResponse,
     ProductSourceSupplierCandidateResponse,
     ProductUpdateRequest,
 )
@@ -36,12 +39,14 @@ class ProductService:
         keyword: str | None,
         category_id: uuid.UUID | None,
         source_supplier_id: uuid.UUID | None,
+        status: ProductStatus,
     ) -> PageResult[ProductListItem]:
         products, total = await self.repository.list(
             page_params,
             keyword=keyword.strip() if keyword else None,
             category_id=category_id,
             source_supplier_id=source_supplier_id,
+            status=status,
         )
         return PageResult(
             items=[await self._list_item(product) for product in products],
@@ -155,16 +160,73 @@ class ProductService:
             await self.session.flush()
             return await self._detail(product, category=category)
 
-    async def delete(self, product_id: uuid.UUID, actor_id: uuid.UUID) -> ProductDeleteResponse:
+    async def disable(
+        self, product_id: uuid.UUID, actor_id: uuid.UUID
+    ) -> ProductLifecycleResponse:
         async with transaction_scope(self.session):
-            product = await self.repository.by_id_for_update(product_id)
+            product = await self.repository.by_id_any_status_for_update(product_id)
             if product is None:
                 raise AppError("PRODUCT_NOT_FOUND", "Product not found", 404)
-            product.is_deleted = True
-            product.deleted_by = actor_id
-            product.deleted_at = datetime.now()
+            if product.status != ProductStatus.ACTIVE:
+                raise AppError("PRODUCT_NOT_ACTIVE", "Product is not active", 409)
+            product.status = ProductStatus.DISABLED
+            product.disabled_by = actor_id
+            product.disabled_at = datetime.now()
             product.updated_by = actor_id
-        return ProductDeleteResponse(id=product.id)
+        return ProductLifecycleResponse(id=product.id, status=product.status)
+
+    async def enable(
+        self, product_id: uuid.UUID, actor_id: uuid.UUID
+    ) -> ProductLifecycleResponse:
+        async with transaction_scope(self.session):
+            product = await self.repository.by_id_any_status_for_update(product_id)
+            if product is None:
+                raise AppError("PRODUCT_NOT_FOUND", "Product not found", 404)
+            if product.status != ProductStatus.DISABLED:
+                raise AppError("PRODUCT_NOT_DISABLED", "Product is not disabled", 409)
+            supplier = await self.supplier_repository.active_by_id(product.source_supplier_id)
+            if supplier is None or not self._source_supplier_is_eligible(supplier):
+                raise AppError(
+                    "PRODUCT_SOURCE_SUPPLIER_INELIGIBLE",
+                    "The source supplier must be archived, normal and non-deleted before enabling",
+                    409,
+                )
+            product.status = ProductStatus.ACTIVE
+            product.disabled_by = None
+            product.disabled_at = None
+            product.updated_by = actor_id
+        return ProductLifecycleResponse(id=product.id, status=product.status)
+
+    async def purge(self, product_id: uuid.UUID, actor_id: uuid.UUID) -> ProductPurgeResponse:
+        try:
+            async with transaction_scope(self.session):
+                product = await self.repository.by_id_any_status_for_update(product_id)
+                if product is None:
+                    raise AppError("PRODUCT_NOT_FOUND", "Product not found", 404)
+                if product.status != ProductStatus.DISABLED:
+                    raise AppError(
+                        "PRODUCT_PURGE_REQUIRES_DISABLED",
+                        "Only a disabled product can be permanently deleted",
+                        409,
+                    )
+                self.session.add(
+                    ProductPurgeAudit(
+                        product_id=product.id,
+                        source_supplier_id=product.source_supplier_id,
+                        sku=product.sku,
+                        product_name=product.product_name,
+                        purged_by=actor_id,
+                    )
+                )
+                await self.session.delete(product)
+                await self.session.flush()
+        except IntegrityError as exc:
+            raise AppError(
+                "PRODUCT_PURGE_REFERENCED",
+                "The product is referenced and cannot be permanently deleted; disable it instead",
+                409,
+            ) from exc
+        return ProductPurgeResponse(id=product_id)
 
     async def _list_item(self, product: Product) -> ProductListItem:
         category = await self._category(product.category_id)
@@ -185,6 +247,7 @@ class ProductService:
             cost_price=product.cost_price,
             agreement_price=product.agreement_price,
             jd_price=product.jd_price,
+            status=product.status,
             updated_at=product.updated_at,
         )
 

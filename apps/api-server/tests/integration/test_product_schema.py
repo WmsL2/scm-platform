@@ -13,16 +13,19 @@ async def test_product_schema_and_permission_directory() -> None:
         "product_specification", "selling_points", "gross_margin", "remark", "discount_rate",
         "restricted_regions", "jd_self_operated_price", "reference_url", "storefront_type",
         "price_inflation_rate", "deduction_rate", "created_by", "updated_by", "created_at",
-        "updated_at", "is_deleted", "deleted_by", "deleted_at",
+        "updated_at", "status", "disabled_by", "disabled_at",
     }
     async with SessionLocal() as session:
         table_rows = await session.execute(
             text(
                 "SELECT table_name FROM information_schema.tables "
-                "WHERE table_schema = DATABASE() AND table_name IN ('scm_category', 'scm_product')"
+                "WHERE table_schema = DATABASE() AND table_name IN "
+                "('scm_category', 'scm_product', 'scm_product_purge_audit')"
             )
         )
-        assert {row[0] for row in table_rows} == {"scm_category", "scm_product"}
+        assert {row[0] for row in table_rows} == {
+            "scm_category", "scm_product", "scm_product_purge_audit"
+        }
         product_columns = {
             row[0]
             for row in (
@@ -75,7 +78,8 @@ async def test_product_schema_and_permission_directory() -> None:
             "product:detail",
                 "product:cost:update",
                 "product:update",
-                "product:delete",
+                "product:disable",
+                "product:purge",
                 "product:import",
             "product:import:resolve",
         }

@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from app.core.database import SessionLocal
 from app.main import app
 from app.modules.auth.security import create_token, hash_password
-from app.modules.catalog.infrastructure.models import Category, Product
+from app.modules.catalog.infrastructure.models import Category, Product, ProductPurgeAudit
 from app.modules.supplier.infrastructure.models import Supplier
 from app.modules.system.models import Permission, Role, RolePermission, User, UserRole
 
@@ -16,7 +16,8 @@ PRODUCT_PERMISSIONS = (
     "product:detail",
     "product:cost:update",
     "product:update",
-    "product:delete",
+    "product:disable",
+    "product:purge",
 )
 
 
@@ -116,6 +117,9 @@ async def cleanup_fixture(
 ) -> None:
     async with SessionLocal() as session:
         await session.execute(delete(Product).where(Product.id == product_id))
+        await session.execute(
+            delete(ProductPurgeAudit).where(ProductPurgeAudit.product_id == product_id)
+        )
         await session.execute(delete(Category).where(Category.id == category_id))
         await session.execute(delete(Supplier).where(Supplier.id == supplier_id))
         await session.commit()
@@ -191,9 +195,9 @@ async def test_product_api_enforces_permissions_and_validates_paths() -> None:
         await cleanup_user(user_id)
 
 
-async def test_product_delete_hides_record_and_preserves_audit() -> None:
+async def test_product_disable_enable_and_purge_follow_lifecycle_rules() -> None:
     user_id, headers = await create_product_user(
-        ("product:list", "product:detail", "product:delete")
+        ("product:list", "product:detail", "product:disable", "product:purge")
     )
     supplier_id, category_id, product_id = await create_product_fixture()
     try:
@@ -201,9 +205,17 @@ async def test_product_delete_hides_record_and_preserves_audit() -> None:
             forbidden = await client.delete(f"/api/v1/products/{product_id}")
             assert forbidden.status_code == 401
 
-            deleted = await client.delete(f"/api/v1/products/{product_id}", headers=headers)
-            assert deleted.status_code == 200
-            assert deleted.json()["data"] == {"id": str(product_id), "status": "deleted"}
+            active_purge = await client.request(
+                "DELETE", f"/api/v1/products/{product_id}", headers=headers, json={"confirm": True}
+            )
+            assert active_purge.status_code == 409
+            assert active_purge.json()["code"] == "PRODUCT_PURGE_REQUIRES_DISABLED"
+
+            disabled = await client.post(
+                f"/api/v1/products/{product_id}/commands/disable", headers=headers
+            )
+            assert disabled.status_code == 200
+            assert disabled.json()["data"] == {"id": str(product_id), "status": "DISABLED"}
 
             listing = await client.get("/api/v1/products", headers=headers)
             assert listing.status_code == 200
@@ -211,12 +223,33 @@ async def test_product_delete_hides_record_and_preserves_audit() -> None:
             hidden_detail = await client.get(f"/api/v1/products/{product_id}", headers=headers)
             assert hidden_detail.status_code == 404
 
+            disabled_list = await client.get(
+                "/api/v1/products?status=DISABLED", headers=headers
+            )
+            assert disabled_list.status_code == 200
+            assert str(product_id) in {item["id"] for item in disabled_list.json()["data"]["items"]}
+
+            enabled = await client.post(
+                f"/api/v1/products/{product_id}/commands/enable", headers=headers
+            )
+            assert enabled.status_code == 200
+            assert enabled.json()["data"] == {"id": str(product_id), "status": "ACTIVE"}
+
+            await client.post(f"/api/v1/products/{product_id}/commands/disable", headers=headers)
+            purged = await client.request(
+                "DELETE", f"/api/v1/products/{product_id}", headers=headers, json={"confirm": True}
+            )
+            assert purged.status_code == 200
+            assert purged.json()["data"] == {"id": str(product_id), "status": "PURGED"}
+
         async with SessionLocal() as session:
             product = await session.get(Product, product_id)
-            assert product is not None
-            assert product.is_deleted is True
-            assert product.deleted_by == user_id
-            assert product.deleted_at is not None
+            assert product is None
+            audit = await session.scalar(
+                select(ProductPurgeAudit).where(ProductPurgeAudit.product_id == product_id)
+            )
+            assert audit is not None
+            assert audit.purged_by == user_id
     finally:
         await cleanup_fixture(supplier_id, category_id, product_id)
         await cleanup_user(user_id)

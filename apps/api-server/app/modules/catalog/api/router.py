@@ -4,21 +4,24 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.contracts import ApiResponse, PageParams, PageResult, success
+from app.common.contracts import ApiResponse, AppError, PageParams, PageResult, success
 from app.core.database import get_db_session
 from app.modules.auth.dependencies import require_permission
 from app.modules.auth.schemas import CurrentUser
 from app.modules.catalog.application.import_service import ProductImportService
 from app.modules.catalog.application.service import ProductService
+from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.schemas import (
     ProductCostUpdateRequest,
-    ProductDeleteResponse,
     ProductDetailResponse,
     ProductImportConfirmResponse,
     ProductImportPreviewResponse,
     ProductImportResolveSupplierRequest,
     ProductImportSupplierCandidateResponse,
+    ProductLifecycleResponse,
     ProductListItem,
+    ProductPurgeRequest,
+    ProductPurgeResponse,
     ProductSourceSupplierCandidateResponse,
     ProductUpdateRequest,
 )
@@ -29,19 +32,23 @@ SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 @router.get("", response_model=ApiResponse[PageResult[ProductListItem]])
 async def list_products(
-    _: Annotated[CurrentUser, Depends(require_permission("product:list"))],
+    current: Annotated[CurrentUser, Depends(require_permission("product:list"))],
     session: SessionDep,
     page_params: Annotated[PageParams, Depends()],
     keyword: Annotated[str | None, Query(max_length=255)] = None,
     category_id: uuid.UUID | None = None,
     source_supplier_id: uuid.UUID | None = None,
+    status: ProductStatus = ProductStatus.ACTIVE,
 ) -> ApiResponse[PageResult[ProductListItem]]:
+    if status == ProductStatus.DISABLED and "product:disable" not in current.permissions:
+        raise AppError("AUTH_FORBIDDEN", "Permission denied", 403)
     return success(
         await ProductService(session).list(
             page_params,
             keyword=keyword,
             category_id=category_id,
             source_supplier_id=source_supplier_id,
+            status=status,
         )
     )
 
@@ -146,10 +153,34 @@ async def update_product_cost(
     return success(await ProductService(session).update_cost(product_id, payload, current.user_id))
 
 
-@router.delete("/{product_id}", response_model=ApiResponse[ProductDeleteResponse])
-async def delete_product(
+@router.post(
+    "/{product_id}/commands/disable", response_model=ApiResponse[ProductLifecycleResponse]
+)
+async def disable_product(
     product_id: uuid.UUID,
-    current: Annotated[CurrentUser, Depends(require_permission("product:delete"))],
+    current: Annotated[CurrentUser, Depends(require_permission("product:disable"))],
     session: SessionDep,
-) -> ApiResponse[ProductDeleteResponse]:
-    return success(await ProductService(session).delete(product_id, current.user_id))
+) -> ApiResponse[ProductLifecycleResponse]:
+    return success(await ProductService(session).disable(product_id, current.user_id))
+
+
+@router.post(
+    "/{product_id}/commands/enable", response_model=ApiResponse[ProductLifecycleResponse]
+)
+async def enable_product(
+    product_id: uuid.UUID,
+    current: Annotated[CurrentUser, Depends(require_permission("product:disable"))],
+    session: SessionDep,
+) -> ApiResponse[ProductLifecycleResponse]:
+    return success(await ProductService(session).enable(product_id, current.user_id))
+
+
+@router.delete("/{product_id}", response_model=ApiResponse[ProductPurgeResponse])
+async def purge_product(
+    product_id: uuid.UUID,
+    payload: ProductPurgeRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("product:purge"))],
+    session: SessionDep,
+) -> ApiResponse[ProductPurgeResponse]:
+    del payload
+    return success(await ProductService(session).purge(product_id, current.user_id))

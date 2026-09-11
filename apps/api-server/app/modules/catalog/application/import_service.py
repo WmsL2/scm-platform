@@ -19,6 +19,7 @@ from app.modules.catalog.application.excel_images import (
     dispimg_image_id,
     extract_dispimg_images,
 )
+from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import (
     Product,
     ProductImportRow,
@@ -215,7 +216,6 @@ class ProductImportService:
                         set(row_supplier_sku_keys.values()), for_update=True
                     )
                     imported_count = 0
-                    restored_count = 0
                     for row in task.rows:
                         match = (
                             matches.get(row.supplier_match_id) if row.supplier_match_id else None
@@ -240,13 +240,17 @@ class ProductImportService:
                                 self._product_from_row(row, match.matched_supplier_id, actor_id)
                             )
                             imported_count += 1
-                        elif existing_product.is_deleted:
-                            self._restore_deleted_product(existing_product, actor_id)
-                            restored_count += 1
                         else:
                             raise AppError(
-                                "PRODUCT_IMPORT_DUPLICATE_PRODUCT",
-                                "A product with the same source supplier and SKU already exists",
+                                "PRODUCT_IMPORT_DISABLED_PRODUCT"
+                                if existing_product.status == ProductStatus.DISABLED
+                                else "PRODUCT_IMPORT_DUPLICATE_PRODUCT",
+                                "A disabled product with the same source supplier and SKU must be "
+                                "enabled or permanently deleted before importing"
+                                if existing_product.status == ProductStatus.DISABLED
+                                else (
+                                    "A product with the same source supplier and SKU already exists"
+                                ),
                                 409,
                             )
                     await self.session.flush()
@@ -265,7 +269,6 @@ class ProductImportService:
                 id=task.id,
                 status=task.status,
                 imported_count=imported_count,
-                restored_count=restored_count,
             )
         return response
 
@@ -455,25 +458,18 @@ class ProductImportService:
         elif sku is not None and match.matched_supplier_id is not None:
             supplier_sku_key = (match.matched_supplier_id, sku)
             existing_product = existing_products.get(supplier_sku_key)
-            if existing_product is not None and not existing_product.is_deleted:
+            if existing_product is not None and existing_product.status == ProductStatus.DISABLED:
+                errors.append("该来源供应商与SKU组合的商品已停用，请启用或永久删除后再导入")
+            elif existing_product is not None:
                 errors.append("该来源供应商与SKU组合已存在")
             elif first_excel_row is not None:
                 errors.append(f"与Excel第{first_excel_row}行的来源供应商与SKU重复")
-            elif existing_product is not None:
-                warnings.append("该来源供应商与SKU组合的已删除商品将于确认导入后恢复，Excel字段不会覆盖原商品")
         image_value = values["图片"] or ""
         if image_value.startswith("=") and row.image_storage_key is None:
             warnings.append("图片公式未找到可保存的内嵌图片，正式图片引用暂不写入")
         if values["上架日期"] and self._optional_date(values["上架日期"]) is None:
             warnings.append("上架日期无法确定年份，正式商品将暂不写入上架日期")
         return errors, warnings
-
-    @staticmethod
-    def _restore_deleted_product(product: Product, actor_id: uuid.UUID) -> None:
-        product.is_deleted = False
-        product.deleted_by = None
-        product.deleted_at = None
-        product.updated_by = actor_id
 
     def _product_from_row(
         self,

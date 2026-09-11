@@ -1,12 +1,13 @@
 import { http } from "../shared/http/runtime"
 import type {
   ProductDetail,
-  ProductDeleteResult,
   ProductImportConfirmResult,
   ProductImportPreview,
   ProductImportSupplierCandidate,
   ProductListParams,
   ProductPage,
+  ProductLifecycleResult,
+  ProductPurgeResult,
   ProductSourceSupplierCandidate,
   ProductUpdatePayload,
 } from "../types/catalog"
@@ -43,8 +44,16 @@ export const productApi = {
     return http.patch<ProductDetail, ProductUpdatePayload>(path(`/${id}`), payload)
   },
 
-  delete(id: string): Promise<ProductDeleteResult> {
-    return http.delete<ProductDeleteResult>(path(`/${id}`))
+  disable(id: string): Promise<ProductLifecycleResult> {
+    return http.post<ProductLifecycleResult>(path(`/${id}/commands/disable`))
+  },
+
+  enable(id: string): Promise<ProductLifecycleResult> {
+    return http.post<ProductLifecycleResult>(path(`/${id}/commands/enable`))
+  },
+
+  purge(id: string): Promise<ProductPurgeResult> {
+    return http.delete<ProductPurgeResult, { confirm: true }>(path(`/${id}`), { confirm: true })
   },
 
   sourceSupplierCandidates(): Promise<ProductSourceSupplierCandidate[]> {

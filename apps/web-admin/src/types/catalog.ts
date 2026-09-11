@@ -8,6 +8,8 @@ export interface CategorySummary {
   is_active: boolean
 }
 
+export type ProductStatus = "ACTIVE" | "DISABLED"
+
 export interface ProductListItem {
   id: string
   listed_at: string | null
@@ -24,6 +26,7 @@ export interface ProductListItem {
   cost_price: string
   agreement_price: string | null
   jd_price: string | null
+  status: ProductStatus
   updated_at: string
 }
 
@@ -60,6 +63,7 @@ export interface ProductListParams {
   keyword?: string
   category_id?: string
   source_supplier_id?: string
+  status?: ProductStatus
 }
 
 export interface ProductPage {
@@ -69,9 +73,14 @@ export interface ProductPage {
   page_size: number
 }
 
-export interface ProductDeleteResult {
+export interface ProductLifecycleResult {
   id: string
-  status: "deleted"
+  status: ProductStatus
+}
+
+export interface ProductPurgeResult {
+  id: string
+  status: "PURGED"
 }
 
 export interface ProductImportSupplierMatch {
@@ -146,5 +155,4 @@ export interface ProductImportConfirmResult {
   id: string
   status: "CONFIRMED"
   imported_count: number
-  restored_count: number
 }
