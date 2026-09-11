@@ -66,6 +66,14 @@ export const productApi = {
     return http.post<ProductImportPreview, FormData>(path("/imports/preview"), form)
   },
 
+  downloadImportTemplate(): Promise<Blob> {
+    return http.getBlob(path("/imports/template"))
+  },
+
+  getImportPreview(taskId: string): Promise<ProductImportPreview> {
+    return http.get<ProductImportPreview>(path(`/imports/${taskId}`))
+  },
+
   importSupplierCandidates(): Promise<ProductImportSupplierCandidate[]> {
     return http.get<ProductImportSupplierCandidate[]>(path("/imports/supplier-candidates"))
   },

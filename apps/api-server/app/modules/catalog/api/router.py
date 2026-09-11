@@ -1,7 +1,9 @@
 import uuid
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import ApiResponse, AppError, PageParams, PageResult, success
@@ -28,6 +30,9 @@ from app.modules.catalog.schemas import (
 
 router = APIRouter(prefix="/products", tags=["products"])
 SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
+PRODUCT_IMPORT_TEMPLATE_PATH = (
+    Path(__file__).resolve().parents[1] / "resources" / "product-master-template.xlsx"
+)
 
 
 @router.get("", response_model=ApiResponse[PageResult[ProductListItem]])
@@ -63,6 +68,19 @@ async def preview_product_import(
         await ProductImportService(session).preview(
             file.filename or "product-import.xlsx", await file.read(), current.user_id
         )
+    )
+
+
+@router.get("/imports/template", response_class=FileResponse)
+async def download_product_import_template(
+    _: Annotated[CurrentUser, Depends(require_permission("product:import"))],
+) -> FileResponse:
+    if not PRODUCT_IMPORT_TEMPLATE_PATH.is_file():
+        raise AppError("PRODUCT_IMPORT_TEMPLATE_UNAVAILABLE", "Import template is unavailable", 503)
+    return FileResponse(
+        PRODUCT_IMPORT_TEMPLATE_PATH,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename="商品大表模板.xlsx",
     )
 
 

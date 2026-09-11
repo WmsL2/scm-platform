@@ -118,6 +118,7 @@ class ProductImportService:
             total_rows=len(rows),
             valid_rows=0,
             invalid_rows=0,
+            imported_rows=0,
             created_by=actor_id,
             rows=rows,
         )
@@ -187,17 +188,18 @@ class ProductImportService:
             self._assert_editable_task(task, actor_id)
             assert task is not None
             await self._refresh_validation(task)
-            if task.status != "READY_TO_CONFIRM":
+            rows_to_import = [row for row in task.rows if row.is_valid and not row.is_imported]
+            if not rows_to_import:
                 raise AppError(
-                    "PRODUCT_IMPORT_NOT_READY_TO_CONFIRM",
-                    "Resolve all row, category, price and supplier errors before confirmation",
+                    "PRODUCT_IMPORT_NO_VALID_ROWS",
+                    "There are no validated rows available to import",
                     409,
                 )
             matches = {match.id: match for match in task.supplier_matches}
             try:
                 async with self.session.begin_nested():
                     row_supplier_sku_keys: dict[int, tuple[uuid.UUID, str]] = {}
-                    for row in task.rows:
+                    for row in rows_to_import:
                         match = (
                             matches.get(row.supplier_match_id) if row.supplier_match_id else None
                         )
@@ -216,7 +218,7 @@ class ProductImportService:
                         set(row_supplier_sku_keys.values()), for_update=True
                     )
                     imported_count = 0
-                    for row in task.rows:
+                    for row in rows_to_import:
                         match = (
                             matches.get(row.supplier_match_id) if row.supplier_match_id else None
                         )
@@ -262,13 +264,20 @@ class ProductImportService:
                         409,
                     ) from exc
                 raise
-            task.status = "CONFIRMED"
             task.confirmed_by = actor_id
             task.confirmed_at = datetime.now()
+            for row in rows_to_import:
+                row.is_imported = True
+                row.imported_by = actor_id
+                row.imported_at = task.confirmed_at
+            await self._refresh_validation(task)
             response = ProductImportConfirmResponse(
                 id=task.id,
                 status=task.status,
                 imported_count=imported_count,
+                imported_rows=task.imported_rows,
+                valid_rows=task.valid_rows,
+                invalid_rows=task.invalid_rows,
             )
         return response
 
@@ -381,6 +390,8 @@ class ProductImportService:
         matches = {match.id: match for match in task.supplier_matches}
         row_supplier_sku_keys: dict[int, tuple[uuid.UUID, str]] = {}
         for row in task.rows:
+            if row.is_imported:
+                continue
             match = (
                 matches.get(row.supplier_match_id)
                 if row.supplier_match_id is not None
@@ -393,9 +404,13 @@ class ProductImportService:
             set(row_supplier_sku_keys.values())
         )
         valid_rows = 0
+        imported_rows = 0
         unresolved_match = False
         first_excel_row_for_key: dict[tuple[uuid.UUID, str], int] = {}
         for row in task.rows:
+            if row.is_imported:
+                imported_rows += 1
+                continue
             supplier_sku_key = row_supplier_sku_keys.get(row.source_row_number)
             first_excel_row = (
                 first_excel_row_for_key.get(supplier_sku_key)
@@ -420,14 +435,18 @@ class ProductImportService:
             if supplier_sku_key is not None and first_excel_row is None:
                 first_excel_row_for_key[supplier_sku_key] = row.source_row_number
         task.valid_rows = valid_rows
-        task.invalid_rows = task.total_rows - valid_rows
-        task.status = (
-            "READY_TO_CONFIRM"
-            if valid_rows == task.total_rows
-            else "NEEDS_RESOLUTION"
-            if unresolved_match
-            else "VALIDATED"
-        )
+        task.imported_rows = imported_rows
+        task.invalid_rows = task.total_rows - imported_rows - valid_rows
+        if imported_rows == task.total_rows:
+            task.status = "CONFIRMED"
+        elif imported_rows:
+            task.status = "PARTIALLY_CONFIRMED"
+        elif valid_rows == task.total_rows:
+            task.status = "READY_TO_CONFIRM"
+        elif unresolved_match:
+            task.status = "NEEDS_RESOLUTION"
+        else:
+            task.status = "VALIDATED"
 
     async def _row_messages(
         self,
@@ -591,6 +610,7 @@ class ProductImportService:
             total_rows=task.total_rows,
             valid_rows=task.valid_rows,
             invalid_rows=task.invalid_rows,
+            imported_rows=task.imported_rows,
             rows=[
                 ProductImportRowResponse(
                     source_row_number=row.source_row_number,
@@ -604,6 +624,7 @@ class ProductImportService:
                     category_id=row.category_id,
                     supplier_match_id=row.supplier_match_id,
                     is_valid=row.is_valid,
+                    is_imported=row.is_imported,
                     error_message=row.error_message,
                     warning_message=row.warning_message,
                 )
