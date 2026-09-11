@@ -39,6 +39,7 @@ describe("HttpClient", () => {
       "http://api.test/api/v1/auth/login",
       expect.objectContaining({
         method: "POST",
+        credentials: "include",
         cache: "no-store",
         body: JSON.stringify({ username: "admin" }),
         headers: expect.objectContaining({
@@ -74,6 +75,60 @@ describe("HttpClient", () => {
     const client = new HttpClient({ onUnauthorized })
 
     await expect(client.get("/protected")).rejects.toBeInstanceOf(HttpError)
+    expect(onUnauthorized).toHaveBeenCalledOnce()
+  })
+
+  it("refreshes once and retries the original request with the new token", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(401, {
+        code: "AUTH_UNAUTHORIZED",
+        message: "expired",
+      }))
+      .mockResolvedValueOnce(response(200, {
+        code: "OK",
+        message: "success",
+        data: { value: "restored" },
+      }))
+    vi.stubGlobal("fetch", fetchMock)
+    let authorization = "Bearer expired-token"
+    const refreshAuthorization = vi.fn().mockImplementation(async () => {
+      authorization = "Bearer refreshed-token"
+      return true
+    })
+    const onUnauthorized = vi.fn()
+    const client = new HttpClient({
+      getAuthorization: () => authorization,
+      refreshAuthorization,
+      onUnauthorized,
+    })
+
+    await expect(client.get<{ value: string }>("/protected")).resolves.toEqual({
+      value: "restored",
+    })
+    expect(refreshAuthorization).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const retriedRequest = fetchMock.mock.calls[1]?.[1] as RequestInit
+    expect(retriedRequest.headers).toHaveProperty("Authorization", "Bearer refreshed-token")
+    expect(onUnauthorized).not.toHaveBeenCalled()
+  })
+
+  it("does not refresh a public 401 or retry after refresh failure", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response(401, {
+      code: "AUTH_UNAUTHORIZED",
+      message: "expired",
+    }))
+    vi.stubGlobal("fetch", fetchMock)
+    const refreshAuthorization = vi.fn().mockResolvedValue(false)
+    const onUnauthorized = vi.fn()
+    const client = new HttpClient({ refreshAuthorization, onUnauthorized })
+
+    await expect(client.get("/protected")).rejects.toBeInstanceOf(HttpError)
+    await expect(
+      client.post("/api/v1/auth/refresh", undefined, { authenticated: false }),
+    ).rejects.toBeInstanceOf(HttpError)
+
+    expect(refreshAuthorization).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(onUnauthorized).toHaveBeenCalledOnce()
   })
 })

@@ -37,6 +37,11 @@ describe("auth api", () => {
         token_type: "bearer",
         expires_in: 1800,
       })
+      .mockResolvedValueOnce({
+        access_token: "refreshed-access-token",
+        token_type: "bearer",
+        expires_in: 1800,
+      })
       .mockResolvedValueOnce({ status: "logged_out" })
     http.get.mockResolvedValue({
       user_id: "00000000-0000-0000-0000-000000000001",
@@ -53,12 +58,18 @@ describe("auth api", () => {
       access_token: "real-access-token",
     })
     await expect(authApi.me()).resolves.toMatchObject({ username: "real-user" })
+    await expect(authApi.refresh()).resolves.toMatchObject({
+      access_token: "refreshed-access-token",
+    })
     await expect(authApi.logout()).resolves.toEqual({ status: "logged_out" })
 
     expect(http.post).toHaveBeenNthCalledWith(1, "/api/v1/auth/login", credentials, {
       authenticated: false,
     })
     expect(http.get).toHaveBeenCalledWith("/api/v1/auth/me")
-    expect(http.post).toHaveBeenNthCalledWith(2, "/api/v1/auth/logout")
+    expect(http.post).toHaveBeenNthCalledWith(2, "/api/v1/auth/refresh", undefined, {
+      authenticated: false,
+    })
+    expect(http.post).toHaveBeenNthCalledWith(3, "/api/v1/auth/logout")
   })
 })

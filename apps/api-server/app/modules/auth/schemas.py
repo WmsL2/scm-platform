@@ -21,3 +21,4 @@ class CurrentUser(BaseModel):
     role_names: dict[str, str]
     permissions: list[str]
     permission_names: dict[str, str]
+    session_id: uuid.UUID | None = Field(default=None, exclude=True)

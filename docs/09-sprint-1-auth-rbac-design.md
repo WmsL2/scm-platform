@@ -4,9 +4,9 @@ Status: FROZEN except listed PENDING items. Auth stays inside the FastAPI Modula
 
 ## Shared contract
 
-Implementation clarification: UUID is MySQL CHAR(36) through UUIDChar36 (ADR-0006); sys_user includes token_version. Phase 1 logout is stateless.
+Implementation clarification: UUID is MySQL CHAR(36) through UUIDChar36 (ADR-0006); sys_user includes token_version. ADR-0016 supersedes the phase-1 stateless logout boundary.
 
-UUID primary keys and ID foreign keys only. Audit actor fields store user_id, never username or real name. CurrentUser is built only by Router/permission dependency; services receive an actor and never parse tokens. No cascade deletion of historical records.
+UUID primary keys and ID foreign keys only. Audit actor fields store user_id, never username or real name. CurrentUser is built only by Router/permission dependency; services receive an actor and never parse tokens. Historical business records do not cascade; ephemeral `sys_auth_session` records are the explicit exception and cascade only if a user is physically removed outside normal application behavior.
 
 ## Data dictionary
 
@@ -17,6 +17,7 @@ UUID primary keys and ID foreign keys only. Audit actor fields store user_id, ne
 | sys_permission | authorization directory | id UUID PK; permission_code varchar(128) UNIQUE; permission_name varchar(128); permission_type MENU/API/ACTION; is_deleted default false; audit fields. |
 | sys_user_role | user-role association | user_id and role_id UUID FK; UNIQUE(user_id,role_id); index role_id; creation audit. |
 | sys_role_permission | role-permission association | role_id and permission_id UUID FK; UNIQUE(role_id,permission_id); index permission_id; creation audit. |
+| sys_auth_session | revocable browser session | id UUID PK; user_id FK; current/previous Refresh Token hashes; rotation counter; activity, idle/absolute expiry and revocation fields. |
 | sys_biz_sequence | concurrency-safe number source | id UUID CHAR(36) PK; sequence_key varchar(64) UNIQUE; prefix varchar(16); next_value bigint CHECK >= 1; audit fields. |
 
 FK is RESTRICT. IDs/FKs and UNIQUE keys are indexed. Exact MySQL DDL is deferred to a future migration.
@@ -44,8 +45,8 @@ eight-digit zero-padded number, so the first supplier allocation is `SUP00000001
 The service never creates a missing sequence, reuses an issued value, or exposes an
 HTTP endpoint; Supplier Master will consume it after its field Gate is removed.
 
-Login is POST /api/v1/auth/login; current user is GET /api/v1/auth/me; logout is POST /api/v1/auth/logout. Access token is short-lived and configured via Settings. It contains only subject/user_id, token version and timing claims; it must not contain full roles, permissions, suppliers, or business snapshots. Permission changes invalidate prior authority through token-version/session invalidation checks.
+Login is POST /api/v1/auth/login; refresh is POST /api/v1/auth/refresh; current user is GET /api/v1/auth/me; logout is POST /api/v1/auth/logout. Access Token defaults to 30 minutes and contains only user/session identity, token version, unique token ID and timing claims; it must not contain roles, permissions, suppliers, or business snapshots. Refresh Token is opaque, rotating, stored only as a hash on the server and transported in an HttpOnly Cookie. Sessions expire after three days without refresh and absolutely after thirty days. Permission changes remain visible on the next request because effective permissions are loaded dynamically.
 
 ## PENDING
 
-Refresh Token, server-side session persistence and multi-device logout are not frozen and must not expand Sprint 1 without confirmation.
+Role disable policy and an administrator-facing device/session management page remain outside the current frozen scope.

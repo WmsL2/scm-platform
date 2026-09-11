@@ -1,13 +1,16 @@
-const ACCESS_TOKEN_KEY = "scm-platform.access-token"
+const LEGACY_ACCESS_TOKEN_KEY = "scm-platform.access-token"
+window.localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY)
+
+let accessToken: string | null = null
 
 export function getAccessToken(): string | null {
-  return window.localStorage.getItem(ACCESS_TOKEN_KEY)
+  return accessToken
 }
 
 export function setAccessToken(token: string): void {
-  window.localStorage.setItem(ACCESS_TOKEN_KEY, token)
+  accessToken = token
 }
 
 export function clearAccessToken(): void {
-  window.localStorage.removeItem(ACCESS_TOKEN_KEY)
+  accessToken = null
 }

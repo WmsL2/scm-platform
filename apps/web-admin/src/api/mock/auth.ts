@@ -3,6 +3,7 @@ import { getAccessToken } from "../../shared/auth/token"
 import type { CurrentUser, LoginRequest, TokenResponse } from "../../types/auth"
 
 const MOCK_TOKEN_PREFIX = "local-mock-token-"
+let mockRefreshAvailable = false
 const MOCK_USER: CurrentUser = {
   user_id: "00000000-0000-0000-0000-000000000001",
   username: "admin",
@@ -35,6 +36,22 @@ export const mockAuthApi = {
         message: "用户名或密码错误",
       })
     }
+    mockRefreshAvailable = true
+    return {
+      access_token: `${MOCK_TOKEN_PREFIX}${crypto.randomUUID()}`,
+      token_type: "bearer",
+      expires_in: 30 * 60,
+    }
+  },
+
+  async refresh(): Promise<TokenResponse> {
+    await wait(80)
+    if (!mockRefreshAvailable) {
+      throw new HttpError(401, {
+        code: "AUTH_REFRESH_INVALID",
+        message: "登录状态已失效",
+      })
+    }
     return {
       access_token: `${MOCK_TOKEN_PREFIX}${crypto.randomUUID()}`,
       token_type: "bearer",
@@ -61,6 +78,7 @@ export const mockAuthApi = {
 
   async logout(): Promise<{ status: string }> {
     await wait(100)
+    mockRefreshAvailable = false
     return { status: "logged_out" }
   },
 }

@@ -14,6 +14,7 @@ AUTH_TABLES = {
     "sys_permission",
     "sys_user_role",
     "sys_role_permission",
+    "sys_auth_session",
 }
 
 UUID_COLUMNS = {
@@ -22,6 +23,7 @@ UUID_COLUMNS = {
     "sys_permission": {"id", "created_by", "updated_by"},
     "sys_user_role": {"user_id", "role_id", "created_by"},
     "sys_role_permission": {"role_id", "permission_id", "created_by"},
+    "sys_auth_session": {"id", "user_id"},
 }
 
 
@@ -48,7 +50,7 @@ async def test_auth_schema_contract_and_active_username_unique() -> None:
                     "FROM information_schema.columns "
                     "WHERE table_schema=DATABASE() AND table_name IN "
                     "('sys_user', 'sys_role', 'sys_permission', 'sys_user_role', "
-                    "'sys_role_permission')"
+                    "'sys_role_permission', 'sys_auth_session')"
                 )
             )
         ).all()
@@ -86,11 +88,15 @@ async def test_auth_schema_contract_and_active_username_unique() -> None:
             ("sys_user_role", "role_id"): ("sys_role", "id"),
             ("sys_role_permission", "role_id"): ("sys_role", "id"),
             ("sys_role_permission", "permission_id"): ("sys_permission", "id"),
+            ("sys_auth_session", "user_id"): ("sys_user", "id"),
         }
         for key, target in expected_foreign_keys.items():
             table, column, delete_rule = foreign_keys[key]
             assert (table, column) == target
-            assert delete_rule in {"RESTRICT", "NO ACTION"}
+            if key == ("sys_auth_session", "user_id"):
+                assert delete_rule == "CASCADE"
+            else:
+                assert delete_rule in {"RESTRICT", "NO ACTION"}
 
         try:
             checks = {

@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { createPinia, setActivePinia } from "pinia"
 
-import { getAccessToken, setAccessToken } from "../shared/auth/token"
+import { clearAccessToken, getAccessToken, setAccessToken } from "../shared/auth/token"
 import type { CurrentUser } from "../types/auth"
 import { useAuthStore } from "./auth"
 
 const apiMocks = vi.hoisted(() => ({
   login: vi.fn(),
   me: vi.fn(),
+  refresh: vi.fn(),
   logout: vi.fn(),
 }))
 
@@ -28,9 +29,10 @@ const user: CurrentUser = {
 describe("auth store", () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    window.localStorage.clear()
+    clearAccessToken()
     apiMocks.login.mockReset()
     apiMocks.me.mockReset()
+    apiMocks.refresh.mockReset()
     apiMocks.logout.mockReset()
   })
 
@@ -62,6 +64,22 @@ describe("auth store", () => {
     expect(store.status).toBe("authenticated")
   })
 
+  it("restores a browser session from the HttpOnly refresh cookie", async () => {
+    apiMocks.refresh.mockResolvedValue({
+      access_token: "refreshed-token",
+      token_type: "bearer",
+      expires_in: 1800,
+    })
+    apiMocks.me.mockResolvedValue(user)
+
+    const store = useAuthStore()
+    await store.restoreSession()
+
+    expect(apiMocks.refresh).toHaveBeenCalledOnce()
+    expect(getAccessToken()).toBe("refreshed-token")
+    expect(store.isAuthenticated).toBe(true)
+  })
+
   it("continues to check permission codes rather than display names", async () => {
     setAccessToken("existing-token")
     apiMocks.me.mockResolvedValue(user)
@@ -80,6 +98,16 @@ describe("auth store", () => {
     await store.restoreSession()
 
     expect(store.isAuthenticated).toBe(false)
+    expect(store.status).toBe("anonymous")
+    expect(getAccessToken()).toBeNull()
+  })
+
+  it("clears state when the refresh cookie cannot restore a session", async () => {
+    apiMocks.refresh.mockRejectedValue(new Error("expired"))
+
+    const store = useAuthStore()
+    await store.restoreSession()
+
     expect(store.status).toBe("anonymous")
     expect(getAccessToken()).toBeNull()
   })

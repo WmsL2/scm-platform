@@ -7,11 +7,12 @@
 - [x] User logical delete：`DELETE /api/v1/admin/users/{user_id}` requires `system:user:delete`; self-delete is rejected, deletion audits `deleted_by`/`deleted_at`, increments token_version, and preserves user/role history.
 - [x] Custom role logical delete：`DELETE /api/v1/admin/roles/{role_id}` requires `system:role:delete`; built-in roles and roles assigned to an active user are rejected. Associations of logically deleted users remain as audit history but do not block role deletion.
 - [x] Profile role and permission display：`/auth/me` returns database-backed `role_names` and `permission_names`; machine `roles` and RBAC `permissions` codes remain unchanged.
+- [x] Enterprise session refresh：Revision `20260911_0021` adds `sys_auth_session`, rotating HttpOnly Refresh Tokens, three-day sliding inactivity expiry and a thirty-day absolute lifetime. Session-bound Access Tokens are revoked immediately by logout, password change, account disable or deletion.
 
-- 数据库：五张 Auth/RBAC 表，Revision `20260903_0002`。
-- API：login、me、logout。
+- 数据库：六张 Auth/RBAC 表；会话表 Revision `20260911_0021`。
+- API：login、refresh、me、logout。
 - 权限：CurrentUser、get_current_user、require_permission。
-- 安全：Argon2id、HS256、token_version。
+- 安全：Argon2id、HS256、token_version、session id、Refresh Token hash/rotation/replay revocation。
 - Merge：PR #6 已合入 `main`（Merge Commit `6f229e75`）；实现提交 `d90d519`，CI 修复提交 `066e4df`。
 - 测试：Auth Kernel 合入时 30 passed，Warnings 0；Ruff PASS，mypy PASS。
 
@@ -19,12 +20,13 @@
 
 - 实现分支：`feat/web-admin-auth-shell`。
 - [x] 登录页面和表单校验。
-- [x] Pinia Auth Store、Token 持久化和刷新恢复。
-- [x] login、me、logout API 封装。
+- [x] Pinia Auth Store、内存 Access Token 和 HttpOnly Cookie 刷新恢复。
+- [x] login、refresh、me、logout API 封装。
 - [x] 本地开发 Mock / 真实 FastAPI 配置切换，生产构建强制关闭 Mock，页面明确展示当前模式。
 - [x] 路由登录守卫、权限码守卫、401/403 统一处理。
 - [x] 企业后台 Layout、工作台、工作区 Tab、403、404。
 - [x] HTTP GET/POST/PATCH/DELETE、request ID、Bearer Token 和统一错误处理。
+- [x] 受保护请求 401 共享单次刷新并只重试一次；刷新失败才触发统一退出流程。
 - [x] 前端单元测试、typecheck 和 build。
 - [x] 开发环境显式设置 `VITE_USE_MOCK=false`，并验证真实 API 路径调用
   `/api/v1/auth/login`、`/me`、`/logout`。
@@ -77,13 +79,16 @@
 
 ## Verification
 
-- 本机 MySQL 已升级至 Revision `20260903_0002`；真实 HTTP 已验证 login、me、
-  stateless logout、错误密码、过期 Token、DISABLED 与 deleted 用户。
+- 本机 MySQL 已升级至 Revision `20260911_0021`；真实 API 测试已验证 login、refresh、me、
+  服务端 logout、令牌轮换/重放撤销、闲置/绝对过期、多标签页宽限、改密全设备失效、DISABLED 与 deleted 用户。
 - 权限拒绝与权限撤销通过 MySQL 集成测试验证；前端权限路由守卫测试已通过。
 - 临时联调用户在验证结束后删除；未新增默认账号或硬编码密码。
 - Account / Registration / Profile：Backend Ruff、mypy 通过，pytest 51 passed；
   最新 Frontend Vitest 38 passed，typecheck 与 build 通过；Alembic heads/current 为
   `20260908_0006`，Supplier schema integration test 通过。
+- Auth Session Refresh：后端完整 pytest 127 passed，Ruff 与 mypy 通过；前端 Vitest
+  42 passed，typecheck 与 production build 通过；Alembic 单 Head/current 为
+  `20260911_0021`。
 
 ## Post-Merge Hardening
 
@@ -98,9 +103,9 @@
 
 ## Pending
 
-- Refresh Token、Session、Multi-device Logout 属于未来范围，不阻塞当前 Supplier / Product 开发。
+- 管理员查看和定向撤销指定设备会话的页面尚未实现；当前改密和用户删除会撤销全部设备会话。
 - Role disable policy 尚未冻结；REJECTED username reapply / reopen policy 尚未实现。
 
 ## Next Step
 
-Auth Sprint 1 当前范围已实现并验证；未来 Auth 范围仍以 Pending 为准。后续业务模块继续使用 `CurrentUser` 与 `require_permission`，下一业务重点为 Product / Category / Pricing。
+Auth Session Refresh 已实现并验证；后续业务模块继续使用 `CurrentUser` 与 `require_permission`。如需扩展 Auth，下一项是管理员设备会话管理或 Role disable policy。
