@@ -8,21 +8,23 @@ Last Updated：2026-09-10
 - [x] `20260909_0008` / `20260909_0009` 创建并对齐 `scm_category` 与 `scm_product`
 - [x] `20260910_0013` 创建 Product Import Staging、供应商匹配决策及任务状态表；`20260910_0014` 支持 Product 直接保存三级类目原文；`20260910_0015` 增加导入图片暂存键
 - [x] Product → Category、Product → Source Supplier 均为 `RESTRICT` 外键
+- [x] `20260911_0018` 增加 `UNIQUE(source_supplier_id, sku)`；迁移会先拒绝历史重复键，禁止静默清理
 - [x] 未创建独立 Supplier Product Quote 表或报价历史表
 
 ## Backend
 - [x] Pricing Service（定价服务）已实现
-- [x] Product 查询、详情与成本价更新 API
+- [x] Product 查询、详情、基础资料编辑与成本价更新 API
 - [x] Product 列表支持按 `source_supplier_id` 精确过滤，作为供应商详情页“相关商品”的唯一数据入口
 - [x] 成本价更新在同一事务中调用 Pricing Service 并保存全部派生值
-- [x] 固定 32 列商品大表导入、直接保存类目/价格正式值、保存 WPS/Excel 内嵌图片、严格供应商精确匹配、预览和全批次 Confirm
+- [x] 固定 32 列商品大表导入、直接保存类目/价格正式值、保存 WPS/Excel 内嵌图片、严格供应商精确匹配、SKU 防重预览和全批次 Confirm
+- [x] Supplier 为 `STOPPED` / `BLACKLIST` / 逻辑删除时，关联 Product 不能列表、详情、编辑或更新成本价；恢复 `NORMAL` 后自动恢复可见
 
 ## Frontend
-- [x] 商品列表、详情（含本地图片预览）、按权限显示的成本价更新及导入预览/供应商解析页面；商品列表首列显示本地图片缩略图及无图/加载失败占位，供应商详情可跳转至其相关商品的筛选列表
+- [x] 商品列表、详情（含本地图片预览）、按权限显示的基础资料编辑/成本价更新及导入预览/供应商解析页面；商品列表首列显示本地图片缩略图及无图/加载失败占位，供应商详情可跳转至其相关商品的筛选列表
 - [x] 统一 API 请求禁用浏览器缓存，商品导入 Confirm 后重新加载列表可立即读取最新商品数据
 
 ## Permissions
-- [x] `product:list`、`product:detail`、`product:cost:update`、`product:import`、`product:import:resolve`
+- [x] `product:list`、`product:detail`、`product:update`、`product:cost:update`、`product:import`、`product:import:resolve`
 
 ## Tests
 - [x] Pricing Unit Tests（定价单元测试）已完成
@@ -43,7 +45,8 @@ Last Updated：2026-09-10
 - `scm_product.category_id CHAR(36) NOT NULL`；正式 Confirm 必须完成类目解析，Product 通过该关系取得 `deduction_rate`；
 - 一期不强制 SPU/SKU；
 - 真实整理后商品大表已取得；系统 `id` 为商品主键；
-- `sku`、`model`、`product_name`、`brand + model`、货号、69码均不设业务 UNIQUE；
+- `source_supplier_id + sku` 为 Product 防重业务键，并由数据库 UNIQUE 强制；SKU 为空的历史数据不在本次 Migration 中自动改写，新的导入与编辑不允许 SKU 为空；
+- `model`、`product_name`、`brand + model`、货号、69码均不设业务 UNIQUE；
 - 69码按源文本原样保存，不拆分；
 - 类目来源规则已冻结为“商城三级品类维表”和“工业品产品线”两类；真实数据预检已完成：商城 `UNIQUE(source_type, level3_external_id)` 通过，商城同名称路径不同 external ID 不得被全局路径 UNIQUE 约束；工业品完整路径仅作导入去重规则。蓝色三级类目扣点 5%，其余当前规则 8%；
 - Pricing Rule 已冻结：Decimal、4 位小数；前端可计算并提交，后端必须按正式类目规则重算校验；
@@ -55,4 +58,4 @@ Last Updated：2026-09-10
 
 ## Current Gate
 
-`IMPLEMENTED / PRODUCT_IMPORT_DIRECT_VALUE_MODE`：固定模板 Staging、Supplier Matching、预览、权限和全批次 Confirm 已实现。依据 ADR-0010，类目和价格直接以大表正式值写入 Product，空的 `scm_category` 不阻止 Confirm；空或不合格供应商仍不得绕过导入校验。Category Source Loader、Product 删除策略及无受控类目关联 Product 的独立成本价维护仍属后续范围。
+`IMPLEMENTED / PRODUCT_IMPORT_DIRECT_VALUE_MODE`：固定模板 Staging、Supplier Matching、供应商 + SKU 防重预览、权限和全批次 Confirm 已实现；Product 基础资料编辑与 Supplier 合作状态可见性联动已实现。依据 ADR-0010，类目和价格直接以大表正式值写入 Product，空的 `scm_category` 不阻止 Confirm；空或不合格供应商仍不得绕过导入校验。Category Source Loader、Product 删除策略及无受控类目关联 Product 的独立成本价维护仍属后续范围。

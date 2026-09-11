@@ -57,7 +57,7 @@ Supplier Excel -> Supplier Import -> scm_supplier
 
 ## 唯一键
 
-系统生成的 `id` 是主键。`model`、`sku`、`product_name`、`brand + model`、货号及源69码文本均不设业务 UNIQUE；不得自行假设型号或品牌+型号唯一。
+系统生成的 `id` 是主键。`source_supplier_id + sku` 是 Product 防重业务键，并由数据库 UNIQUE 强制；`model`、`product_name`、`brand + model`、货号及源69码文本均不设业务 UNIQUE。不得自行假设型号或品牌+型号唯一。
 
 ## 当前成本价
 

@@ -71,6 +71,7 @@ class RoleResponse(BaseModel):
     id: uuid.UUID
     role_code: str
     role_name: str
+    is_builtin: bool
     permission_ids: list[uuid.UUID]
 
 

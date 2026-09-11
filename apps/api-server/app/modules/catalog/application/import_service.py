@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from io import BytesIO
 
 from openpyxl import load_workbook
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError
@@ -192,20 +193,37 @@ class ProductImportService:
                     409,
                 )
             matches = {match.id: match for match in task.supplier_matches}
-            for row in task.rows:
-                match = matches.get(row.supplier_match_id) if row.supplier_match_id else None
-                if match is None or match.matched_supplier_id is None:
-                    raise RuntimeError("A ready Product Import row is missing a resolved relation")
-                supplier = await self.supplier_repository.active_by_id(match.matched_supplier_id)
-                if supplier is None or not self._supplier_is_eligible(supplier):
+            try:
+                async with self.session.begin_nested():
+                    for row in task.rows:
+                        match = (
+                            matches.get(row.supplier_match_id) if row.supplier_match_id else None
+                        )
+                        if match is None or match.matched_supplier_id is None:
+                            raise RuntimeError(
+                                "A ready Product Import row is missing a resolved relation"
+                            )
+                        supplier = await self.supplier_repository.active_by_id(
+                            match.matched_supplier_id
+                        )
+                        if supplier is None or not self._supplier_is_eligible(supplier):
+                            raise AppError(
+                                "PRODUCT_IMPORT_REFERENCE_CHANGED",
+                                "A source supplier changed after preview; preview the batch again",
+                                409,
+                            )
+                        self.session.add(
+                            self._product_from_row(row, match.matched_supplier_id, actor_id)
+                        )
+                    await self.session.flush()
+            except IntegrityError as exc:
+                if "uq_scm_product_source_supplier_sku" in str(exc.orig).lower():
                     raise AppError(
-                        "PRODUCT_IMPORT_REFERENCE_CHANGED",
-                        "A source supplier changed after preview; preview the batch again",
+                        "PRODUCT_IMPORT_DUPLICATE_PRODUCT",
+                        "A product with the same source supplier and SKU already exists",
                         409,
-                    )
-                self.session.add(
-                    self._product_from_row(row, match.matched_supplier_id, actor_id)
-                )
+                    ) from exc
+                raise
             task.status = "CONFIRMED"
             task.confirmed_by = actor_id
             task.confirmed_at = datetime.now()
@@ -321,10 +339,35 @@ class ProductImportService:
 
     async def _refresh_validation(self, task: ProductImportTask) -> None:
         matches = {match.id: match for match in task.supplier_matches}
+        row_supplier_sku_keys: dict[int, tuple[uuid.UUID, str]] = {}
+        for row in task.rows:
+            match = (
+                matches.get(row.supplier_match_id)
+                if row.supplier_match_id is not None
+                else None
+            )
+            sku = self._optional(row.source_data["sku"])
+            if match is not None and match.matched_supplier_id is not None and sku is not None:
+                row_supplier_sku_keys[row.source_row_number] = (match.matched_supplier_id, sku)
+        existing_supplier_sku_keys = await self.repository.existing_supplier_sku_keys(
+            set(row_supplier_sku_keys.values())
+        )
         valid_rows = 0
         unresolved_match = False
+        first_excel_row_for_key: dict[tuple[uuid.UUID, str], int] = {}
         for row in task.rows:
-            errors, warnings = await self._row_messages(row, matches)
+            supplier_sku_key = row_supplier_sku_keys.get(row.source_row_number)
+            first_excel_row = (
+                first_excel_row_for_key.get(supplier_sku_key)
+                if supplier_sku_key is not None
+                else None
+            )
+            errors, warnings = await self._row_messages(
+                row,
+                matches,
+                existing_supplier_sku_keys=existing_supplier_sku_keys,
+                first_excel_row=first_excel_row,
+            )
             row.error_message = "；".join(errors) or None
             row.warning_message = "；".join(warnings) or None
             row.is_valid = not errors
@@ -334,6 +377,8 @@ class ProductImportService:
             )
             if match is not None and match.match_status != SupplierMatchStatus.MATCHED:
                 unresolved_match = True
+            if supplier_sku_key is not None and first_excel_row is None:
+                first_excel_row_for_key[supplier_sku_key] = row.source_row_number
         task.valid_rows = valid_rows
         task.invalid_rows = task.total_rows - valid_rows
         task.status = (
@@ -345,12 +390,20 @@ class ProductImportService:
         )
 
     async def _row_messages(
-        self, row: ProductImportRow, matches: dict[uuid.UUID, ProductImportSupplierMatch]
+        self,
+        row: ProductImportRow,
+        matches: dict[uuid.UUID, ProductImportSupplierMatch],
+        *,
+        existing_supplier_sku_keys: set[tuple[uuid.UUID, str]],
+        first_excel_row: int | None,
     ) -> tuple[list[str], list[str]]:
         values = row.source_data
         errors: list[str] = []
         warnings: list[str] = []
         self._required_decimal(row, "*成本价", errors)
+        sku = self._optional(values["sku"])
+        if sku is None:
+            errors.append("SKU不能为空")
         for header in _DIRECT_DECIMAL_HEADERS:
             if header == "*成本价":
                 continue
@@ -362,6 +415,12 @@ class ProductImportService:
             errors.append("供应商不能为空")
         elif match is None or match.match_status != SupplierMatchStatus.MATCHED:
             errors.append("来源供应商尚未解析")
+        elif sku is not None and match.matched_supplier_id is not None:
+            supplier_sku_key = (match.matched_supplier_id, sku)
+            if supplier_sku_key in existing_supplier_sku_keys:
+                errors.append("该来源供应商与SKU组合已存在")
+            elif first_excel_row is not None:
+                errors.append(f"与Excel第{first_excel_row}行的来源供应商与SKU重复")
         image_value = values["图片"] or ""
         if image_value.startswith("=") and row.image_storage_key is None:
             warnings.append("图片公式未找到可保存的内嵌图片，正式图片引用暂不写入")
@@ -379,13 +438,16 @@ class ProductImportService:
         cost_price = self._decimal_or_none(self._import_value(row, "*成本价"))
         if cost_price is None:
             raise RuntimeError("A ready Product Import row is missing a cost price")
+        sku = self._optional(values["sku"])
+        if sku is None:
+            raise RuntimeError("A ready Product Import row is missing an SKU")
         image_reference = self._image_reference(row)
         return Product(
             listed_at=self._optional_date(values["上架日期"]),
             brand=self._optional(values["品牌"]),
             image_reference=self._optional(image_reference),
             model=self._optional(values["型号"]),
-            sku=self._optional(values["sku"]),
+            sku=sku,
             product_name=self._optional(values["商品名称"]),
             category_id=None,
             category_level1_name=self._optional(values["一级类目"]),

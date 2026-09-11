@@ -73,6 +73,9 @@ class Product(Base):
     __table_args__ = (
         Index("ix_scm_product_category_id", "category_id"),
         Index("ix_scm_product_source_supplier_id", "source_supplier_id"),
+        UniqueConstraint(
+            "source_supplier_id", "sku", name="uq_scm_product_source_supplier_sku"
+        ),
         Index("ix_scm_product_listed_at", "listed_at"),
         Index("ix_scm_product_brand", "brand"),
         Index("ix_scm_product_model", "model"),

@@ -3,7 +3,7 @@
 状态：PARTIALLY SUPERSEDED BY ADR-0010
 范围：一期商品、三级类目与当前价格快照的数据库结构评审稿；不包含 Migration、ORM、API、UI 或 Pricing Service。
 
-> 2026-09-10 起，ADR-0010 替代本评审中关于固定商品大表导入必须解析 `category_id`、不得保留三级类目原文、以及导入必须按公式重算价格的结论。实际实现以 `20260910_0014` 为准：Product 直接保存三级类目原文，`category_id` 可空；导入直接保存 Excel 价格值。Pricing Service 仍用于单独成本价更新。
+> 2026-09-10 起，ADR-0010 替代本评审中关于固定商品大表导入必须解析 `category_id`、不得保留三级类目原文、以及导入必须按公式重算价格的结论。实际实现以 `20260910_0014` 为准：Product 直接保存三级类目原文，`category_id` 可空；导入直接保存 Excel 价格值。Pricing Service 仍用于单独成本价更新。2026-09-11 的已确认补丁进一步冻结 `source_supplier_id + sku` 为 Product 防重业务键，见 `20260911_0018`。
 
 ## 术语与评审结论
 
@@ -15,7 +15,7 @@
 ### FROZEN 基线
 
 - 一行整理后的商品大表等于一条具体正式 `scm_product`；系统 `id` 是唯一主键，一期不强制 SPU/SKU。
-- `model`、`sku`、`product_name`、`brand + model`、货号与69码均不设业务 UNIQUE；69码以原始文本保存，不拆颜色、不限制 13 位数字。
+- `source_supplier_id + sku` 为 Product 防重业务键，并以数据库 UNIQUE 强制；`model`、`product_name`、`brand + model`、货号与69码仍不设业务 UNIQUE。69码以原始文本保存，不拆颜色、不限制 13 位数字。
 - Product 与 Supplier Master 是独立领域。商品大表“供应商”列用于解析来源供应商；正式 Product 保存 `source_supplier_id`。`cost_price` 是 Product 当前成本价和当前供应商报价，不创建独立 Quote 领域。
 - Product 通过 `category_id` 查询 Category 的 `deduction_rate`，并保存本次使用的 `deduction_rate` 快照。
 - 所有金额和比率计算使用 Decimal、结果保留 4 位小数；派生价格结果需要正式保存。后端按 Category 规则重算并校验前端值。
@@ -38,7 +38,7 @@
 | Product logical delete | 已冻结资料没有 Product 删除、恢复、审计留存或查询过滤规则。 | BUSINESS_DECISION_REQUIRED | C1 不增加 `is_deleted`、`deleted_by`、`deleted_at`。 | NO（删除模型不进入 C1） |
 | Category logical / physical delete | 现有来源只有“有效标记”，没有删除、恢复或历史保留语义。 | BUSINESS_DECISION_REQUIRED | C1 仅保留 `is_active`；不新增逻辑删除列，不定义物理删除 API。 | NO（删除模型不进入 C1） |
 | Product → Category delete action | Cascade 会删除正式 Product，违反正式主数据保留原则；现有资料未把该动作提升为业务冻结规则。 | RECOMMENDED | `ON DELETE RESTRICT`；不得使用 `CASCADE`。 | NO |
-| `source_supplier_id` | ADR-0008 已接受；Confirm 仅在来源供应商已解析且仍有效时写正式 Product。 | FROZEN | `CHAR(36) NOT NULL`、索引、FK → `scm_supplier.id ON DELETE RESTRICT`、非唯一；仅表示 Source Supplier。 | NO |
+| `source_supplier_id` | ADR-0008 已接受；Confirm 仅在来源供应商已解析且仍有效时写正式 Product。 | FROZEN | `CHAR(36) NOT NULL`、索引、FK → `scm_supplier.id ON DELETE RESTRICT`；单独不唯一，但与 `sku` 组成 Product 防重唯一键。 | NO |
 | `brand` / `model` / `product_name` | 32 列最新商品大表确认字段语义与非唯一性，但没有业务必填规则。 | RECOMMENDED | `NULL`；不得因样例值齐全而改为 NOT NULL。 | NO |
 | `cost_price` | 业务确认它就是当前供应商报价；正式 Product 的当前价格计算以它为基础。 | FROZEN | `DECIMAL(18,4) NOT NULL`；供应商新报价直接更新此值并重算派生价格。 | NO |
 | `jd_price` / `jd_self_operated_price` | 是价格计算输入；现有资料冻结了公式和除零校验，未冻结所有 Product 都必须拥有这两项输入。 | RECOMMENDED | `NULL`；Pricing 保存/Confirm 时再按所用公式校验需要的输入。 | NO |

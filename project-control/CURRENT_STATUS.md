@@ -3,7 +3,7 @@
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
-日期：2026-09-10
+日期：2026-09-11
 
 ## Repository
 
@@ -19,7 +19,7 @@ Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Su
 Sprint 1 — Auth/RBAC + Supplier
 
 状态：IN_PROGRESS
-进度：Auth Kernel DONE；Web Admin Auth DONE / REAL API VERIFIED；Business Sequence DONE / IMPLEMENTED（Revision `20260907_0003`）；Supplier Master Backend DONE / MERGED via PR #13（Revision `20260907_0004`）；Supplier Delete & Import Patch MERGED / IMPLEMENTED（Revision `20260908_0005`）；Supplier Name Uniqueness / Deleted-Record Recovery IMPLEMENTED（Revision `20260910_0016`）；Account / Registration / Profile IMPLEMENTED / VERIFIED（Revision `20260908_0006`）；Custom Role Create IMPLEMENTED（Revision `20260908_0007`）；Post-Merge P1 Transaction / Validation Hardening VERIFIED（无 Migration）；Product Master 与 Product Import IMPLEMENTED（Revision `20260909_0008` → `20260910_0015`）。当前 Alembic 迁移链为单 Head：`20260907_0004` → `20260908_0005` → `20260908_0006` → `20260908_0007` → `20260909_0008` → `20260909_0009` → `20260910_0010`（用户逻辑删除）→ `20260910_0013` → `20260910_0014` → `20260910_0015` → `20260910_0016`（供应商名称唯一）。分支与合入状态以 GitHub / `main` 历史为准。
+进度：Auth Kernel DONE；Web Admin Auth DONE / REAL API VERIFIED；Business Sequence DONE / IMPLEMENTED（Revision `20260907_0003`）；Supplier Master Backend DONE / MERGED via PR #13（Revision `20260907_0004`）；Supplier Delete & Import Patch MERGED / IMPLEMENTED（Revision `20260908_0005`）；Supplier Name Uniqueness / Deleted-Record Recovery IMPLEMENTED（Revision `20260910_0016`）；Account / Registration / Profile IMPLEMENTED / VERIFIED（Revision `20260908_0006`）；Custom Role Create / Safe Delete IMPLEMENTED（Revision `20260908_0007`、`20260911_0018`）；Post-Merge P1 Transaction / Validation Hardening VERIFIED（无 Migration）；Product Master、Import、防重、基础资料编辑及供应商合作状态联动 IMPLEMENTED（Revision `20260909_0008` → `20260911_0018`）。当前 Alembic 迁移链为单 Head：`20260907_0004` → `20260908_0005` → `20260908_0006` → `20260908_0007` → `20260909_0008` → `20260909_0009` → `20260910_0010`（用户逻辑删除）→ `20260910_0013` → `20260910_0014` → `20260910_0015` → `20260910_0016`（供应商名称唯一）→ `20260910_0017`（合作状态恢复）→ `20260911_0018`（商品防重、编辑与角色删除权限）。分支与合入状态以 GitHub / `main` 历史为准。
 
 ## 已冻结
 
@@ -43,10 +43,10 @@ Sprint 1 — Auth/RBAC + Supplier
 
 ## 下一步
 
-- 主任务：Product Import 已实现固定 32 列 Staging、类目/价格直接保存、WPS/Excel 内嵌图片相对本地保存、来源供应商精确匹配、预览、人工解析和原子 Confirm（Revision `20260910_0015`，ADR-0010/0011）。
+- 主任务：Product Import 已实现固定 32 列 Staging、类目/价格直接保存、WPS/Excel 内嵌图片相对本地保存、来源供应商精确匹配、预览、人工解析、供应商 + SKU 防重和原子 Confirm（Revision `20260911_0018`，ADR-0010/0011）。
 - 后续任务：准备真实商品大表需要的有效 Supplier Master，并处理 Excel 的空供应商；类目 Source Loader 不再是商品 Confirm 前置条件。
 - 业务冻结：Supplier Product Quote 已取消；后续供应商新报价直接更新正式 Product 的 `cost_price`，并原子重算派生价格；不创建报价历史、有效期或比价模块。
-- Auth 后续范围：Refresh Token、Session、Multi-device Logout 与 Role Delete / disable policy 仍待后续冻结；User Logical Delete 已实现，Profile 与顶部当前角色已显示数据库角色、权限中文名称。
+- Auth 后续范围：Refresh Token、Session、Multi-device Logout 与 Role disable policy 仍待后续冻结；User Logical Delete 与 Custom Role Safe Delete 已实现，Profile 与顶部当前角色已显示数据库角色、权限中文名称。
 
 ## Blocker
 
@@ -60,8 +60,8 @@ Sprint 1 — Auth/RBAC + Supplier
 - Business Sequence：`sys_biz_sequence` Migration、并发安全取号服务与 MySQL 并发测试已完成；分支与合入状态以 GitHub / `main` 历史为准。
 - Supplier：Backend MERGED / Frontend REAL_API_IMPLEMENTED；Delete & Import Patch MERGED / IMPLEMENTED（Revision `20260908_0005`），新增逻辑删除、`supplier:delete`、Excel 模板/校验预览和 Web Admin 控制。Name Uniqueness Patch IMPLEMENTED（Revision `20260910_0016`）：活动同名创建/编辑受阻，逻辑删除同名记录可恢复覆盖；Excel 活动重名/表内重名按行提示，无错误文件自动导入。Import Confirm Integrity Fix IMPLEMENTED：确认时直接锁定批次行、flush 并核验实际处理数后才置为成功；历史异常确认批次不自动重放。
 - Auth/RBAC：Auth Sprint 1 当前范围 IMPLEMENTED / VERIFIED（Revision `20260908_0006`），包括注册审批、用户角色/角色权限管理、动态权限目录、Profile 与修改密码；Web Admin UI Optimization 分支已完成内部 UUID 隐藏、中文用户状态、角色名称展示（只读 `role_names` 响应字段）、待审批数字角标与审批历史列表的前后端本地验证；角色只可分配给 `ENABLED` 用户，浏览器验收待完成；Refresh Token、Session、Multi-device Logout 仍属未来范围。
-- Role Management：自定义角色创建 IMPLEMENTED（Revision `20260908_0007`）。新增 `system:role:create`，角色编码不可修改且符合小写英文/数字/下划线规范，角色初始无权限；系统管理员内置角色存在时由迁移自动获得创建权限。角色编辑、停用与删除仍属未来范围。
+- Role Management：自定义角色创建 IMPLEMENTED（Revision `20260908_0007`）；安全删除 IMPLEMENTED（Revision `20260911_0018`）。仅未分配给用户的自定义角色可逻辑删除；内置角色、仍有关联用户的角色一律拒绝删除。角色编辑与停用仍属未来范围。
 - Post-Merge Hardening：Request transaction ownership、Service caller-owned transaction participation、Account association ID 幂等去重与 Supplier UUID Router validation 已验证；ADR-0007 冻结事务规则，无 Migration 变化。
-- Catalog：`IMPLEMENTED / PRODUCT_IMPORT_DIRECT_VALUE_MODE`；固定商品大表直接保存三级类目文字和价格值，`source_supplier_id` 仍是正式关系；Product 列表、详情、导入预览、供应商人工解析和原子 Confirm 已可用，真实类目源数据无需作为 Confirm 前置条件。Supplier Detail Related Products IMPLEMENTED：`product:list` 可按来源供应商精确筛选正式商品。
+- Catalog：`IMPLEMENTED / PRODUCT_IMPORT_DIRECT_VALUE_MODE`；固定商品大表直接保存三级类目文字和价格值，`source_supplier_id` 是正式关系；来源供应商 + SKU 为 Product 防重业务键。Product 列表、详情、受控基础资料编辑、导入预览、供应商人工解析和原子 Confirm 已可用，真实类目源数据无需作为 Confirm 前置条件。Supplier Detail Related Products IMPLEMENTED：`product:list` 可按来源供应商精确筛选正式商品；供应商停用/拉黑时关联商品不可查询或维护，恢复合作后自动恢复可见。
 - Product Cost Pricing：`cost_price` 是当前成本价和当前供应商报价，不建设 `scm_supplier_product_quote`；成本价更新已受 `product:cost:update` 保护，并原子重算已冻结派生值。
 - Web Admin Data Refresh：统一 API 客户端已设置 `cache: no-store`；新增、编辑、删除和导入确认后的页面重新加载不会复用浏览器中的旧 GET 响应，前端测试、类型检查和生产构建已验证。

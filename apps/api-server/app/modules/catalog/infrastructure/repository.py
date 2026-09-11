@@ -1,12 +1,14 @@
 import uuid
 from typing import cast
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.common.contracts import PageParams
 from app.modules.catalog.infrastructure.models import Category, Product, ProductImportTask
+from app.modules.supplier.domain.rules import CooperationStatus
+from app.modules.supplier.infrastructure.models import Supplier
 
 
 class ProductRepository:
@@ -14,11 +16,24 @@ class ProductRepository:
         self.session = session
 
     async def by_id(self, product_id: uuid.UUID) -> Product | None:
-        statement = select(Product).where(Product.id == product_id)
+        statement = select(Product).join(Supplier).where(
+            Product.id == product_id,
+            Supplier.is_deleted.is_(False),
+            Supplier.cooperation_status == CooperationStatus.NORMAL,
+        )
         return cast(Product | None, await self.session.scalar(statement))
 
     async def by_id_for_update(self, product_id: uuid.UUID) -> Product | None:
-        statement = select(Product).where(Product.id == product_id).with_for_update()
+        statement = (
+            select(Product)
+            .join(Supplier)
+            .where(
+                Product.id == product_id,
+                Supplier.is_deleted.is_(False),
+                Supplier.cooperation_status == CooperationStatus.NORMAL,
+            )
+            .with_for_update()
+        )
         return cast(Product | None, await self.session.scalar(statement))
 
     async def category_by_id(self, category_id: uuid.UUID) -> Category | None:
@@ -63,6 +78,30 @@ class ProductRepository:
         )
         return cast(ProductImportTask | None, await self.session.scalar(statement))
 
+    async def existing_supplier_sku_keys(
+        self, keys: set[tuple[uuid.UUID, str]]
+    ) -> set[tuple[uuid.UUID, str]]:
+        if not keys:
+            return set()
+        statement = select(Product.source_supplier_id, Product.sku).where(
+            tuple_(Product.source_supplier_id, Product.sku).in_(keys)
+        )
+        return {
+            (supplier_id, sku)
+            for supplier_id, sku in (await self.session.execute(statement)).all()
+            if sku is not None
+        }
+
+    async def other_product_with_supplier_sku(
+        self, *, product_id: uuid.UUID, supplier_id: uuid.UUID, sku: str
+    ) -> Product | None:
+        statement = select(Product).where(
+            Product.id != product_id,
+            Product.source_supplier_id == supplier_id,
+            Product.sku == sku,
+        )
+        return cast(Product | None, await self.session.scalar(statement))
+
     async def list(
         self,
         page_params: PageParams,
@@ -71,8 +110,16 @@ class ProductRepository:
         category_id: uuid.UUID | None,
         source_supplier_id: uuid.UUID | None,
     ) -> tuple[list[Product], int]:
-        statement: Select[tuple[Product]] = select(Product)
-        count_statement = select(func.count()).select_from(Product)
+        visible_supplier_criteria = (
+            Supplier.is_deleted.is_(False),
+            Supplier.cooperation_status == CooperationStatus.NORMAL,
+        )
+        statement: Select[tuple[Product]] = select(Product).join(Supplier).where(
+            *visible_supplier_criteria
+        )
+        count_statement = (
+            select(func.count()).select_from(Product).join(Supplier).where(*visible_supplier_criteria)
+        )
         if keyword:
             criteria = or_(
                 Product.brand.contains(keyword),

@@ -9,6 +9,7 @@ export const accountApi = {
   deleteUser: (id: string) => http.delete<{ status: string }>(`/api/v1/admin/users/${id}`),
   roles: () => http.get<AccountRole[]>("/api/v1/admin/roles"),
   createRole: (payload: RoleCreateRequest) => http.post<AccountRole>("/api/v1/admin/roles", payload),
+  deleteRole: (id: string) => http.delete<{ status: string }>(`/api/v1/admin/roles/${id}`),
   setRolePermissions: (id: string, permission_ids: string[]) => http.put<AccountRole>(`/api/v1/admin/roles/${id}/permissions`, { permission_ids }),
   permissions: () => http.get<Permission[]>("/api/v1/admin/permissions"),
   registrations: () => http.get<Page<AccountUser>>("/api/v1/admin/registration-requests"),

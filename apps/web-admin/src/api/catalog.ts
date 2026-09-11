@@ -6,6 +6,8 @@ import type {
   ProductImportSupplierCandidate,
   ProductListParams,
   ProductPage,
+  ProductSourceSupplierCandidate,
+  ProductUpdatePayload,
 } from "../types/catalog"
 
 function path(suffix = ""): string {
@@ -34,6 +36,14 @@ export const productApi = {
     return http.patch<ProductDetail, { cost_price: string }>(path(`/${id}/cost-price`), {
       cost_price: costPrice,
     })
+  },
+
+  update(id: string, payload: ProductUpdatePayload): Promise<ProductDetail> {
+    return http.patch<ProductDetail, ProductUpdatePayload>(path(`/${id}`), payload)
+  },
+
+  sourceSupplierCandidates(): Promise<ProductSourceSupplierCandidate[]> {
+    return http.get<ProductSourceSupplierCandidate[]>(path("/source-supplier-candidates"))
   },
 
   previewImport(file: File): Promise<ProductImportPreview> {

@@ -110,6 +110,33 @@ export interface ProductImportSupplierCandidate {
   main_brands: string
 }
 
+export interface ProductSourceSupplierCandidate {
+  id: string
+  supplier_code: string
+  supplier_name: string
+  main_brands: string
+}
+
+export interface ProductUpdatePayload {
+  listed_at: string | null
+  brand: string | null
+  image_reference: string | null
+  model: string | null
+  sku: string
+  product_name: string | null
+  item_number: string | null
+  jd_same_product_url: string | null
+  purchasing_agent: string | null
+  source_supplier_id: string
+  barcode_text: string | null
+  product_specification: string | null
+  selling_points: string | null
+  remark: string | null
+  restricted_regions: string | null
+  reference_url: string | null
+  storefront_type: string | null
+}
+
 export interface ProductImportConfirmResult {
   id: string
   status: "CONFIRMED"

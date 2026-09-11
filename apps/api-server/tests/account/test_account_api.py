@@ -226,6 +226,7 @@ async def test_admin_creates_custom_role_with_unique_code_and_name() -> None:
                 "id": str(role_id),
                 "role_code": role_code,
                 "role_name": role_name,
+                "is_builtin": False,
                 "permission_ids": [],
             }
             duplicate_code = await client.post(
@@ -258,6 +259,73 @@ async def test_admin_creates_custom_role_with_unique_code_and_name() -> None:
     finally:
         await _cleanup(
             [admin_id, unprivileged_id], [admin_role, *([role_id] if role_id else [])]
+        )
+
+
+async def test_admin_deletes_only_unassigned_custom_roles() -> None:
+    admin_id, admin_role = await _admin()
+    custom_role, assigned_role, builtin_role, assigned_user = (
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
+    headers = {"Authorization": f"Bearer {create_token(admin_id, 1)}"}
+    try:
+        async with SessionLocal() as session:
+            session.add_all(
+                [
+                    Role(id=custom_role, role_code=f"deletable-{custom_role}", role_name="deletable"),
+                    Role(id=assigned_role, role_code=f"assigned-{assigned_role}", role_name="assigned"),
+                    Role(
+                        id=builtin_role,
+                        role_code=f"builtin-{builtin_role}",
+                        role_name="builtin",
+                        is_builtin=True,
+                    ),
+                    User(
+                        id=assigned_user,
+                        username=f"role-assignee-{assigned_user}",
+                        password_hash=hash_password("secret"),
+                    ),
+                    UserRole(user_id=assigned_user, role_id=assigned_role),
+                ]
+            )
+            await session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            deleted = await client.delete(f"/api/v1/admin/roles/{custom_role}", headers=headers)
+            assert deleted.status_code == 200
+            assert deleted.json()["data"] == {"status": "deleted"}
+
+            assigned = await client.delete(f"/api/v1/admin/roles/{assigned_role}", headers=headers)
+            assert assigned.status_code == 409
+            assert assigned.json()["code"] == "ACCOUNT_ROLE_ASSIGNED_DELETE_FORBIDDEN"
+
+            builtin = await client.delete(f"/api/v1/admin/roles/{builtin_role}", headers=headers)
+            assert builtin.status_code == 409
+            assert builtin.json()["code"] == "ACCOUNT_BUILTIN_ROLE_DELETE_FORBIDDEN"
+
+        async with SessionLocal() as session:
+            assignee = await session.get(User, assigned_user)
+            assert assignee is not None
+            assignee.is_deleted = True
+            await session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            deleted_assignee_role = await client.delete(
+                f"/api/v1/admin/roles/{assigned_role}", headers=headers
+            )
+            assert deleted_assignee_role.status_code == 200
+
+        async with SessionLocal() as session:
+            role = await session.get(Role, custom_role)
+            assert role is not None and role.is_deleted is True and role.updated_by == admin_id
+            role = await session.get(Role, assigned_role)
+            assert role is not None and role.is_deleted is True and role.updated_by == admin_id
+    finally:
+        await _cleanup(
+            [admin_id, assigned_user], [admin_role, custom_role, assigned_role, builtin_role]
         )
 
 
