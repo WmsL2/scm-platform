@@ -188,3 +188,4 @@ class ProductImportConfirmResponse(BaseModel):
     id: uuid.UUID
     status: str
     imported_count: int
+    restored_count: int

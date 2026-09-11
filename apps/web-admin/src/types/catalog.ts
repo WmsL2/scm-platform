@@ -146,4 +146,5 @@ export interface ProductImportConfirmResult {
   id: string
   status: "CONFIRMED"
   imported_count: number
+  restored_count: number
 }

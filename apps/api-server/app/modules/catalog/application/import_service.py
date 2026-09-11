@@ -195,6 +195,27 @@ class ProductImportService:
             matches = {match.id: match for match in task.supplier_matches}
             try:
                 async with self.session.begin_nested():
+                    row_supplier_sku_keys: dict[int, tuple[uuid.UUID, str]] = {}
+                    for row in task.rows:
+                        match = (
+                            matches.get(row.supplier_match_id) if row.supplier_match_id else None
+                        )
+                        if match is None or match.matched_supplier_id is None:
+                            raise RuntimeError(
+                                "A ready Product Import row is missing a resolved relation"
+                            )
+                        sku = self._optional(row.source_data["sku"])
+                        if sku is None:
+                            raise RuntimeError("A ready Product Import row is missing an SKU")
+                        row_supplier_sku_keys[row.source_row_number] = (
+                            match.matched_supplier_id,
+                            sku,
+                        )
+                    existing_products = await self.repository.products_by_supplier_sku(
+                        set(row_supplier_sku_keys.values()), for_update=True
+                    )
+                    imported_count = 0
+                    restored_count = 0
                     for row in task.rows:
                         match = (
                             matches.get(row.supplier_match_id) if row.supplier_match_id else None
@@ -212,9 +233,22 @@ class ProductImportService:
                                 "A source supplier changed after preview; preview the batch again",
                                 409,
                             )
-                        self.session.add(
-                            self._product_from_row(row, match.matched_supplier_id, actor_id)
-                        )
+                        supplier_sku_key = row_supplier_sku_keys[row.source_row_number]
+                        existing_product = existing_products.get(supplier_sku_key)
+                        if existing_product is None:
+                            self.session.add(
+                                self._product_from_row(row, match.matched_supplier_id, actor_id)
+                            )
+                            imported_count += 1
+                        elif existing_product.is_deleted:
+                            self._restore_deleted_product(existing_product, actor_id)
+                            restored_count += 1
+                        else:
+                            raise AppError(
+                                "PRODUCT_IMPORT_DUPLICATE_PRODUCT",
+                                "A product with the same source supplier and SKU already exists",
+                                409,
+                            )
                     await self.session.flush()
             except IntegrityError as exc:
                 if "uq_scm_product_source_supplier_sku" in str(exc.orig).lower():
@@ -228,7 +262,10 @@ class ProductImportService:
             task.confirmed_by = actor_id
             task.confirmed_at = datetime.now()
             response = ProductImportConfirmResponse(
-                id=task.id, status=task.status, imported_count=task.total_rows
+                id=task.id,
+                status=task.status,
+                imported_count=imported_count,
+                restored_count=restored_count,
             )
         return response
 
@@ -349,7 +386,7 @@ class ProductImportService:
             sku = self._optional(row.source_data["sku"])
             if match is not None and match.matched_supplier_id is not None and sku is not None:
                 row_supplier_sku_keys[row.source_row_number] = (match.matched_supplier_id, sku)
-        existing_supplier_sku_keys = await self.repository.existing_supplier_sku_keys(
+        existing_products = await self.repository.products_by_supplier_sku(
             set(row_supplier_sku_keys.values())
         )
         valid_rows = 0
@@ -365,7 +402,7 @@ class ProductImportService:
             errors, warnings = await self._row_messages(
                 row,
                 matches,
-                existing_supplier_sku_keys=existing_supplier_sku_keys,
+                existing_products=existing_products,
                 first_excel_row=first_excel_row,
             )
             row.error_message = "；".join(errors) or None
@@ -394,7 +431,7 @@ class ProductImportService:
         row: ProductImportRow,
         matches: dict[uuid.UUID, ProductImportSupplierMatch],
         *,
-        existing_supplier_sku_keys: set[tuple[uuid.UUID, str]],
+        existing_products: dict[tuple[uuid.UUID, str], Product],
         first_excel_row: int | None,
     ) -> tuple[list[str], list[str]]:
         values = row.source_data
@@ -417,16 +454,26 @@ class ProductImportService:
             errors.append("来源供应商尚未解析")
         elif sku is not None and match.matched_supplier_id is not None:
             supplier_sku_key = (match.matched_supplier_id, sku)
-            if supplier_sku_key in existing_supplier_sku_keys:
+            existing_product = existing_products.get(supplier_sku_key)
+            if existing_product is not None and not existing_product.is_deleted:
                 errors.append("该来源供应商与SKU组合已存在")
             elif first_excel_row is not None:
                 errors.append(f"与Excel第{first_excel_row}行的来源供应商与SKU重复")
+            elif existing_product is not None:
+                warnings.append("该来源供应商与SKU组合的已删除商品将于确认导入后恢复，Excel字段不会覆盖原商品")
         image_value = values["图片"] or ""
         if image_value.startswith("=") and row.image_storage_key is None:
             warnings.append("图片公式未找到可保存的内嵌图片，正式图片引用暂不写入")
         if values["上架日期"] and self._optional_date(values["上架日期"]) is None:
             warnings.append("上架日期无法确定年份，正式商品将暂不写入上架日期")
         return errors, warnings
+
+    @staticmethod
+    def _restore_deleted_product(product: Product, actor_id: uuid.UUID) -> None:
+        product.is_deleted = False
+        product.deleted_by = None
+        product.deleted_at = None
+        product.updated_by = actor_id
 
     def _product_from_row(
         self,

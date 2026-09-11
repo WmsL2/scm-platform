@@ -114,7 +114,9 @@ async function confirmImport(): Promise<void> {
   importing.value = true
   try {
     const result = await productApi.confirmImport(importPreview.value.id)
-    ElMessage.success(`已正式导入 ${result.imported_count} 条商品`)
+    ElMessage.success(
+      `已正式导入 ${result.imported_count} 条商品${result.restored_count ? `，恢复 ${result.restored_count} 条已删除商品` : ""}`,
+    )
     importDialogVisible.value = false
     importPreview.value = undefined
     await loadProducts(1)

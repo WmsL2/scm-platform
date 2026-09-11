@@ -1,4 +1,6 @@
 import uuid
+from datetime import datetime
+from decimal import Decimal
 from io import BytesIO
 
 from httpx import ASGITransport, AsyncClient
@@ -193,8 +195,51 @@ async def test_product_import_direct_values_do_not_require_category_or_recalcula
             assert "来源供应商与SKU组合已存在" in duplicate_data["rows"][0]["error_message"]
 
         async with SessionLocal() as session:
-            product = await session.scalar(select(Product).where(Product.created_by == user_id))
+            deleted_product = await session.scalar(
+                select(Product).where(Product.created_by == user_id)
+            )
+            assert deleted_product is not None
+            deleted_product_id = deleted_product.id
+            deleted_product.product_name = "删除前商品名称"
+            deleted_product.cost_price = Decimal("321.0000")
+            deleted_product.is_deleted = True
+            deleted_product.deleted_by = user_id
+            deleted_product.deleted_at = datetime.now()
+            await session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            restore_preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "restore-deleted-product.xlsx",
+                        _workbook_bytes("导入测试供应商"),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert restore_preview.status_code == 200
+            restore_data = restore_preview.json()["data"]
+            assert restore_data["status"] == "READY_TO_CONFIRM"
+            assert restore_data["valid_rows"] == 1
+            assert "已删除商品将于确认导入后恢复" in restore_data["rows"][0]["warning_message"]
+
+            restored = await client.post(
+                f"/api/v1/products/imports/{restore_data['id']}/confirm", headers=headers
+            )
+            assert restored.status_code == 200
+            assert restored.json()["data"]["imported_count"] == 0
+            assert restored.json()["data"]["restored_count"] == 1
+
+        async with SessionLocal() as session:
+            product = await session.get(Product, deleted_product_id)
             assert product is not None
+            assert product.is_deleted is False
+            assert product.deleted_by is None
+            assert product.deleted_at is None
+            assert product.product_name == "删除前商品名称"
+            assert product.cost_price == Decimal("321.0000")
             assert product.source_supplier_id == supplier_id
             assert product.category_id is None
             assert product.category_level3_name == "测试三级"
