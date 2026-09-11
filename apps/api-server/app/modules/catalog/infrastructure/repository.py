@@ -18,6 +18,7 @@ class ProductRepository:
     async def by_id(self, product_id: uuid.UUID) -> Product | None:
         statement = select(Product).join(Supplier).where(
             Product.id == product_id,
+            Product.is_deleted.is_(False),
             Supplier.is_deleted.is_(False),
             Supplier.cooperation_status == CooperationStatus.NORMAL,
         )
@@ -29,6 +30,7 @@ class ProductRepository:
             .join(Supplier)
             .where(
                 Product.id == product_id,
+                Product.is_deleted.is_(False),
                 Supplier.is_deleted.is_(False),
                 Supplier.cooperation_status == CooperationStatus.NORMAL,
             )
@@ -115,10 +117,13 @@ class ProductRepository:
             Supplier.cooperation_status == CooperationStatus.NORMAL,
         )
         statement: Select[tuple[Product]] = select(Product).join(Supplier).where(
-            *visible_supplier_criteria
+            Product.is_deleted.is_(False), *visible_supplier_criteria
         )
         count_statement = (
-            select(func.count()).select_from(Product).join(Supplier).where(*visible_supplier_criteria)
+            select(func.count())
+            .select_from(Product)
+            .join(Supplier)
+            .where(Product.is_deleted.is_(False), *visible_supplier_criteria)
         )
         if keyword:
             criteria = or_(

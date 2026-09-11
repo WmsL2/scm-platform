@@ -13,6 +13,7 @@ describe("supplier frontend boundary", () => {
       supplier_name: "",
       main_brands: "",
       advantage: "",
+      archive_status: "DRAFT",
       contacts: [],
     })
   })
@@ -29,6 +30,7 @@ describe("supplier frontend boundary", () => {
       supplier_name: " 众诚供应商 ",
       main_brands: " 品牌 A ",
       advantage: " 服务 ",
+      archive_status: "DRAFT",
       contacts: [
         { contact_name: " 李四 ", contact_phone: " 13800000000 " },
         { contact_name: " ", contact_phone: " " },
@@ -38,6 +40,7 @@ describe("supplier frontend boundary", () => {
       supplier_name: "众诚供应商",
       main_brands: "品牌 A",
       advantage: "服务",
+      archive_status: "DRAFT",
       contacts: [{ contact_name: "李四", contact_phone: "13800000000" }],
     })
     expect(supplierDraftValidationMessage(createSupplierFormDraft())).toBe("请填写供应商名称")

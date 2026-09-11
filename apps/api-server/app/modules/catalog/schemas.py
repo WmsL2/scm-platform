@@ -76,6 +76,11 @@ class ProductDetailResponse(BaseModel):
     updated_at: datetime
 
 
+class ProductDeleteResponse(BaseModel):
+    id: uuid.UUID
+    status: str = "deleted"
+
+
 class ProductCostUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cost_price: Decimal = Field(gt=0, max_digits=18, decimal_places=4)

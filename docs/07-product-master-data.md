@@ -59,6 +59,12 @@ Supplier Excel -> Supplier Import -> scm_supplier
 
 系统生成的 `id` 是主键。`source_supplier_id + sku` 是 Product 防重业务键，并由数据库 UNIQUE 强制；`model`、`product_name`、`brand + model`、货号及源69码文本均不设业务 UNIQUE。不得自行假设型号或品牌+型号唯一。
 
+## 商品逻辑删除
+
+商品删除使用 `DELETE /api/v1/products/{product_id}`，需要 `product:delete` 权限。Revision `20260911_0019` 在 `scm_product` 增加 `is_deleted`、`deleted_by`、`deleted_at`：删除不物理移除商品、导入审计或本地图片，只记录操作人和时间并从正常商品列表、详情、编辑及成本价更新中隐藏该商品。
+
+删除后仍保留 `source_supplier_id + sku` 防重业务键；当前不提供恢复或复用已删除 SKU 的能力，后续如需支持必须另行冻结规则和 API。
+
 ## 当前成本价
 
 `scm_product.cost_price` 是具体正式商品的当前成本价，也是业务确认的当前供应商报价。一期不建设 `scm_supplier_product_quote`，不保存独立报价历史、有效期、作废记录或多供应商比价结果。

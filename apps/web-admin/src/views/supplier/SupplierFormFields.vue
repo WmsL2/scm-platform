@@ -2,6 +2,7 @@
 import { Plus, Remove } from "@element-plus/icons-vue"
 
 import type { SupplierFormDraft } from "../../types/supplier"
+import { ARCHIVE_STATUS_LABELS } from "../../types/supplier"
 
 const draft = defineModel<SupplierFormDraft>({ required: true })
 
@@ -28,6 +29,11 @@ function removeContact(index: number): void {
     </el-form-item>
     <el-form-item label="主要优势">
       <el-input v-model="draft.advantage" :disabled="props.readonly" type="textarea" :rows="4" placeholder="请输入主要优势" />
+    </el-form-item>
+    <el-form-item label="归档状态">
+      <el-select v-model="draft.archive_status" :disabled="props.readonly" placeholder="请选择归档状态">
+        <el-option v-for="(label, value) in ARCHIVE_STATUS_LABELS" :key="value" :label="label" :value="value" />
+      </el-select>
     </el-form-item>
     <div class="contacts-heading">
       <span>联系人（选填）</span>

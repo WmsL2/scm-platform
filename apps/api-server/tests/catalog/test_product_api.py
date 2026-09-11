@@ -11,7 +11,13 @@ from app.modules.catalog.infrastructure.models import Category, Product
 from app.modules.supplier.infrastructure.models import Supplier
 from app.modules.system.models import Permission, Role, RolePermission, User, UserRole
 
-PRODUCT_PERMISSIONS = ("product:list", "product:detail", "product:cost:update", "product:update")
+PRODUCT_PERMISSIONS = (
+    "product:list",
+    "product:detail",
+    "product:cost:update",
+    "product:update",
+    "product:delete",
+)
 
 
 async def create_product_user(
@@ -182,6 +188,37 @@ async def test_product_api_enforces_permissions_and_validates_paths() -> None:
             )
             assert invalid_path.status_code == 422
     finally:
+        await cleanup_user(user_id)
+
+
+async def test_product_delete_hides_record_and_preserves_audit() -> None:
+    user_id, headers = await create_product_user(
+        ("product:list", "product:detail", "product:delete")
+    )
+    supplier_id, category_id, product_id = await create_product_fixture()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            forbidden = await client.delete(f"/api/v1/products/{product_id}")
+            assert forbidden.status_code == 401
+
+            deleted = await client.delete(f"/api/v1/products/{product_id}", headers=headers)
+            assert deleted.status_code == 200
+            assert deleted.json()["data"] == {"id": str(product_id), "status": "deleted"}
+
+            listing = await client.get("/api/v1/products", headers=headers)
+            assert listing.status_code == 200
+            assert str(product_id) not in {item["id"] for item in listing.json()["data"]["items"]}
+            hidden_detail = await client.get(f"/api/v1/products/{product_id}", headers=headers)
+            assert hidden_detail.status_code == 404
+
+        async with SessionLocal() as session:
+            product = await session.get(Product, product_id)
+            assert product is not None
+            assert product.is_deleted is True
+            assert product.deleted_by == user_id
+            assert product.deleted_at is not None
+    finally:
+        await cleanup_fixture(supplier_id, category_id, product_id)
         await cleanup_user(user_id)
 
 

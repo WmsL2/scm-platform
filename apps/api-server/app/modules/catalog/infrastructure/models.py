@@ -125,8 +125,10 @@ class Product(Base):
     storefront_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     price_inflation_rate: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
     deduction_rate: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
     updated_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+    deleted_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
@@ -135,6 +137,7 @@ class Product(Base):
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class ProductImportTask(Base):

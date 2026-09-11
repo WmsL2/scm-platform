@@ -42,6 +42,18 @@ def test_supplier_requests_store_trimmed_required_text() -> None:
     assert request.supplier_name == "供应商名称"
     assert request.main_brands == "主营品牌"
     assert request.advantage == "主要优势"
+    assert request.archive_status == "DRAFT"
+
+
+def test_supplier_create_accepts_selected_initial_archive_status() -> None:
+    request = SupplierCreateRequest(
+        supplier_name="供应商名称",
+        main_brands="主营品牌",
+        advantage="主要优势",
+        archive_status="ARCHIVED",
+    )
+
+    assert request.archive_status == "ARCHIVED"
 
 
 def test_contact_rejects_when_both_values_are_blank() -> None:

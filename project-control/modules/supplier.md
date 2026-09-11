@@ -1,8 +1,8 @@
 # 供应商
 
-状态：DELETE_IMPORT_MERGED / NAME_UNIQUENESS_HARDENED
+状态：IMPLEMENTED / ARCHIVE_STATUS_SELECTION
 Owner：人员 A（Backend）/ 人员 B（Frontend）
-Last Updated：2026-09-10
+Last Updated：2026-09-11
 
 ## Database
 - [x] Revision `20260907_0004`：`scm_supplier`、联系人、资质关系表、合作状态历史表
@@ -11,20 +11,20 @@ Last Updated：2026-09-10
 - [x] `supplier_name` 数据库全局 UNIQUE（含逻辑删除记录）；历史重复记录已按每个名称保留最早一条完成数据清理
 
 ## Backend
-- [x] 创建、编辑、详情、分页列表 API；活跃同名创建/改名返回“该供应商已存在”
+- [x] 创建、编辑、详情、分页列表 API；新增、编辑与 Excel Confirm 均可选择归档状态，活跃同名创建/改名返回“该供应商已存在”
 - [x] 详情页“相关商品”入口：仅拥有 `product:list` 的用户可进入，跳转后只显示该供应商作为来源供应商的正式商品
 - [x] DRAFT → PENDING → ARCHIVED；NORMAL ↔ STOPPED、NORMAL ↔ BLACKLIST 状态机；无 STOPPED ↔ BLACKLIST
 - [x] 创建/编辑/归档 Actor 与时间审计；停止/拉黑及恢复/移出黑名单均写合作状态历史和原因
 - [x] 逻辑删除 API：保留数据库记录，正常查询过滤 `is_deleted = true`；同名再次创建时复用该历史记录、恢复并覆盖业务数据，编码不变
-- [x] Excel 模板下载、上传校验、错误预览；有效文件上传后自动入库，活动同名供应商及 Excel 内重复行会逐行提示
+- [x] Excel 模板下载、上传校验、错误预览、归档状态选择与显式 Confirm；活动同名供应商及 Excel 内重复行会逐行提示
 - [x] 导入确认采用原子持久化：锁定并直接读取批次行，Supplier 写入 `flush` 成功且数量一致后才标记 `CONFIRMED`；异常整批回滚
 
 ## Frontend
 - [x] 供应商列表：真实分页、关键字/双状态筛选、详情跳转
-- [x] 新增、详情、编辑：真实 Supplier API 调用与错误反馈
+- [x] 新增、详情、编辑：真实 Supplier API 调用、归档状态选择与错误反馈
 - [x] 多联系人表单：符合 `contacts` 请求契约；联系人可空且每条至少姓名或电话
 - [x] 提交归档、归档、停止合作、黑名单、恢复合作、移出黑名单：按实时权限和状态机显示，全部合作状态操作收集原因
-- [x] 按权限显示删除按钮；下载模板、上传校验结果；无错误 Excel 自动导入，错误文件保留逐行提示供修正后重传
+- [x] 按权限显示删除按钮；下载模板、上传校验结果、归档状态选择与显式确认；错误文件保留逐行提示供修正后重传
 
 ## Permissions
 - [x] `supplier:list/detail/create/update/submit/archive/stop/blacklist/resume/unblacklist/delete` 已入权限目录并由后端强制校验
@@ -32,7 +32,7 @@ Last Updated：2026-09-10
 ## Tests
 - [x] MySQL Schema、API 生命周期、401/403、状态机、状态历史覆盖
 - [x] 前端 Supplier API 路径、请求体、字段规范化、路由权限单元测试
-- [x] 删除权限、逻辑删除保留、同名恢复覆盖、名称唯一、Excel 模板/预览/错误行/确认导入 MySQL 集成测试
+- [x] 删除权限、逻辑删除保留、同名恢复覆盖、名称唯一、新建/编辑/Excel Confirm 归档状态选择及 Excel 模板/预览/错误行 MySQL 集成测试
 - [x] Post-merge：Supplier UUID Path Validation（`422` / `VALIDATION_ERROR`）与
   caller-owned transaction rollback 回归覆盖
 - [x] Supplier Matching Foundation：空白输入校验、名称标准化、有效候选判断与确定性匹配分类
@@ -89,7 +89,7 @@ Last Updated：2026-09-10
 - [x] 真实供应商字段资料与字段字典
 - [x] `supplier_code` 系统生成、全局唯一、不可修改及不回收
 - [x] 联系人及联系电话/手机号非必填（nullable；前端不设 required）
-- [x] 现有供应商首次导入默认 `ARCHIVED + NORMAL`
+- [x] 新建、编辑与 Excel Confirm 可选择 `DRAFT` / `PENDING` / `ARCHIVED`；导入合作状态固定 `NORMAL`
 
 ## Current Gate
 

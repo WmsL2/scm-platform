@@ -35,6 +35,10 @@ const passwordForm = reactive({ current_password: "", new_password: "", confirm_
 const hasSystemMenu = computed(() => ["system:user:list", "system:role:list", "system:registration:list"].some((item) => auth.hasPermission(item)))
 
 const sidebarWidth = computed(() => collapsed.value ? "72px" : "232px")
+const mainShellStyle = computed(() => ({
+  marginLeft: sidebarWidth.value,
+  width: `calc(100% - ${sidebarWidth.value})`,
+}))
 const activeMenu = computed(() => route.path.startsWith("/dashboard") ? "/dashboard" : route.path)
 const pageTitle = computed(() => typeof route.meta.title === "string" ? route.meta.title : "工作台")
 const primaryRoleName = computed(() => {
@@ -112,7 +116,7 @@ async function changePassword(): Promise<void> { if (passwordForm.new_password !
       </div>
     </el-aside>
 
-    <el-container class="main-shell">
+    <el-container class="main-shell" :style="mainShellStyle">
       <el-header class="topbar">
         <div class="topbar-left">
           <el-button class="collapse-button" text @click="collapsed = !collapsed">
@@ -158,7 +162,7 @@ async function changePassword(): Promise<void> { if (passwordForm.new_password !
 
 <style scoped>
 .app-shell { min-height: 100vh; background: #f3f6fa; }
-.sidebar { position: relative; z-index: 3; display: flex; flex-direction: column; overflow: hidden; color: #d6e3f5; background: linear-gradient(180deg, #071b3b 0%, #0a2b58 100%); box-shadow: 8px 0 28px rgba(13, 35, 68, .08); transition: width .2s ease; }
+.sidebar { position: fixed; inset: 0 auto 0 0; height: 100vh; z-index: 3; display: flex; flex-direction: column; overflow: hidden; color: #d6e3f5; background: linear-gradient(180deg, #071b3b 0%, #0a2b58 100%); box-shadow: 8px 0 28px rgba(13, 35, 68, .08); transition: width .2s ease; }
 .logo-area { display: flex; height: 72px; align-items: center; gap: 12px; padding: 0 17px; border-bottom: 1px solid rgba(255,255,255,.08); }
 .logo-mark { display: grid; width: 38px; height: 38px; flex: none; place-items: center; border: 1px solid rgba(255,255,255,.28); border-radius: 11px; color: #fff; font-size: 13px; font-weight: 800; letter-spacing: .04em; background: linear-gradient(145deg, #1d72df, #3a8df1); }
 .logo-copy { min-width: 150px; display: grid; gap: 2px; }
@@ -174,7 +178,7 @@ async function changePassword(): Promise<void> { if (passwordForm.new_password !
 .sidebar-boundary p { margin: 7px 0 0; color: #7896b9; font-size: 11px; line-height: 1.6; }
 .sidebar-version { padding: 15px 22px; color: #55779e; font-size: 10px; border-top: 1px solid rgba(255,255,255,.06); }
 .sidebar-version.compact { padding-inline: 28px; }
-.main-shell { min-width: 0; }
+.main-shell { min-width: 0; transition: margin-left .2s ease, width .2s ease; }
 .topbar { display: flex; height: 72px; align-items: center; justify-content: space-between; padding: 0 24px 0 16px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.96); }
 .topbar-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .collapse-button { width: 38px; height: 38px; color: #475467; border-radius: 8px; }

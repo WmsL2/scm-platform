@@ -154,6 +154,23 @@ async def test_supplier_api_enforces_permissions_and_lifecycle() -> None:
             assert supplier["cooperation_status"] == "NORMAL"
             assert supplier["contacts"][0]["contact_name"] == "李四"
 
+            selected_status_create = await client.post(
+                "/api/v1/suppliers",
+                headers=headers,
+                json={
+                    "supplier_name": "初始归档供应商",
+                    "main_brands": "品牌",
+                    "advantage": "优势",
+                    "archive_status": "ARCHIVED",
+                },
+            )
+            assert selected_status_create.status_code == 201
+            selected_supplier = selected_status_create.json()["data"]
+            supplier_ids.append(selected_supplier["id"])
+            assert selected_supplier["archive_status"] == "ARCHIVED"
+            assert selected_supplier["archived_by"] == str(user_id)
+            assert selected_supplier["archived_at"] is not None
+
             supplied_code = await client.post(
                 "/api/v1/suppliers",
                 headers=headers,
@@ -175,23 +192,15 @@ async def test_supplier_api_enforces_permissions_and_lifecycle() -> None:
             assert update.json()["data"]["supplier_name"] == "更新后的供应商"
             assert update.json()["data"]["contacts"] == []
 
-            bypass_state = await client.patch(
+            status_edit = await client.patch(
                 f"/api/v1/suppliers/{supplier_id}",
                 headers=headers,
-                json={"archive_status": "ARCHIVED"},
+                json={"archive_status": "PENDING"},
             )
-            assert bypass_state.status_code == 422
-
-            archive_before_submit = await client.post(
-                f"/api/v1/suppliers/{supplier_id}/commands/archive", headers=headers
-            )
-            assert archive_before_submit.status_code == 409
-
-            submit = await client.post(
-                f"/api/v1/suppliers/{supplier_id}/commands/submit", headers=headers
-            )
-            assert submit.status_code == 200
-            assert submit.json()["data"]["archive_status"] == "PENDING"
+            assert status_edit.status_code == 200
+            assert status_edit.json()["data"]["archive_status"] == "PENDING"
+            assert status_edit.json()["data"]["archived_by"] is None
+            assert status_edit.json()["data"]["archived_at"] is None
 
             archive = await client.post(
                 f"/api/v1/suppliers/{supplier_id}/commands/archive", headers=headers
@@ -200,6 +209,16 @@ async def test_supplier_api_enforces_permissions_and_lifecycle() -> None:
             assert archive.json()["data"]["archive_status"] == "ARCHIVED"
             assert archive.json()["data"]["archived_by"] == str(user_id)
             assert archive.json()["data"]["archived_at"] is not None
+
+            draft_edit = await client.patch(
+                f"/api/v1/suppliers/{supplier_id}",
+                headers=headers,
+                json={"archive_status": "DRAFT"},
+            )
+            assert draft_edit.status_code == 200
+            assert draft_edit.json()["data"]["archive_status"] == "DRAFT"
+            assert draft_edit.json()["data"]["archived_by"] is None
+            assert draft_edit.json()["data"]["archived_at"] is None
 
             stop = await client.post(
                 f"/api/v1/suppliers/{supplier_id}/commands/stop",
@@ -617,7 +636,9 @@ async def test_supplier_excel_preview_and_confirm() -> None:
             assert wrong_uploader.status_code == 403
 
             confirmed = await client.post(
-                f"/api/v1/suppliers/imports/{valid_batch['id']}/confirm", headers=headers
+                f"/api/v1/suppliers/imports/{valid_batch['id']}/confirm",
+                headers=headers,
+                json={"archive_status": "PENDING"},
             )
             assert confirmed.status_code == 200
             assert confirmed.json()["data"]["imported_count"] == 1
@@ -716,7 +737,7 @@ async def test_supplier_excel_preview_and_confirm() -> None:
             )
             assert len(imported) == 1
             supplier_ids.append(str(imported[0].id))
-            assert imported[0].archive_status == "ARCHIVED"
+            assert imported[0].archive_status == "PENDING"
             assert imported[0].cooperation_status == "NORMAL"
             assert imported[0].supplier_code.startswith("SUP")
     finally:

@@ -16,6 +16,7 @@ from app.modules.supplier.schemas import (
     SupplierCreateRequest,
     SupplierDeleteResponse,
     SupplierDetailResponse,
+    SupplierImportConfirmRequest,
     SupplierImportConfirmResponse,
     SupplierImportPreviewResponse,
     SupplierListItem,
@@ -78,8 +79,15 @@ async def confirm_import(
     batch_id: uuid.UUID,
     current: Annotated[CurrentUser, Depends(require_permission("supplier:create"))],
     session: SessionDep,
+    payload: SupplierImportConfirmRequest | None = None,
 ) -> ApiResponse[SupplierImportConfirmResponse]:
-    return success(await SupplierImportService(session).confirm(batch_id, current.user_id))
+    return success(
+        await SupplierImportService(session).confirm(
+            batch_id,
+            current.user_id,
+            (payload or SupplierImportConfirmRequest()).archive_status,
+        )
+    )
 
 
 @router.get("/{supplier_id}", response_model=ApiResponse[SupplierDetailResponse])

@@ -12,6 +12,7 @@ from app.modules.catalog.application.import_service import ProductImportService
 from app.modules.catalog.application.service import ProductService
 from app.modules.catalog.schemas import (
     ProductCostUpdateRequest,
+    ProductDeleteResponse,
     ProductDetailResponse,
     ProductImportConfirmResponse,
     ProductImportPreviewResponse,
@@ -143,3 +144,12 @@ async def update_product_cost(
     session: SessionDep,
 ) -> ApiResponse[ProductDetailResponse]:
     return success(await ProductService(session).update_cost(product_id, payload, current.user_id))
+
+
+@router.delete("/{product_id}", response_model=ApiResponse[ProductDeleteResponse])
+async def delete_product(
+    product_id: uuid.UUID,
+    current: Annotated[CurrentUser, Depends(require_permission("product:delete"))],
+    session: SessionDep,
+) -> ApiResponse[ProductDeleteResponse]:
+    return success(await ProductService(session).delete(product_id, current.user_id))

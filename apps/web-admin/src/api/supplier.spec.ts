@@ -30,7 +30,7 @@ describe("supplier api", () => {
 
     await supplierApi.downloadImportTemplate()
     await supplierApi.previewImport(file)
-    await supplierApi.confirmImport("batch-1")
+    await supplierApi.confirmImport("batch-1", "ARCHIVED")
     await supplierApi.delete("supplier-1")
 
     expect(http.getBlob).toHaveBeenCalledWith("/api/v1/suppliers/imports/template")
@@ -42,6 +42,7 @@ describe("supplier api", () => {
     expect(http.post).toHaveBeenNthCalledWith(
       2,
       "/api/v1/suppliers/imports/batch-1/confirm",
+      { archive_status: "ARCHIVED" },
     )
     expect(http.delete).toHaveBeenCalledWith("/api/v1/suppliers/supplier-1")
   })
@@ -65,6 +66,7 @@ describe("supplier api", () => {
       supplier_name: "众诚供应商",
       main_brands: "品牌 A",
       advantage: "服务",
+      archive_status: "PENDING" as const,
       contacts: [],
     }
 

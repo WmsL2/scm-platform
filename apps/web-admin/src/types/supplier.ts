@@ -15,6 +15,7 @@ export interface SupplierFormDraft {
   supplier_name: string
   main_brands: string
   advantage: string
+  archive_status: ArchiveStatus
   contacts: SupplierContactInput[]
 }
 
@@ -100,6 +101,7 @@ export function createSupplierFormDraft(): SupplierFormDraft {
     supplier_name: "",
     main_brands: "",
     advantage: "",
+    archive_status: "DRAFT",
     contacts: [],
   }
 }
@@ -109,6 +111,7 @@ export function supplierDetailToDraft(supplier: SupplierDetail): SupplierFormDra
     supplier_name: supplier.supplier_name,
     main_brands: supplier.main_brands,
     advantage: supplier.advantage,
+    archive_status: supplier.archive_status,
     contacts: supplier.contacts.map((contact) => ({
       contact_name: contact.contact_name,
       contact_phone: contact.contact_phone,
@@ -121,6 +124,7 @@ export function normalizeSupplierDraft(draft: SupplierFormDraft): SupplierFormDr
     supplier_name: draft.supplier_name.trim(),
     main_brands: draft.main_brands.trim(),
     advantage: draft.advantage.trim(),
+    archive_status: draft.archive_status,
     contacts: draft.contacts
       .map((contact) => ({
         contact_name: contact.contact_name?.trim() || null,
