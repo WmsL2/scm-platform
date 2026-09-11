@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue"
+import { computed, onMounted, reactive, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { accountApi } from "../../api/account"
 import { HttpError } from "../../shared/http"
@@ -10,6 +10,7 @@ const roles = ref<AccountRole[]>([])
 const permissions = ref<Permission[]>([])
 const edited = ref<AccountRole | null>(null)
 const permissionIds = ref<string[]>([])
+const expandedModules = ref<string[]>([])
 const openingRoleId = ref<string | null>(null)
 const permissionSubmitting = ref(false)
 const createVisible = ref(false)
@@ -17,6 +18,67 @@ const createSubmitting = ref(false)
 const deletingRoleId = ref<string | null>(null)
 const createForm = reactive({ role_code: "", role_name: "" })
 const roleCodePattern = /^[a-z][a-z0-9_]{0,63}$/
+const moduleNames: Record<string, string> = {
+  system: "系统管理",
+  supplier: "供应商管理",
+  product: "商品管理",
+}
+const moduleOrder = ["system", "supplier", "product"]
+
+interface PermissionGroup {
+  key: string
+  name: string
+  permissions: Permission[]
+}
+
+const permissionGroups = computed<PermissionGroup[]>(() => {
+  const grouped = new Map<string, Permission[]>()
+  for (const permission of permissions.value) {
+    const moduleKey = permission.permission_code.split(":", 1)[0] || "other"
+    grouped.set(moduleKey, [...(grouped.get(moduleKey) ?? []), permission])
+  }
+  return [...grouped.entries()]
+    .map(([key, items]) => ({
+      key,
+      name: moduleNames[key] ?? `${key} 模块`,
+      permissions: items,
+    }))
+    .sort((left, right) => {
+      const leftIndex = moduleOrder.indexOf(left.key)
+      const rightIndex = moduleOrder.indexOf(right.key)
+      if (leftIndex === -1 && rightIndex === -1) return left.name.localeCompare(right.name, "zh-CN")
+      if (leftIndex === -1) return 1
+      if (rightIndex === -1) return -1
+      return leftIndex - rightIndex
+    })
+})
+
+function selectedPermissionCount(group: PermissionGroup): number {
+  const selected = new Set(permissionIds.value)
+  return group.permissions.filter((permission) => selected.has(permission.id)).length
+}
+
+function isModuleChecked(group: PermissionGroup): boolean {
+  return selectedPermissionCount(group) === group.permissions.length
+}
+
+function isModuleIndeterminate(group: PermissionGroup): boolean {
+  const count = selectedPermissionCount(group)
+  return count > 0 && count < group.permissions.length
+}
+
+function toggleModule(group: PermissionGroup, checked: boolean): void {
+  const groupIds = new Set(group.permissions.map((permission) => permission.id))
+  if (checked) {
+    permissionIds.value = [...new Set([...permissionIds.value, ...groupIds])]
+    return
+  }
+  permissionIds.value = permissionIds.value.filter((id) => !groupIds.has(id))
+}
+
+function handleModuleChange(group: PermissionGroup, checked: string | number | boolean): void {
+  toggleModule(group, Boolean(checked))
+}
 
 async function load() {
   roles.value = await accountApi.roles()
@@ -29,6 +91,13 @@ async function open(row: AccountRole) {
     permissions.value = await accountApi.permissions()
     edited.value = row
     permissionIds.value = [...row.permission_ids]
+    const selected = new Set(permissionIds.value)
+    const selectedModules = permissionGroups.value
+      .filter((group) => group.permissions.some((permission) => selected.has(permission.id)))
+      .map((group) => group.key)
+    expandedModules.value = selectedModules.length
+      ? selectedModules
+      : permissionGroups.value.slice(0, 1).map((group) => group.key)
   } catch (error) {
     ElMessage.error(error instanceof HttpError ? error.response.message : "加载权限失败")
   } finally {
@@ -150,10 +219,32 @@ onMounted(load)
     </template>
   </el-dialog>
 
-  <el-dialog v-model="edited" title="配置权限" :close-on-click-modal="!permissionSubmitting" :close-on-press-escape="!permissionSubmitting" :show-close="!permissionSubmitting">
-    <el-checkbox-group v-model="permissionIds" :disabled="permissionSubmitting">
-      <el-checkbox v-for="item in permissions" :key="item.id" :value="item.id">{{ item.permission_name }}</el-checkbox>
-    </el-checkbox-group>
+  <el-dialog v-model="edited" title="配置权限" width="720px" :close-on-click-modal="!permissionSubmitting" :close-on-press-escape="!permissionSubmitting" :show-close="!permissionSubmitting">
+    <p class="permission-tip">按模块批量勾选，或展开模块单独选择权限。</p>
+    <el-collapse v-model="expandedModules" class="permission-modules">
+      <el-collapse-item v-for="group in permissionGroups" :key="group.key" :name="group.key">
+        <template #title>
+          <div class="module-title">
+            <el-checkbox
+              :model-value="isModuleChecked(group)"
+              :indeterminate="isModuleIndeterminate(group)"
+              :disabled="permissionSubmitting"
+              @click.stop
+              @change="handleModuleChange(group, $event)"
+            >{{ group.name }}</el-checkbox>
+            <span>{{ selectedPermissionCount(group) }}/{{ group.permissions.length }}</span>
+          </div>
+        </template>
+        <el-checkbox-group v-model="permissionIds" :disabled="permissionSubmitting">
+          <div class="permission-grid">
+            <el-checkbox v-for="item in group.permissions" :key="item.id" :value="item.id">
+              <span class="permission-name">{{ item.permission_name }}</span>
+              <span class="permission-code">{{ item.permission_code }}</span>
+            </el-checkbox>
+          </div>
+        </el-checkbox-group>
+      </el-collapse-item>
+    </el-collapse>
     <template #footer>
       <el-button :disabled="permissionSubmitting" @click="edited = null">取消</el-button>
       <el-button type="primary" :loading="permissionSubmitting" @click="save">保存</el-button>
@@ -165,4 +256,16 @@ onMounted(load)
 .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
 .page-header h2 { margin: 0; }
 .field-tip { margin-top: 6px; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.5; }
+.permission-tip { margin-top: 0; color: var(--el-text-color-secondary); font-size: 13px; }
+.permission-modules { border: 1px solid var(--el-border-color-lighter); border-radius: 8px; }
+.permission-modules :deep(.el-collapse-item__header) { min-height: 52px; padding: 0 16px; background: var(--el-fill-color-lighter); }
+.permission-modules :deep(.el-collapse-item__content) { padding: 14px 16px 18px; }
+.module-title { display: flex; flex: 1; align-items: center; justify-content: space-between; padding-right: 12px; }
+.module-title > span { color: var(--el-text-color-secondary); font-size: 12px; }
+.permission-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; }
+.permission-grid :deep(.el-checkbox) { height: auto; min-height: 32px; margin-right: 0; white-space: normal; }
+.permission-grid :deep(.el-checkbox__label) { display: grid; line-height: 1.4; }
+.permission-name { color: var(--el-text-color-primary); }
+.permission-code { color: var(--el-text-color-secondary); font-size: 11px; }
+@media (max-width: 640px) { .permission-grid { grid-template-columns: 1fr; } }
 </style>
