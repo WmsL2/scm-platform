@@ -39,6 +39,7 @@
 - 自定义角色可由 `system:role:create` 创建：角色编码采用不可修改的小写英文、数字和下划线，
   角色名称为展示文本，初始权限为空；创建者与更新者记录为当前操作用户。创建成功后，如同时具备
   权限目录与角色权限更新权限，前端直接进入“配置权限”。具备 `system:role:delete` 的用户可删除未分配的自定义角色；内置角色与已分配角色不显示删除入口且由后端强制拒绝。角色编辑与停用仍未提供。
+- 角色权限配置按 `permission_code` 前缀动态分为系统管理、供应商管理、商品管理等模块；模块可折叠，支持模块全选、半选状态和模块内单项选择。未知模块前缀使用确定性回退名称，不隐藏权限；保存仍通过现有整体替换接口一次提交。
 - 角色权限保存为单次提交：保存期间前端禁止重复提交。若当前操作人编辑自己所属角色，后端必须保留
   `system:role:list`、`system:permission:list` 与 `system:role:permission:update` 的有效组合，防止
   操作人将自己锁出角色管理。
@@ -56,7 +57,7 @@
 - 权限：目录包括 `system:user:list`、`system:user:role:update`、
   `system:role:list`、`system:role:create`、`system:role:delete`、`system:role:permission:update`、
   `system:permission:list`、`system:registration:list`、
-  `system:registration:review` 八项权限，并动态从 `sys_permission` 读取。
+  `system:registration:review` 九项权限，并动态从 `sys_permission` 读取。
 - 个人信息：前端提供 `/register`、`/admin/users`、`/admin/roles`、
   `/admin/registrations`、完整 Profile Dropdown 与 Change Password Dialog。系统管理菜单、
   角色分配、权限分配和审批操作均按各自权限单独控制，不使用硬编码管理员用户名或角色。
@@ -81,7 +82,7 @@
 - 权限拒绝与权限撤销通过 MySQL 集成测试验证；前端权限路由守卫测试已通过。
 - 临时联调用户在验证结束后删除；未新增默认账号或硬编码密码。
 - Account / Registration / Profile：Backend Ruff、mypy 通过，pytest 51 passed；
-  Frontend Vitest 22 passed，typecheck 与 build 通过；Alembic heads/current 为
+  最新 Frontend Vitest 38 passed，typecheck 与 build 通过；Alembic heads/current 为
   `20260908_0006`，Supplier schema integration test 通过。
 
 ## Post-Merge Hardening
