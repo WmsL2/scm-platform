@@ -175,6 +175,23 @@ async def test_product_import_direct_values_do_not_require_category_or_recalcula
             assert confirmed.status_code == 200
             assert confirmed.json()["data"]["imported_count"] == 1
 
+            duplicate_preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "duplicate-products.xlsx",
+                        _workbook_bytes("导入测试供应商"),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert duplicate_preview.status_code == 200
+            duplicate_data = duplicate_preview.json()["data"]
+            assert duplicate_data["status"] == "VALIDATED"
+            assert duplicate_data["invalid_rows"] == 1
+            assert "来源供应商与SKU组合已存在" in duplicate_data["rows"][0]["error_message"]
+
         async with SessionLocal() as session:
             product = await session.scalar(select(Product).where(Product.created_by == user_id))
             assert product is not None

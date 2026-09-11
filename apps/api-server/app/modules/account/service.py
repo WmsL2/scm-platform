@@ -128,6 +128,8 @@ class AccountService:
                     role = Role(
                         role_code=role_code,
                         role_name=role_name,
+                        is_builtin=False,
+                        is_deleted=False,
                         created_by=actor,
                         updated_by=actor,
                     )
@@ -138,6 +140,26 @@ class AccountService:
                     raise AppError("ACCOUNT_ROLE_CODE_EXISTS", "角色编码已存在", 409) from exc
                 raise
         return self._role(role, [])
+
+    async def delete_role(self, role_id: uuid.UUID, actor: uuid.UUID) -> None:
+        async with transaction_scope(self.session):
+            role = await self.repository.active_role_for_update(role_id)
+            if role is None:
+                raise AppError("ACCOUNT_ROLE_NOT_FOUND", "Role not found", 404)
+            if role.is_builtin:
+                raise AppError(
+                    "ACCOUNT_BUILTIN_ROLE_DELETE_FORBIDDEN",
+                    "Built-in roles cannot be deleted",
+                    409,
+                )
+            if await self.repository.user_count_for_role(role_id):
+                raise AppError(
+                    "ACCOUNT_ROLE_ASSIGNED_DELETE_FORBIDDEN",
+                    "Remove this role from all users before deleting it",
+                    409,
+                )
+            role.is_deleted = True
+            role.updated_by = actor
 
     async def replace_role_permissions(
         self, role_id: uuid.UUID, permission_ids: list[uuid.UUID], actor: uuid.UUID
@@ -210,6 +232,7 @@ class AccountService:
             id=role.id,
             role_code=role.role_code,
             role_name=role.role_name,
+            is_builtin=role.is_builtin,
             permission_ids=permission_ids,
         )
 

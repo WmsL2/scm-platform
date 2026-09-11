@@ -18,6 +18,8 @@ from app.modules.catalog.schemas import (
     ProductImportResolveSupplierRequest,
     ProductImportSupplierCandidateResponse,
     ProductListItem,
+    ProductSourceSupplierCandidateResponse,
+    ProductUpdateRequest,
 )
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -103,6 +105,17 @@ async def confirm_product_import(
     return success(await ProductImportService(session).confirm(task_id, current.user_id))
 
 
+@router.get(
+    "/source-supplier-candidates",
+    response_model=ApiResponse[list[ProductSourceSupplierCandidateResponse]],
+)
+async def source_supplier_candidates(
+    _: Annotated[CurrentUser, Depends(require_permission("product:update"))],
+    session: SessionDep,
+) -> ApiResponse[list[ProductSourceSupplierCandidateResponse]]:
+    return success(await ProductService(session).source_supplier_candidates())
+
+
 @router.get("/{product_id}", response_model=ApiResponse[ProductDetailResponse])
 async def get_product(
     product_id: uuid.UUID,
@@ -110,6 +123,16 @@ async def get_product(
     session: SessionDep,
 ) -> ApiResponse[ProductDetailResponse]:
     return success(await ProductService(session).get(product_id))
+
+
+@router.patch("/{product_id}", response_model=ApiResponse[ProductDetailResponse])
+async def update_product(
+    product_id: uuid.UUID,
+    payload: ProductUpdateRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("product:update"))],
+    session: SessionDep,
+) -> ApiResponse[ProductDetailResponse]:
+    return success(await ProductService(session).update(product_id, payload, current.user_id))
 
 
 @router.patch("/{product_id}/cost-price", response_model=ApiResponse[ProductDetailResponse])

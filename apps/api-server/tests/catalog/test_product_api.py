@@ -11,7 +11,7 @@ from app.modules.catalog.infrastructure.models import Category, Product
 from app.modules.supplier.infrastructure.models import Supplier
 from app.modules.system.models import Permission, Role, RolePermission, User, UserRole
 
-PRODUCT_PERMISSIONS = ("product:list", "product:detail", "product:cost:update")
+PRODUCT_PERMISSIONS = ("product:list", "product:detail", "product:cost:update", "product:update")
 
 
 async def create_product_user(
@@ -182,4 +182,92 @@ async def test_product_api_enforces_permissions_and_validates_paths() -> None:
             )
             assert invalid_path.status_code == 422
     finally:
+        await cleanup_user(user_id)
+
+
+async def test_product_editing_and_supplier_lifecycle_visibility() -> None:
+    user_id, headers = await create_product_user(PRODUCT_PERMISSIONS)
+    supplier_id, category_id, product_id = await create_product_fixture()
+    duplicate_id = uuid.uuid4()
+    try:
+        async with SessionLocal() as session:
+            session.add(
+                Product(
+                    id=duplicate_id,
+                    product_name="重复 SKU 参照商品",
+                    sku="SKU-DUPLICATE",
+                    source_supplier_id=supplier_id,
+                    cost_price=Decimal("1.0000"),
+                )
+            )
+            await session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            candidates = await client.get(
+                "/api/v1/products/source-supplier-candidates", headers=headers
+            )
+            assert candidates.status_code == 200
+            assert str(supplier_id) in {item["id"] for item in candidates.json()["data"]}
+
+            edited = await client.patch(
+                f"/api/v1/products/{product_id}",
+                headers=headers,
+                json={
+                    "product_name": "已编辑商品",
+                    "sku": "SKU-EDITED",
+                    "source_supplier_id": str(supplier_id),
+                    "selling_points": "编辑后的卖点",
+                },
+            )
+            assert edited.status_code == 200
+            assert edited.json()["data"]["product_name"] == "已编辑商品"
+            assert edited.json()["data"]["cost_price"] == "100.0000"
+
+            duplicate = await client.patch(
+                f"/api/v1/products/{product_id}",
+                headers=headers,
+                json={"sku": "SKU-DUPLICATE"},
+            )
+            assert duplicate.status_code == 409
+            assert duplicate.json()["code"] == "PRODUCT_SUPPLIER_SKU_EXISTS"
+
+        async with SessionLocal() as session:
+            supplier = await session.get(Supplier, supplier_id)
+            assert supplier is not None
+            supplier.cooperation_status = "STOPPED"
+            await session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            hidden_list = await client.get(
+                f"/api/v1/products?source_supplier_id={supplier_id}", headers=headers
+            )
+            assert hidden_list.status_code == 200
+            assert str(product_id) not in {
+                item["id"] for item in hidden_list.json()["data"]["items"]
+            }
+            assert (
+                await client.get(f"/api/v1/products/{product_id}", headers=headers)
+            ).status_code == 404
+            assert (
+                await client.patch(
+                    f"/api/v1/products/{product_id}/cost-price",
+                    headers=headers,
+                    json={"cost_price": "120.0000"},
+                )
+            ).status_code == 404
+
+        async with SessionLocal() as session:
+            supplier = await session.get(Supplier, supplier_id)
+            assert supplier is not None
+            supplier.cooperation_status = "NORMAL"
+            await session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            restored = await client.get(f"/api/v1/products/{product_id}", headers=headers)
+            assert restored.status_code == 200
+    finally:
+        async with SessionLocal() as session:
+            await session.execute(delete(Product).where(Product.id == duplicate_id))
+            await session.commit()
+        await cleanup_fixture(supplier_id, category_id, product_id)
         await cleanup_user(user_id)

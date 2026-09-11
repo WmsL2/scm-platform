@@ -1,4 +1,5 @@
 import uuid
+from typing import List
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +13,11 @@ from app.modules.catalog.schemas import (
     ProductCostUpdateRequest,
     ProductDetailResponse,
     ProductListItem,
+    ProductSourceSupplierCandidateResponse,
+    ProductUpdateRequest,
 )
+from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
+from app.modules.supplier.infrastructure.models import Supplier
 from app.modules.supplier.infrastructure.repository import SupplierRepository
 
 
@@ -48,6 +53,58 @@ class ProductService:
         if product is None:
             raise AppError("PRODUCT_NOT_FOUND", "Product not found", 404)
         return await self._detail(product)
+
+    async def source_supplier_candidates(self) -> List[ProductSourceSupplierCandidateResponse]:
+        return [
+            ProductSourceSupplierCandidateResponse(
+                id=supplier.id,
+                supplier_code=supplier.supplier_code,
+                supplier_name=supplier.supplier_name,
+                main_brands=supplier.main_brands,
+            )
+            for supplier in await self.supplier_repository.eligible_source_suppliers()
+        ]
+
+    async def update(
+        self, product_id: uuid.UUID, payload: ProductUpdateRequest, actor_id: uuid.UUID
+    ) -> ProductDetailResponse:
+        async with transaction_scope(self.session):
+            product = await self.repository.by_id_for_update(product_id)
+            if product is None:
+                raise AppError("PRODUCT_NOT_FOUND", "Product not found", 404)
+
+            update_values = payload.model_dump(exclude_unset=True)
+            source_supplier_id = update_values.get("source_supplier_id", product.source_supplier_id)
+            if source_supplier_id is None:
+                raise AppError(
+                    "PRODUCT_SOURCE_SUPPLIER_REQUIRED", "Source supplier is required", 422
+                )
+            if source_supplier_id != product.source_supplier_id:
+                supplier = await self.supplier_repository.active_by_id(source_supplier_id)
+                if supplier is None or not self._source_supplier_is_eligible(supplier):
+                    raise AppError(
+                        "PRODUCT_SOURCE_SUPPLIER_INELIGIBLE",
+                        "Only archived, normal and non-deleted suppliers may be selected",
+                        409,
+                    )
+
+            sku = update_values.get("sku", product.sku)
+            if sku is None:
+                raise AppError("PRODUCT_SKU_REQUIRED", "SKU is required", 422)
+            duplicate = await self.repository.other_product_with_supplier_sku(
+                product_id=product.id, supplier_id=source_supplier_id, sku=sku
+            )
+            if duplicate is not None:
+                raise AppError(
+                    "PRODUCT_SUPPLIER_SKU_EXISTS",
+                    "A product with this source supplier and SKU already exists",
+                    409,
+                )
+            for field, value in update_values.items():
+                setattr(product, field, value)
+            product.updated_by = actor_id
+            await self.session.flush()
+            return await self._detail(product)
 
     async def update_cost(
         self,
@@ -169,6 +226,14 @@ class ProductService:
             return None
         category = await self.repository.category_by_id(category_id)
         return category
+
+    @staticmethod
+    def _source_supplier_is_eligible(supplier: Supplier) -> bool:
+        return (
+            supplier.is_deleted is False
+            and supplier.archive_status == ArchiveStatus.ARCHIVED
+            and supplier.cooperation_status == CooperationStatus.NORMAL
+        )
 
     @staticmethod
     def _category_path(product: Product, category: Category | None) -> str:

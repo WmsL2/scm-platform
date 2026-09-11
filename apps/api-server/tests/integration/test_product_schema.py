@@ -73,8 +73,9 @@ async def test_product_schema_and_permission_directory() -> None:
         assert {row[0] for row in permissions} == {
             "product:list",
             "product:detail",
-            "product:cost:update",
-            "product:import",
+                "product:cost:update",
+                "product:update",
+                "product:import",
             "product:import:resolve",
         }
         quote_tables = await session.execute(

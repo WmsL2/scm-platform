@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class CategoryResponse(BaseModel):
@@ -79,6 +79,58 @@ class ProductDetailResponse(BaseModel):
 class ProductCostUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cost_price: Decimal = Field(gt=0, max_digits=18, decimal_places=4)
+
+
+class ProductUpdateRequest(BaseModel):
+    """Editable source-business fields; pricing and category controls stay out of this contract."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    listed_at: date | None = None
+    brand: str | None = Field(default=None, max_length=128)
+    image_reference: str | None = Field(default=None, max_length=2048)
+    model: str | None = Field(default=None, max_length=255)
+    sku: str | None = Field(default=None, min_length=1, max_length=255)
+    product_name: str | None = Field(default=None, max_length=512)
+    item_number: str | None = Field(default=None, max_length=255)
+    jd_same_product_url: str | None = Field(default=None, max_length=2048)
+    purchasing_agent: str | None = Field(default=None, max_length=128)
+    source_supplier_id: uuid.UUID | None = None
+    barcode_text: str | None = Field(default=None, max_length=255)
+    product_specification: str | None = None
+    selling_points: str | None = None
+    remark: str | None = None
+    restricted_regions: str | None = None
+    reference_url: str | None = Field(default=None, max_length=2048)
+    storefront_type: str | None = Field(default=None, max_length=64)
+
+    @field_validator(
+        "brand",
+        "image_reference",
+        "model",
+        "sku",
+        "product_name",
+        "item_number",
+        "jd_same_product_url",
+        "purchasing_agent",
+        "barcode_text",
+        "product_specification",
+        "selling_points",
+        "remark",
+        "restricted_regions",
+        "reference_url",
+        "storefront_type",
+    )
+    @classmethod
+    def normalize_text(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+
+class ProductSourceSupplierCandidateResponse(BaseModel):
+    id: uuid.UUID
+    supplier_code: str
+    supplier_name: str
+    main_brands: str
 
 
 class ProductImportSupplierMatchResponse(BaseModel):

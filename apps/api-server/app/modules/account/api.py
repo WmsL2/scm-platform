@@ -95,6 +95,16 @@ async def create_role(
     )
 
 
+@admin_router.delete("/roles/{role_id}", response_model=ApiResponse[dict[str, str]])
+async def delete_role(
+    role_id: uuid.UUID,
+    current: Annotated[CurrentUser, Depends(require_permission("system:role:delete"))],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> ApiResponse[dict[str, str]]:
+    await AccountService(session).delete_role(role_id, current.user_id)
+    return success({"status": "deleted"})
+
+
 @admin_router.put("/roles/{role_id}/permissions", response_model=ApiResponse[RoleResponse])
 async def role_permissions(
     role_id: uuid.UUID,

@@ -165,6 +165,17 @@ class AccountRepository:
             ),
         )
 
+    async def user_count_for_role(self, role_id: uuid.UUID) -> int:
+        return cast(
+            int,
+            await self.session.scalar(
+                select(func.count())
+                .select_from(UserRole)
+                .join(User, User.id == UserRole.user_id)
+                .where(UserRole.role_id == role_id, User.is_deleted.is_(False))
+            ),
+        )
+
     async def replace_user_roles(
         self, user_id: uuid.UUID, role_ids: list[uuid.UUID], actor: uuid.UUID
     ) -> None:

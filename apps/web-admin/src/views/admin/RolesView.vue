@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue"
-import { ElMessage } from "element-plus"
+import { ElMessage, ElMessageBox } from "element-plus"
 import { accountApi } from "../../api/account"
 import { HttpError } from "../../shared/http"
 import { useAuthStore } from "../../stores/auth"
@@ -14,6 +14,7 @@ const openingRoleId = ref<string | null>(null)
 const permissionSubmitting = ref(false)
 const createVisible = ref(false)
 const createSubmitting = ref(false)
+const deletingRoleId = ref<string | null>(null)
 const createForm = reactive({ role_code: "", role_name: "" })
 const roleCodePattern = /^[a-z][a-z0-9_]{0,63}$/
 
@@ -71,6 +72,29 @@ async function create() {
   }
 }
 
+async function remove(row: AccountRole) {
+  if (deletingRoleId.value || row.is_builtin) return
+  try {
+    await ElMessageBox.confirm(
+      `删除角色“${row.role_name}”后将不能继续分配或使用该角色。已分配给用户的角色不能删除。`,
+      "确认删除角色",
+      { confirmButtonText: "删除", cancelButtonText: "取消", type: "warning" },
+    )
+  } catch {
+    return
+  }
+  deletingRoleId.value = row.id
+  try {
+    await accountApi.deleteRole(row.id)
+    await load()
+    ElMessage.success("角色已删除")
+  } catch (error) {
+    ElMessage.error(error instanceof HttpError ? error.response.message : "删除角色失败")
+  } finally {
+    deletingRoleId.value = null
+  }
+}
+
 async function save() {
   if (!edited.value || permissionSubmitting.value) return
   const role = edited.value
@@ -101,9 +125,10 @@ onMounted(load)
     <el-table :data="roles">
       <el-table-column prop="role_code" label="角色编码" />
       <el-table-column prop="role_name" label="角色名称" />
-      <el-table-column label="操作" width="140">
+      <el-table-column label="操作" width="220">
         <template #default="{ row }">
           <el-button v-if="auth.hasPermission('system:role:permission:update')" text type="primary" :loading="openingRoleId === row.id" :disabled="Boolean(openingRoleId) || permissionSubmitting" @click="open(row)">配置权限</el-button>
+          <el-button v-if="!row.is_builtin && auth.hasPermission('system:role:delete')" text type="danger" :loading="deletingRoleId === row.id" :disabled="Boolean(deletingRoleId)" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>

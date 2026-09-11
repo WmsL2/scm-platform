@@ -5,6 +5,7 @@
 ## Backend
 
 - [x] User logical delete：`DELETE /api/v1/admin/users/{user_id}` requires `system:user:delete`; self-delete is rejected, deletion audits `deleted_by`/`deleted_at`, increments token_version, and preserves user/role history.
+- [x] Custom role logical delete：`DELETE /api/v1/admin/roles/{role_id}` requires `system:role:delete`; built-in roles and roles assigned to an active user are rejected. Associations of logically deleted users remain as audit history but do not block role deletion.
 - [x] Profile role and permission display：`/auth/me` returns database-backed `role_names` and `permission_names`; machine `roles` and RBAC `permissions` codes remain unchanged.
 
 - 数据库：五张 Auth/RBAC 表，Revision `20260903_0002`。
@@ -37,7 +38,7 @@
   `reviewed_at` 倒序、分页展示已处理申请的审批结果、时间与说明；待审批申请不会进入历史。
 - 自定义角色可由 `system:role:create` 创建：角色编码采用不可修改的小写英文、数字和下划线，
   角色名称为展示文本，初始权限为空；创建者与更新者记录为当前操作用户。创建成功后，如同时具备
-  权限目录与角色权限更新权限，前端直接进入“配置权限”。本期不提供角色编辑、停用或删除。
+  权限目录与角色权限更新权限，前端直接进入“配置权限”。具备 `system:role:delete` 的用户可删除未分配的自定义角色；内置角色与已分配角色不显示删除入口且由后端强制拒绝。角色编辑与停用仍未提供。
 - 角色权限保存为单次提交：保存期间前端禁止重复提交。若当前操作人编辑自己所属角色，后端必须保留
   `system:role:list`、`system:permission:list` 与 `system:role:permission:update` 的有效组合，防止
   操作人将自己锁出角色管理。
@@ -50,10 +51,10 @@
 - 审批：注册申请可由具有对应 `system:registration:*` 权限的管理员审批或拒绝，
   并记录 `reviewed_by`、`reviewed_at`、`review_note`。
 - 管理：管理员 API 支持用户列表、整体替换用户角色、角色列表、整体替换角色权限、
-  动态权限目录以及注册申请列表/审批；全部管理员入口继续使用
+  动态权限目录、受控自定义角色删除以及注册申请列表/审批；全部管理员入口继续使用
   `require_permission`。
 - 权限：目录包括 `system:user:list`、`system:user:role:update`、
-  `system:role:list`、`system:role:create`、`system:role:permission:update`、
+  `system:role:list`、`system:role:create`、`system:role:delete`、`system:role:permission:update`、
   `system:permission:list`、`system:registration:list`、
   `system:registration:review` 八项权限，并动态从 `sys_permission` 读取。
 - 个人信息：前端提供 `/register`、`/admin/users`、`/admin/roles`、
@@ -62,7 +63,7 @@
 - 修改密码：`POST /api/v1/auth/change-password` 校验当前密码，使用现有 Argon2id
   哈希策略保存新密码，并在成功事务中令 `token_version + 1`，使旧 Token 失效。
 - Migration：Revision `20260908_0007`，down revision `20260908_0006`。新增
-  `system:role:create` 权限；如存在未删除的 `system_administrator` 内置角色，迁移会为其赋予该权限。
+  `system:role:create` 权限；如存在未删除的 `system_administrator` 内置角色，迁移会为其赋予该权限。Revision `20260911_0018` 新增 `system:role:delete`，并同样赋予该内置管理员角色。
   Supplier
   Delete & Import 先合入后，原临时 Account `0005` 调整为 `0006`；未创建 merge migration。
 
@@ -97,7 +98,7 @@
 ## Pending
 
 - Refresh Token、Session、Multi-device Logout 属于未来范围，不阻塞当前 Supplier / Product 开发。
-- Role Delete / disable policy 尚未冻结；REJECTED username reapply / reopen policy 尚未实现。
+- Role disable policy 尚未冻结；REJECTED username reapply / reopen policy 尚未实现。
 
 ## Next Step
 
