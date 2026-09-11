@@ -21,6 +21,7 @@ export interface HttpClientOptions {
   baseUrl?: string
   timeoutMs?: number
   getAuthorization?: () => string | undefined
+  refreshAuthorization?: () => Promise<boolean>
   onUnauthorized?: () => void
   onForbidden?: () => void
 }
@@ -39,6 +40,7 @@ export class HttpClient {
     path: string,
     body?: unknown,
     requestOptions: RequestOptions = {},
+    allowRefresh = true,
   ): Promise<T> {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 10_000)
@@ -50,6 +52,7 @@ export class HttpClient {
       const baseUrl = (this.options.baseUrl ?? import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")
       const response = await fetch(`${baseUrl}${path}`, {
         method,
+        credentials: "include",
         // API responses drive interactive lists and details. Never let a browser
         // reuse a stale GET response after a successful create/update/delete.
         cache: "no-store",
@@ -77,7 +80,17 @@ export class HttpClient {
         }
       }
 
-      if (response.status === 401) this.options.onUnauthorized?.()
+      if (
+        response.status === 401
+        && requestOptions.authenticated !== false
+        && allowRefresh
+        && await this.options.refreshAuthorization?.()
+      ) {
+        return this.request(method, path, body, requestOptions, false)
+      }
+      if (response.status === 401 && requestOptions.authenticated !== false) {
+        this.options.onUnauthorized?.()
+      }
       if (response.status === 403) this.options.onForbidden?.()
       if (!response.ok) throw new HttpError(response.status, parsedBody as ErrorResponse)
 
@@ -95,7 +108,11 @@ export class HttpClient {
     return this.request<T>("GET", path, undefined, options)
   }
 
-  async getBlob(path: string, requestOptions: RequestOptions = {}): Promise<Blob> {
+  private async requestBlob(
+    path: string,
+    requestOptions: RequestOptions,
+    allowRefresh: boolean,
+  ): Promise<Blob> {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 10_000)
     try {
@@ -104,6 +121,7 @@ export class HttpClient {
         : this.options.getAuthorization?.()
       const baseUrl = (this.options.baseUrl ?? import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")
       const response = await fetch(`${baseUrl}${path}`, {
+        credentials: "include",
         headers: {
           Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
           ...(authorization ? { Authorization: authorization } : {}),
@@ -112,7 +130,17 @@ export class HttpClient {
         },
         signal: controller.signal,
       })
-      if (response.status === 401) this.options.onUnauthorized?.()
+      if (
+        response.status === 401
+        && requestOptions.authenticated !== false
+        && allowRefresh
+        && await this.options.refreshAuthorization?.()
+      ) {
+        return this.requestBlob(path, requestOptions, false)
+      }
+      if (response.status === 401 && requestOptions.authenticated !== false) {
+        this.options.onUnauthorized?.()
+      }
       if (response.status === 403) this.options.onForbidden?.()
       if (!response.ok) {
         const rawBody = await response.text()
@@ -128,6 +156,10 @@ export class HttpClient {
     } finally {
       clearTimeout(timeout)
     }
+  }
+
+  getBlob(path: string, requestOptions: RequestOptions = {}): Promise<Blob> {
+    return this.requestBlob(path, requestOptions, true)
   }
 
   post<T, TBody = unknown>(path: string, body?: TBody, options?: RequestOptions): Promise<T> {

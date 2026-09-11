@@ -7,8 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError
 from app.core.database import get_db_session
+from app.modules.auth.repository import AuthSessionRepository
 from app.modules.auth.schemas import CurrentUser
 from app.modules.auth.security import decode_token
+from app.modules.auth.service import AuthSessionService
 from app.modules.system.repository import UserRepository
 
 bearer = HTTPBearer(auto_error=False)
@@ -21,13 +23,21 @@ async def get_current_user(
     if credentials is None:
         raise AppError("AUTH_UNAUTHORIZED", "Authentication required", 401)
     try:
-        user_id, version = decode_token(credentials.credentials)
+        user_id, version, session_id = decode_token(credentials.credentials)
     except Exception as exc:
         raise AppError("AUTH_UNAUTHORIZED", "Invalid access token", 401) from exc
     repo = UserRepository(session)
     user = await repo.active_by_id(user_id)
     if user is None or user.user_status != "ENABLED" or user.token_version != version:
         raise AppError("AUTH_UNAUTHORIZED", "Invalid access token", 401)
+    if session_id is not None:
+        auth_session = await AuthSessionRepository(session).by_id(session_id)
+        if (
+            auth_session is None
+            or auth_session.user_id != user.id
+            or not AuthSessionService.is_active(auth_session)
+        ):
+            raise AppError("AUTH_UNAUTHORIZED", "Invalid access token", 401)
     roles, role_names, permissions, permission_names = await repo.codes(user.id)
     return CurrentUser(
         user_id=user.id,
@@ -36,6 +46,7 @@ async def get_current_user(
         role_names=role_names,
         permissions=permissions,
         permission_names=permission_names,
+        session_id=session_id,
     )
 
 

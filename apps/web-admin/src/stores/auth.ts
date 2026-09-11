@@ -32,6 +32,7 @@ export const useAuthStore = defineStore("auth", () => {
 
   async function loadCurrentUser(): Promise<void> {
     currentUser.value = await authApi.me()
+    accessToken.value = getAccessToken()
     status.value = "authenticated"
     initialized.value = true
   }
@@ -57,13 +58,12 @@ export const useAuthStore = defineStore("auth", () => {
     if (restorePromise) return restorePromise
 
     restorePromise = (async () => {
-      if (!accessToken.value) {
-        clearSession()
-        return
-      }
-
       status.value = "loading"
       try {
+        if (!getAccessToken()) {
+          const token = await authApi.refresh()
+          applyToken(token.access_token)
+        }
         await loadCurrentUser()
       } catch {
         clearSession()
@@ -77,7 +77,7 @@ export const useAuthStore = defineStore("auth", () => {
 
   async function logout(): Promise<void> {
     try {
-      if (accessToken.value) await authApi.logout()
+      await authApi.logout()
     } finally {
       clearSession()
     }

@@ -28,6 +28,14 @@ export const authApi = {
       : http.get<CurrentUser>("/api/v1/auth/me")
   },
 
+  refresh(): Promise<TokenResponse> {
+    return isMockMode
+      ? callMock((api) => api.refresh())
+      : http.post<TokenResponse>("/api/v1/auth/refresh", undefined, {
+          authenticated: false,
+        })
+  },
+
   logout(): Promise<{ status: string }> {
     return isMockMode
       ? callMock((api) => api.logout())

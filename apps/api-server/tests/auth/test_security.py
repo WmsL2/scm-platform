@@ -15,11 +15,13 @@ def test_argon2id_password_hash() -> None:
 
 
 def test_jwt_minimal_payload() -> None:
-    token = create_token(uuid.uuid4(), 1)
+    session_id = uuid.uuid4()
+    token = create_token(uuid.uuid4(), 1, session_id)
     payload = jwt.decode(token, options={"verify_signature": False})
-    assert {"sub", "ver", "iat", "exp"} <= payload.keys()
+    assert {"sub", "ver", "sid", "jti", "iat", "exp"} <= payload.keys()
     assert not {"roles", "permissions", "password", "supplier"} & payload.keys()
     assert decode_token(token)[1] == 1
+    assert decode_token(token)[2] == session_id
 
 
 @pytest.mark.parametrize(

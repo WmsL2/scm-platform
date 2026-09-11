@@ -2,7 +2,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import ApiResponse, PageParams, PageResult, success
@@ -19,6 +19,7 @@ from app.modules.account.schemas import (
     UserRolesRequest,
 )
 from app.modules.account.service import AccountService
+from app.modules.auth.api import clear_refresh_cookie
 from app.modules.auth.dependencies import get_current_user, require_permission
 from app.modules.auth.schemas import CurrentUser
 
@@ -36,12 +37,14 @@ async def register(
 @auth_router.post("/change-password", response_model=ApiResponse[dict[str, str]])
 async def change_password(
     payload: ChangePasswordRequest,
+    response: Response,
     current: Annotated[CurrentUser, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> ApiResponse[dict[str, str]]:
     await AccountService(session).change_password(
         current.user_id, payload.current_password, payload.new_password
     )
+    clear_refresh_cookie(response)
     return success({"status": "password_changed"})
 
 

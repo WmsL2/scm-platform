@@ -10,6 +10,7 @@ from app.core.transaction import transaction_scope
 from app.modules.account.repository import AccountRepository
 from app.modules.account.schemas import PermissionResponse, RoleResponse, UserResponse
 from app.modules.auth.security import hash_password, verify_password
+from app.modules.auth.service import AuthSessionService
 from app.modules.system.models import Role, User
 
 ROLE_MANAGEMENT_PERMISSION_CODES = {
@@ -58,6 +59,9 @@ class AccountService:
             user.password_hash = hash_password(new_password)
             user.token_version += 1
             user.updated_by = user_id
+            await AuthSessionService(self.session).revoke_all_for_user(
+                user_id, "password_changed"
+            )
 
     async def delete_user(self, user_id: uuid.UUID, actor: uuid.UUID) -> None:
         if user_id == actor:
@@ -75,6 +79,9 @@ class AccountService:
             user.deleted_at = datetime.now()
             user.updated_by = actor
             user.token_version += 1
+            await AuthSessionService(self.session).revoke_all_for_user(
+                user_id, "user_deleted"
+            )
 
     async def list_users(
         self, page: PageParams, pending_only: bool = False
