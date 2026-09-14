@@ -1,6 +1,6 @@
 # Handoff: Product Import Staged Media Cleanup
 
-状态：OPEN
+状态：COMPLETED
 
 日期：2026-09-10
 来源分支：`feat/product-import`
@@ -14,8 +14,8 @@
 
 ## Remaining Scope
 
-- 为长期未 Confirm 的导入预览任务定义并实现媒体清理策略，例如按任务状态、保留天数和 Product 正式引用排除条件清理。
-- 在实现清理前，绝不能删除 Confirm 后仍被 `scm_product.image_reference` 引用的图片。
+- 已由 `20260914_0023` / ADR-0017 实现：预览不再保存商品图片；超过 `PRODUCT_IMPORT_UNCONFIRMED_RETENTION_DAYS` 的未完成或部分确认任务在下一次预览时标记为 `EXPIRED`，并仅清理临时源文件和未导入行媒体。
+- 已确认的 Product 图片继续由 `scm_product.image_reference` 引用，明确排除在清理范围外。
 
 ## Constraints
 

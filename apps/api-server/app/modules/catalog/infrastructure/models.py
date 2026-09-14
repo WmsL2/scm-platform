@@ -165,7 +165,7 @@ class ProductImportTask(Base):
     __table_args__ = (
         CheckConstraint(
             "status IN ('VALIDATED', 'NEEDS_RESOLUTION', 'READY_TO_CONFIRM', "
-            "'PARTIALLY_CONFIRMED', 'CONFIRMED')",
+            "'PARTIALLY_CONFIRMED', 'CONFIRMED', 'EXPIRED')",
             name="ck_scm_product_import_task_status",
         ),
     )
@@ -177,6 +177,7 @@ class ProductImportTask(Base):
     valid_rows: Mapped[int] = mapped_column(nullable=False)
     invalid_rows: Mapped[int] = mapped_column(nullable=False)
     imported_rows: Mapped[int] = mapped_column(nullable=False, default=0)
+    source_file_storage_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")

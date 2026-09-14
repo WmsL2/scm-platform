@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     task_mode: str = "inline"
     storage_mode: str = "local"
     local_storage_path: Path = Path("local-data/files")
+    product_import_unconfirmed_retention_days: int = 7
     redis_enabled: bool = False
     minio_enabled: bool = False
 
@@ -43,6 +44,7 @@ class Settings(BaseSettings):
         "auth_refresh_idle_days",
         "auth_session_absolute_days",
         "auth_refresh_rotation_grace_seconds",
+        "product_import_unconfirmed_retention_days",
     )
     @classmethod
     def positive_auth_duration(cls, value: int) -> int:
