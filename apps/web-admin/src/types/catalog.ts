@@ -98,6 +98,7 @@ export interface ProductImportRow {
   product_name: string | null
   supplier_name_raw: string | null
   image_saved: boolean
+  image_pending_save: boolean
   category_path: string
   category_id: string | null
   supplier_match_id: string | null

@@ -1,3 +1,4 @@
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.common.contracts import success
@@ -29,6 +30,9 @@ async def test_local_storage(tmp_path) -> None:
     assert key.startswith("product-images/task/")
     assert key.endswith(".png")
     assert await storage.read(key) == b"content"
+    await storage.delete(key)
+    with pytest.raises(FileNotFoundError):
+        await storage.read(key)
 
 
 def test_response() -> None:

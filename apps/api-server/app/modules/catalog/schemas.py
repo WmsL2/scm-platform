@@ -168,6 +168,7 @@ class ProductImportRowResponse(BaseModel):
     product_name: str | None
     supplier_name_raw: str | None
     image_saved: bool
+    image_pending_save: bool
     category_path: str
     category_id: uuid.UUID | None
     supplier_match_id: uuid.UUID | None

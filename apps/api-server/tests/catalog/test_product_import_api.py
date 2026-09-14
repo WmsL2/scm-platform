@@ -88,7 +88,9 @@ async def _create_references() -> uuid.UUID:
     return supplier_id
 
 
-def _workbook_bytes(*supplier_names: str) -> bytes:
+def _workbook_bytes(
+    *supplier_names: str, image_value: str = "https://example.test/image.png"
+) -> bytes:
     workbook = Workbook()
     worksheet = workbook.active
     assert worksheet is not None
@@ -96,7 +98,7 @@ def _workbook_bytes(*supplier_names: str) -> bytes:
     for index, supplier_name in enumerate(supplier_names, start=1):
         worksheet.append(
             [
-                "2026-09-10", "测试品牌", "https://example.test/image.png", "型号",
+                "2026-09-10", "测试品牌", image_value, "型号",
                 f"SKU-{index}", "测试商品",
                 "测试一级", "测试二级", "测试三级", "货号", "https://example.test/item", "100",
                 "999", "201", "199.9", "155.55", "55.55", "0.1234", "0.1111", "0.2778", "采销员",
@@ -328,6 +330,52 @@ async def test_product_import_confirms_valid_rows_and_retains_failed_rows() -> N
                 (await session.scalars(select(Product).where(Product.created_by == user_id))).all()
             )
             assert sorted(product.sku for product in products) == ["SKU-1", "SKU-2"]
+    finally:
+        await _cleanup_import_data(supplier_id, user_id)
+        await _cleanup_import_user(user_id)
+
+
+async def test_product_import_defers_formula_image_storage_until_confirm() -> None:
+    user_id, headers = await _create_import_user()
+    supplier_id = await _create_references()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "formula-image-products.xlsx",
+                        _workbook_bytes(
+                            "导入测试供应商",
+                            image_value='=DISPIMG("ID_PRODUCT",1)',
+                        ),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert preview.status_code == 200
+            data = preview.json()["data"]
+            assert data["rows"][0]["image_saved"] is False
+            assert data["rows"][0]["image_pending_save"] is True
+
+            async with SessionLocal() as session:
+                task = await session.get(ProductImportTask, data["id"])
+                row = await session.scalar(
+                    select(ProductImportRow).where(ProductImportRow.import_task_id == data["id"])
+                )
+                assert task is not None and task.source_file_storage_key is not None
+                assert row is not None and row.image_storage_key is None
+
+            confirmed = await client.post(
+                f"/api/v1/products/imports/{data['id']}/confirm", headers=headers
+            )
+            assert confirmed.status_code == 200
+            assert confirmed.json()["data"]["status"] == "CONFIRMED"
+
+            async with SessionLocal() as session:
+                task = await session.get(ProductImportTask, data["id"])
+                assert task is not None and task.source_file_storage_key is None
     finally:
         await _cleanup_import_data(supplier_id, user_id)
         await _cleanup_import_user(user_id)

@@ -24,6 +24,7 @@ class ArqTaskQueue:
 class ObjectStorage(Protocol):
     async def save(self, name: str, content: bytes) -> str: ...
     async def read(self, key: str) -> bytes: ...
+    async def delete(self, key: str) -> None: ...
 
 
 class LocalFileStorage:
@@ -53,6 +54,9 @@ class LocalFileStorage:
     async def read(self, key: str) -> bytes:
         return self._target(key).read_bytes()
 
+    async def delete(self, key: str) -> None:
+        self._target(key).unlink(missing_ok=True)
+
 
 class MinioStorage:
     async def healthcheck(self) -> None:
@@ -63,6 +67,10 @@ class MinioStorage:
         raise RuntimeError("MinIO storage is not configured")
 
     async def read(self, key: str) -> bytes:
+        del key
+        raise RuntimeError("MinIO storage is not configured")
+
+    async def delete(self, key: str) -> None:
         del key
         raise RuntimeError("MinIO storage is not configured")
 

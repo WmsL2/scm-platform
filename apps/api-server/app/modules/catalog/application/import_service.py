@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 
@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError
+from app.core.config import get_settings
 from app.core.transaction import transaction_scope
 from app.infrastructure.adapters import ObjectStorage, get_object_storage
 from app.modules.catalog.application.excel_images import (
@@ -108,9 +109,12 @@ class ProductImportService:
     async def preview(
         self, filename: str, file_bytes: bytes, actor_id: uuid.UUID
     ) -> ProductImportPreviewResponse:
+        await self._cleanup_expired_temp_media()
         self._validate_upload(filename, file_bytes)
         rows = self._parse_rows(file_bytes)
-        embedded_images = extract_dispimg_images(file_bytes)
+        has_embedded_image_formula = any(
+            dispimg_image_id(row.source_data.get("图片")) is not None for row in rows
+        )
         candidates = await self.supplier_repository.eligible_source_suppliers()
         task = ProductImportTask(
             original_filename=filename[:255],
@@ -124,12 +128,22 @@ class ProductImportService:
         )
         self._create_supplier_matches(task, candidates)
         self._assign_row_matches(task)
-        async with transaction_scope(self.session):
-            self.session.add(task)
-            await self.session.flush()
-            await self._stage_images(task, embedded_images)
-            await self._refresh_validation(task)
-            response = await self._preview_response(task)
+        stored_source_key: str | None = None
+        try:
+            async with transaction_scope(self.session):
+                self.session.add(task)
+                await self.session.flush()
+                if has_embedded_image_formula:
+                    stored_source_key = await self.storage.save(
+                        f"product-import-sources/{task.id}.xlsx", file_bytes
+                    )
+                    task.source_file_storage_key = stored_source_key
+                await self._refresh_validation(task)
+                response = await self._preview_response(task)
+        except Exception:
+            if stored_source_key is not None:
+                await self.storage.delete(stored_source_key)
+            raise
         return response
 
     async def get_preview(self, task_id: uuid.UUID) -> ProductImportPreviewResponse:
@@ -183,102 +197,124 @@ class ProductImportService:
     async def confirm(
         self, task_id: uuid.UUID, actor_id: uuid.UUID
     ) -> ProductImportConfirmResponse:
-        async with transaction_scope(self.session):
-            task = await self.repository.import_task_by_id_for_update(task_id)
-            self._assert_editable_task(task, actor_id)
-            assert task is not None
-            await self._refresh_validation(task)
-            rows_to_import = [row for row in task.rows if row.is_valid and not row.is_imported]
-            if not rows_to_import:
-                raise AppError(
-                    "PRODUCT_IMPORT_NO_VALID_ROWS",
-                    "There are no validated rows available to import",
-                    409,
-                )
-            matches = {match.id: match for match in task.supplier_matches}
-            try:
-                async with self.session.begin_nested():
-                    row_supplier_sku_keys: dict[int, tuple[uuid.UUID, str]] = {}
-                    for row in rows_to_import:
-                        match = (
-                            matches.get(row.supplier_match_id) if row.supplier_match_id else None
-                        )
-                        if match is None or match.matched_supplier_id is None:
-                            raise RuntimeError(
-                                "A ready Product Import row is missing a resolved relation"
-                            )
-                        sku = self._optional(row.source_data["sku"])
-                        if sku is None:
-                            raise RuntimeError("A ready Product Import row is missing an SKU")
-                        row_supplier_sku_keys[row.source_row_number] = (
-                            match.matched_supplier_id,
-                            sku,
-                        )
-                    existing_products = await self.repository.products_by_supplier_sku(
-                        set(row_supplier_sku_keys.values()), for_update=True
-                    )
-                    imported_count = 0
-                    for row in rows_to_import:
-                        match = (
-                            matches.get(row.supplier_match_id) if row.supplier_match_id else None
-                        )
-                        if match is None or match.matched_supplier_id is None:
-                            raise RuntimeError(
-                                "A ready Product Import row is missing a resolved relation"
-                            )
-                        supplier = await self.supplier_repository.active_by_id(
-                            match.matched_supplier_id
-                        )
-                        if supplier is None or not self._supplier_is_eligible(supplier):
-                            raise AppError(
-                                "PRODUCT_IMPORT_REFERENCE_CHANGED",
-                                "A source supplier changed after preview; preview the batch again",
-                                409,
-                            )
-                        supplier_sku_key = row_supplier_sku_keys[row.source_row_number]
-                        existing_product = existing_products.get(supplier_sku_key)
-                        if existing_product is None:
-                            self.session.add(
-                                self._product_from_row(row, match.matched_supplier_id, actor_id)
-                            )
-                            imported_count += 1
-                        else:
-                            raise AppError(
-                                "PRODUCT_IMPORT_DISABLED_PRODUCT"
-                                if existing_product.status == ProductStatus.DISABLED
-                                else "PRODUCT_IMPORT_DUPLICATE_PRODUCT",
-                                "A disabled product with the same source supplier and SKU must be "
-                                "enabled or permanently deleted before importing"
-                                if existing_product.status == ProductStatus.DISABLED
-                                else (
-                                    "A product with the same source supplier and SKU already exists"
-                                ),
-                                409,
-                            )
-                    await self.session.flush()
-            except IntegrityError as exc:
-                if "uq_scm_product_source_supplier_sku" in str(exc.orig).lower():
+        staged_image_keys: list[str] = []
+        completed_source: tuple[uuid.UUID, str] | None = None
+        try:
+            async with transaction_scope(self.session):
+                task = await self.repository.import_task_by_id_for_update(task_id)
+                self._assert_editable_task(task, actor_id)
+                assert task is not None
+                await self._refresh_validation(task)
+                rows_to_import = [row for row in task.rows if row.is_valid and not row.is_imported]
+                if not rows_to_import:
                     raise AppError(
-                        "PRODUCT_IMPORT_DUPLICATE_PRODUCT",
-                        "A product with the same source supplier and SKU already exists",
+                        "PRODUCT_IMPORT_NO_VALID_ROWS",
+                        "There are no validated rows available to import",
                         409,
-                    ) from exc
-                raise
-            task.confirmed_by = actor_id
-            task.confirmed_at = datetime.now()
-            for row in rows_to_import:
-                row.is_imported = True
-                row.imported_by = actor_id
-                row.imported_at = task.confirmed_at
-            await self._refresh_validation(task)
-            response = ProductImportConfirmResponse(
-                id=task.id,
-                status=task.status,
-                imported_count=imported_count,
-                imported_rows=task.imported_rows,
-                valid_rows=task.valid_rows,
-                invalid_rows=task.invalid_rows,
-            )
+                    )
+                matches = {match.id: match for match in task.supplier_matches}
+                try:
+                    async with self.session.begin_nested():
+                        row_supplier_sku_keys: dict[int, tuple[uuid.UUID, str]] = {}
+                        for row in rows_to_import:
+                            match = (
+                                matches.get(row.supplier_match_id)
+                                if row.supplier_match_id
+                                else None
+                            )
+                            if match is None or match.matched_supplier_id is None:
+                                raise RuntimeError(
+                                    "A ready Product Import row is missing a resolved relation"
+                                )
+                            sku = self._optional(row.source_data["sku"])
+                            if sku is None:
+                                raise RuntimeError("A ready Product Import row is missing an SKU")
+                            row_supplier_sku_keys[row.source_row_number] = (
+                                match.matched_supplier_id,
+                                sku,
+                            )
+                        existing_products = await self.repository.products_by_supplier_sku(
+                            set(row_supplier_sku_keys.values()), for_update=True
+                        )
+                        resolved_rows: list[tuple[ProductImportRow, uuid.UUID]] = []
+                        for row in rows_to_import:
+                            match = (
+                                matches.get(row.supplier_match_id)
+                                if row.supplier_match_id
+                                else None
+                            )
+                            if match is None or match.matched_supplier_id is None:
+                                raise RuntimeError(
+                                    "A ready Product Import row is missing a resolved relation"
+                                )
+                            supplier = await self.supplier_repository.active_by_id(
+                                match.matched_supplier_id
+                            )
+                            if supplier is None or not self._supplier_is_eligible(supplier):
+                                raise AppError(
+                                    "PRODUCT_IMPORT_REFERENCE_CHANGED",
+                                    "A source supplier changed after preview; "
+                                    "preview the batch again",
+                                    409,
+                                )
+                            supplier_sku_key = row_supplier_sku_keys[row.source_row_number]
+                            existing_product = existing_products.get(supplier_sku_key)
+                            if existing_product is not None:
+                                raise AppError(
+                                    "PRODUCT_IMPORT_DISABLED_PRODUCT"
+                                    if existing_product.status == ProductStatus.DISABLED
+                                    else "PRODUCT_IMPORT_DUPLICATE_PRODUCT",
+                                    "A disabled product with the same source supplier and SKU "
+                                    "must be "
+                                    "enabled or permanently deleted before importing"
+                                    if existing_product.status == ProductStatus.DISABLED
+                                    else (
+                                        "A product with the same source supplier "
+                                        "and SKU already exists"
+                                    ),
+                                    409,
+                                )
+                            resolved_rows.append((row, match.matched_supplier_id))
+                        staged_image_keys = await self._stage_confirmed_row_images(
+                            task, rows_to_import
+                        )
+                        for row, source_supplier_id in resolved_rows:
+                            self.session.add(
+                                self._product_from_row(row, source_supplier_id, actor_id)
+                            )
+                        imported_count = len(resolved_rows)
+                        await self.session.flush()
+                except IntegrityError as exc:
+                    if "uq_scm_product_source_supplier_sku" in str(exc.orig).lower():
+                        raise AppError(
+                            "PRODUCT_IMPORT_DUPLICATE_PRODUCT",
+                            "A product with the same source supplier and SKU already exists",
+                            409,
+                        ) from exc
+                    raise
+                task.confirmed_by = actor_id
+                task.confirmed_at = datetime.now()
+                for row in rows_to_import:
+                    row.is_imported = True
+                    row.imported_by = actor_id
+                    row.imported_at = task.confirmed_at
+                await self._refresh_validation(task)
+                if task.status == "CONFIRMED" and task.source_file_storage_key:
+                    completed_source = (task.id, task.source_file_storage_key)
+                response = ProductImportConfirmResponse(
+                    id=task.id,
+                    status=task.status,
+                    imported_count=imported_count,
+                    imported_rows=task.imported_rows,
+                    valid_rows=task.valid_rows,
+                    invalid_rows=task.invalid_rows,
+                )
+        except Exception:
+            for key in staged_image_keys:
+                await self.storage.delete(key)
+            raise
+        if completed_source is not None:
+            await self._delete_completed_source(*completed_source)
         return response
 
     def _validate_upload(self, filename: str, file_bytes: bytes) -> None:
@@ -483,9 +519,6 @@ class ProductImportService:
                 errors.append("该来源供应商与SKU组合已存在")
             elif first_excel_row is not None:
                 errors.append(f"与Excel第{first_excel_row}行的来源供应商与SKU重复")
-        image_value = values["图片"] or ""
-        if image_value.startswith("=") and row.image_storage_key is None:
-            warnings.append("图片公式未找到可保存的内嵌图片，正式图片引用暂不写入")
         if values["上架日期"] and self._optional_date(values["上架日期"]) is None:
             warnings.append("上架日期无法确定年份，正式商品将暂不写入上架日期")
         return errors, warnings
@@ -549,10 +582,102 @@ class ProductImportService:
             updated_by=actor_id,
         )
 
-    async def _stage_images(
-        self, task: ProductImportTask, embedded_images: dict[str, ExcelImage]
+    async def _stage_confirmed_row_images(
+        self, task: ProductImportTask, rows: list[ProductImportRow]
+    ) -> list[str]:
+        if not any(dispimg_image_id(row.source_data.get("图片")) for row in rows):
+            return []
+        if not task.source_file_storage_key:
+            raise AppError(
+                "PRODUCT_IMPORT_SOURCE_FILE_MISSING",
+                "The temporary import file is unavailable; upload the workbook again",
+                409,
+            )
+        try:
+            source_file = await self.storage.read(task.source_file_storage_key)
+        except FileNotFoundError as exc:
+            raise AppError(
+                "PRODUCT_IMPORT_SOURCE_FILE_MISSING",
+                "The temporary import file is unavailable; upload the workbook again",
+                409,
+            ) from exc
+        return await self._stage_images(task, extract_dispimg_images(source_file), rows)
+
+    async def _cleanup_expired_temp_media(self) -> None:
+        cutoff = datetime.now() - timedelta(
+            days=get_settings().product_import_unconfirmed_retention_days
+        )
+        async with transaction_scope(self.session):
+            tasks = await self.repository.temporary_media_cleanup_tasks_for_update(
+                stale_before=cutoff
+            )
+            cleanup_targets: list[tuple[uuid.UUID, str | None, list[str]]] = []
+            for task in tasks:
+                if task.status in {
+                    "VALIDATED",
+                    "NEEDS_RESOLUTION",
+                    "READY_TO_CONFIRM",
+                    "PARTIALLY_CONFIRMED",
+                }:
+                    task.status = "EXPIRED"
+                if task.status == "EXPIRED":
+                    cleanup_targets.append(
+                        (
+                            task.id,
+                            task.source_file_storage_key,
+                            [
+                                row.image_storage_key
+                                for row in task.rows
+                                if row.image_storage_key is not None and not row.is_imported
+                            ],
+                        )
+                    )
+                elif task.status == "CONFIRMED" and task.source_file_storage_key:
+                    cleanup_targets.append((task.id, task.source_file_storage_key, []))
+        for task_id, source_key, image_keys in cleanup_targets:
+            await self._delete_task_temp_media(task_id, source_key, image_keys)
+
+    async def _delete_completed_source(self, task_id: uuid.UUID, source_key: str) -> None:
+        await self._delete_task_temp_media(task_id, source_key, [])
+
+    async def _delete_task_temp_media(
+        self, task_id: uuid.UUID, source_key: str | None, image_keys: list[str]
     ) -> None:
-        for row in task.rows:
+        deleted_source = False
+        deleted_images: set[str] = set()
+        if source_key is not None:
+            try:
+                await self.storage.delete(source_key)
+                deleted_source = True
+            except Exception:
+                pass
+        for image_key in image_keys:
+            try:
+                await self.storage.delete(image_key)
+                deleted_images.add(image_key)
+            except Exception:
+                pass
+        if not deleted_source and not deleted_images:
+            return
+        async with transaction_scope(self.session):
+            task = await self.repository.import_task_by_id_for_update(task_id)
+            if task is None or task.status not in {"EXPIRED", "CONFIRMED"}:
+                return
+            if deleted_source and task.source_file_storage_key == source_key:
+                task.source_file_storage_key = None
+            if task.status == "EXPIRED":
+                for row in task.rows:
+                    if not row.is_imported and row.image_storage_key in deleted_images:
+                        row.image_storage_key = None
+
+    async def _stage_images(
+        self,
+        task: ProductImportTask,
+        embedded_images: dict[str, ExcelImage],
+        rows: list[ProductImportRow] | None = None,
+    ) -> list[str]:
+        saved_keys: list[str] = []
+        for row in rows or task.rows:
             image_id = dispimg_image_id(row.source_data.get("图片"))
             image = embedded_images.get(image_id or "")
             if image is None:
@@ -560,6 +685,8 @@ class ProductImportService:
             row.image_storage_key = await self.storage.save(
                 f"product-images/{task.id}/{row.id}{image.extension}", image.content
             )
+            saved_keys.append(row.image_storage_key)
+        return saved_keys
 
     @staticmethod
     def _image_reference(row: ProductImportRow) -> str | None:
@@ -577,6 +704,12 @@ class ProductImportService:
                 "PRODUCT_IMPORT_TASK_FORBIDDEN",
                 "Only the uploader can resolve or confirm this import batch",
                 403,
+            )
+        if task.status == "EXPIRED":
+            raise AppError(
+                "PRODUCT_IMPORT_TASK_EXPIRED",
+                "This unconfirmed import expired; upload the workbook again",
+                409,
             )
         if task.status == "CONFIRMED":
             raise AppError(
@@ -617,6 +750,10 @@ class ProductImportService:
                     product_name=self._optional(row.source_data["商品名称"]),
                     supplier_name_raw=row.supplier_name_raw,
                     image_saved=row.image_storage_key is not None,
+                    image_pending_save=(
+                        row.image_storage_key is None
+                        and dispimg_image_id(row.source_data.get("图片")) is not None
+                    ),
                     category_path=" / ".join(
                         self._normalized(row.source_data[name])
                         for name in ("一级类目", "二级类目", "三级类目")

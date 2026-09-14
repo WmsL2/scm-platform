@@ -374,7 +374,7 @@ onMounted(() => void loadProducts())
           <el-table-column prop="source_row_number" label="Excel 行" width="90" />
           <el-table-column prop="product_name" label="商品名称" min-width="180" show-overflow-tooltip />
           <el-table-column label="图片" width="85">
-            <template #default="{ row }">{{ row.image_saved ? "已保存" : "—" }}</template>
+            <template #default="{ row }">{{ row.image_saved ? "已保存" : row.image_pending_save ? "确认后保存" : "—" }}</template>
           </el-table-column>
           <el-table-column prop="category_path" label="类目" min-width="220" show-overflow-tooltip />
           <el-table-column prop="supplier_name_raw" label="供应商原值" min-width="180" />

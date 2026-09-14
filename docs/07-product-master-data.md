@@ -79,9 +79,9 @@ Revision `20260911_0020` 将 Product 生命周期冻结为 `ACTIVE` / `DISABLED`
 
 ## 商品图片本地保存
 
-固定大表的 WPS/Excel `DISPIMG` 图片会在预览时从工作簿内嵌媒体提取，保存到项目相对目录 `local-data/files/product-images/<import-task-id>/`。实际媒体文件受 `.gitignore` 隔离，其他开发者在自己的项目目录使用相同相对位置即可保存；数据库不保存本机绝对路径，只保存形如 `local-media/product-images/...` 的站内相对引用。后端通过 `/local-media/` 提供该本地开发媒体。
+预览只检测固定大表的 WPS/Excel `DISPIMG` 图片，并在有公式图片时受控保留临时源 Excel；预览不提取或保存商品图片。Confirm 时仅当前实际写入正式 Product 的通过行才从临时源文件提取媒体，保存到项目相对目录 `local-data/files/product-images/<import-task-id>/`。实际媒体文件受 `.gitignore` 隔离；数据库不保存本机绝对路径，只保存形如 `local-media/product-images/...` 的站内相对引用。后端通过 `/local-media/` 提供该本地开发媒体。
 
-无法从工作簿找到对应内嵌图片时只产生警告，不影响供应商等其他校验；正式 Product 的图片引用为空。非公式图片列仍按原始 URL/文本保存。
+无法从工作簿找到对应内嵌图片时不阻断其他业务校验；正式 Product 的图片引用为空。非公式图片列仍按原始 URL/文本保存。全量 Confirm 后临时源 Excel 立即删除；每次新预览会将超过 `PRODUCT_IMPORT_UNCONFIRMED_RETENTION_DAYS`（默认 7 天）的未完成或部分确认任务标记为 `EXPIRED`，仅删除其临时源文件与未导入行媒体。正式 Product 引用的图片不参与清理，过期任务必须重新上传。
 
 `scm_product.source_supplier_id` 表示商品大表该行的**来源供应商**，不是当前报价供应商，也不是唯一供应商。成本价更新不自动新建报价关联或历史记录。
 
@@ -93,6 +93,6 @@ Excel“供应商”原值只写入 Staging 的 `supplier_name_raw`，用于审�
 
 有效候选必须同时为 `ARCHIVED`、`NORMAL`、未逻辑删除。多个有效候选为 `AMBIGUOUS`；没有同名供应商为 `UNMATCHED`；存在同名但均不符合有效条件为 `INELIGIBLE`。后三者必须由用户从当前有效 Supplier Master 中人工选择（`MANUAL`），或先在 Supplier Master 处理后重试；不得在导入页面创建、归档或恢复供应商，也不得创建独立报价记录。
 
-当前实现的 Import Task 状态为 `VALIDATED`、`NEEDS_RESOLUTION`、`READY_TO_CONFIRM`、`PARTIALLY_CONFIRMED`、`CONFIRMED`。Confirm 对当前所有通过且尚未导入的行保持单事务原子性：重新校验必要字段、Match Decision 和每个 `matched_supplier_id` 仍为有效候选后，才写正式商品并将其作为 `source_supplier_id`。类目和 Excel 价格不再被二次解析或重算。任一拟导入行的供应商/必要字段失败不得让本次其他通过行部分写入；不通过行保留在 Staging，绝不入库。已导入行不再参与后续校验，避免被其自身的正式 Product 防重键阻塞或重复写入。
+当前实现的 Import Task 状态为 `VALIDATED`、`NEEDS_RESOLUTION`、`READY_TO_CONFIRM`、`PARTIALLY_CONFIRMED`、`CONFIRMED`、`EXPIRED`。Confirm 对当前所有通过且尚未导入的行保持单事务原子性：重新校验必要字段、Match Decision 和每个 `matched_supplier_id` 仍为有效候选后，才提取该批行的图片、写正式商品并将其作为 `source_supplier_id`。类目和 Excel 价格不再被二次解析或重算。任一拟导入行的供应商/必要字段失败不得让本次其他通过行部分写入；不通过行保留在 Staging，绝不入库。已导入行不再参与后续校验，避免被其自身的正式 Product 防重键阻塞或重复写入。
 
 已实现 API：`GET /api/v1/products/imports/template`、`POST /api/v1/products/imports/preview`、`GET /api/v1/products/imports/{task_id}`、`GET /api/v1/products/imports/supplier-candidates`、`POST /api/v1/products/imports/{task_id}/supplier-matches/{match_id}/resolve`、`POST /api/v1/products/imports/{task_id}/confirm`。模板下载与其他导入 API 均要求 `product:import`；人工解析请求只提交 `{ "supplier_id": "<UUID>" }`；Backend 必须再次验证该 UUID 当前有效，前端不得把 supplier_name 作为正式选择结果。

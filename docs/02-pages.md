@@ -132,7 +132,7 @@
 
 同一“来源供应商 + SKU”存在正常或已停用商品时均视为重复并阻止导入。停用商品必须显式启用，或在永久删除后才能以新 Excel 创建同键商品；导入不会恢复或覆盖已有商品字段。
 
-对于 WPS/Excel 内嵌 `DISPIMG`，预览行显示“已保存”；Confirm 后商品详情展示可预览的本地图片。数据库只保存相对媒体引用，项目下 `local-data/` 的实际图片不进入 Git。
+对于 WPS/Excel 内嵌 `DISPIMG`，预览行显示“确认后保存”，不生成商品图片文件；Confirm 时仅当前实际写入正式 Product 的通过行提取并保存图片。数据库只保存相对媒体引用，项目下 `local-data/` 的实际图片不进入 Git。
 
 “供应商解析”区域按标准化供应商名称分组显示 Excel 原值、涉及行数、匹配状态、供应商编码/名称。`AMBIGUOUS`、`UNMATCHED`、`INELIGIBLE` 可打开“选择供应商”，仅显示当前 `ARCHIVED + NORMAL + not deleted` 的 Supplier Master；候选展示 supplier_code、supplier_name、main_brands。界面不突出 UUID，但提交的是 supplier_id UUID；同组只处理一次。解析后产生的通过行可继续导入，已经导入的行不会再次导入。
 

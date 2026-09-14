@@ -1,13 +1,19 @@
 import uuid
+from datetime import datetime
 from typing import cast
 
-from sqlalchemy import Select, func, or_, select, tuple_
+from sqlalchemy import Select, and_, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.common.contracts import PageParams
 from app.modules.catalog.domain.lifecycle import ProductStatus
-from app.modules.catalog.infrastructure.models import Category, Product, ProductImportTask
+from app.modules.catalog.infrastructure.models import (
+    Category,
+    Product,
+    ProductImportRow,
+    ProductImportTask,
+)
 from app.modules.supplier.domain.rules import CooperationStatus
 from app.modules.supplier.infrastructure.models import Supplier
 
@@ -84,6 +90,47 @@ class ProductRepository:
             .with_for_update()
         )
         return cast(ProductImportTask | None, await self.session.scalar(statement))
+
+    async def temporary_media_cleanup_tasks_for_update(
+        self, *, stale_before: datetime
+    ) -> list[ProductImportTask]:
+        statement = (
+            select(ProductImportTask)
+            .options(selectinload(ProductImportTask.rows))
+            .where(
+                or_(
+                    and_(
+                        ProductImportTask.status.in_(
+                            (
+                                "VALIDATED",
+                                "NEEDS_RESOLUTION",
+                                "READY_TO_CONFIRM",
+                                "PARTIALLY_CONFIRMED",
+                            )
+                        ),
+                        ProductImportTask.created_at < stale_before,
+                    ),
+                    and_(
+                        ProductImportTask.status == "EXPIRED",
+                        or_(
+                            ProductImportTask.source_file_storage_key.is_not(None),
+                            select(ProductImportRow.id)
+                            .where(
+                                ProductImportRow.import_task_id == ProductImportTask.id,
+                                ProductImportRow.image_storage_key.is_not(None),
+                            )
+                            .exists(),
+                        ),
+                    ),
+                    and_(
+                        ProductImportTask.status == "CONFIRMED",
+                        ProductImportTask.source_file_storage_key.is_not(None),
+                    ),
+                )
+            )
+            .with_for_update()
+        )
+        return list((await self.session.scalars(statement)).all())
 
     async def products_by_supplier_sku(
         self, keys: set[tuple[uuid.UUID, str]], *, for_update: bool = False

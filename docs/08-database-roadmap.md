@@ -78,7 +78,7 @@ Supplier：
 
 # Sprint 4：Product Import（已实现）
 
-- `scm_product_import_task`
+- `scm_product_import_task`（含临时源 Excel 的 `source_file_storage_key`；仅用于后续 Confirm 提取内嵌图片）
 - `scm_product_import_row`（以 `source_data`、`calculated_data`、`supplier_name_raw`、`image_storage_key` 和行级错误/警告保存 Staging）
 - `scm_product_import_supplier_match`（按 import_task_id + supplier_name_normalized 的来源供应商匹配决策）
 
