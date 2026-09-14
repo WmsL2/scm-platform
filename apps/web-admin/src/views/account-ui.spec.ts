@@ -3,7 +3,7 @@ import BasicLayout from "../layouts/BasicLayout.vue"
 import UsersView from "./admin/UsersView.vue"
 import RolesView from "./admin/RolesView.vue"
 import RegistrationsView from "./admin/RegistrationsView.vue"
-import RegisterView from "./auth/RegisterView.vue"
+import LoginView from "./auth/LoginView.vue"
 
 describe("account UI contracts", () => {
   const source = (component: { setup?: unknown }) => String(component.setup)
@@ -28,9 +28,13 @@ describe("account UI contracts", () => {
     expect(source(RegistrationsView)).toContain("error.status === 409")
     expect(source(RegistrationsView)).toContain("accountApi.registrationHistory")
   })
-  it("keeps registration confirmation local and profile/password contracts explicit", () => {
-    expect(source(RegisterView)).toContain("form.confirm")
-    expect(source(RegisterView)).toContain("accountApi.register(username, form.password)")
+  it("combines login and registration while keeping account contracts explicit", () => {
+    expect(source(LoginView)).toContain('route.name === "register"')
+    expect(source(LoginView)).toContain('confirm: ""')
+    expect(source(LoginView)).toContain("accountApi.register")
+    expect(render(LoginView)).toContain('switchMode("login")')
+    expect(render(LoginView)).toContain('switchMode("register")')
+    expect(render(LoginView)).toContain("registerForm.confirm")
     expect(source(BasicLayout)).toContain("confirm_new_password")
     expect(source(BasicLayout)).toContain("auth.clearSession()")
     expect(source(BasicLayout)).toContain("workspace.reset()")

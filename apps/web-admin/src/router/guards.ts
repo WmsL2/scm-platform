@@ -14,7 +14,7 @@ export function installRouterGuards(router: Router, pinia: Pinia): void {
     const auth = useAuthStore(pinia)
     await auth.restoreSession()
 
-    if (to.name === "login" && auth.isAuthenticated) {
+    if ((to.name === "login" || to.name === "register") && auth.isAuthenticated) {
       return safeRedirect(to.query.redirect)
     }
 

@@ -2,7 +2,6 @@ import { createRouter, createWebHistory } from "vue-router"
 
 import BasicLayout from "../layouts/BasicLayout.vue"
 import LoginView from "../views/auth/LoginView.vue"
-import RegisterView from "../views/auth/RegisterView.vue"
 import DashboardView from "../views/dashboard/DashboardView.vue"
 import ForbiddenView from "../views/ForbiddenView.vue"
 import NotFoundView from "../views/NotFoundView.vue"
@@ -22,7 +21,7 @@ const router = createRouter({
       component: LoginView,
       meta: { title: "登录" },
     },
-    { path: "/register", name: "register", component: RegisterView, meta: { title: "注册" } },
+    { path: "/register", name: "register", component: LoginView, meta: { title: "注册" } },
     {
       path: "/",
       component: BasicLayout,
