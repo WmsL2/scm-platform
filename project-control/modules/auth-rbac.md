@@ -19,7 +19,8 @@
 ## Frontend
 
 - 实现分支：`feat/web-admin-auth-shell`。
-- [x] 登录页面和表单校验。
+- [x] 登录与注册共用认证卡片，通过双页签原地切换；保留 `/login`、`/register`
+  直接访问和各自表单校验，注册仍进入管理员审批流程。
 - [x] Pinia Auth Store、内存 Access Token 和 HttpOnly Cookie 刷新恢复。
 - [x] login、refresh、me、logout API 封装。
 - [x] 本地开发 Mock / 真实 FastAPI 配置切换，生产构建强制关闭 Mock，页面明确展示当前模式。

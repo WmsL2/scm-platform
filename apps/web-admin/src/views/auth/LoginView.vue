@@ -4,24 +4,44 @@ import { useRoute, useRouter } from "vue-router"
 import { Check, Connection, Lock, User } from "@element-plus/icons-vue"
 import { ElMessage, type FormInstance, type FormRules } from "element-plus"
 
+import { accountApi } from "../../api/account"
 import { isMockMode } from "../../api/auth"
 import { HttpError } from "../../shared/http"
 import { useAuthStore } from "../../stores/auth"
 import type { LoginRequest } from "../../types/auth"
 
+type AuthMode = "login" | "register"
+
+interface RegisterForm {
+  username: string
+  password: string
+  confirm: string
+}
+
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const formRef = ref<FormInstance>()
-const submitting = ref(false)
+const loginFormRef = ref<FormInstance>()
+const registerFormRef = ref<FormInstance>()
+const loginSubmitting = ref(false)
+const registerSubmitting = ref(false)
+const registrationDone = ref(false)
 const appTitle = import.meta.env.VITE_APP_TITLE ?? "众诚智链商品管理平台"
 
-const form = reactive<LoginRequest>({
+const mode = computed<AuthMode>(() => (route.name === "register" ? "register" : "login"))
+
+const loginForm = reactive<LoginRequest>({
   username: isMockMode ? "admin" : "",
   password: "",
 })
 
-const rules: FormRules<LoginRequest> = {
+const registerForm = reactive<RegisterForm>({
+  username: "",
+  password: "",
+  confirm: "",
+})
+
+const loginRules: FormRules<LoginRequest> = {
   username: [
     { required: true, message: "请输入用户名", trigger: "blur" },
     { max: 64, message: "用户名不能超过 64 个字符", trigger: "blur" },
@@ -29,6 +49,27 @@ const rules: FormRules<LoginRequest> = {
   password: [
     { required: true, message: "请输入密码", trigger: "blur" },
     { max: 256, message: "密码不能超过 256 个字符", trigger: "blur" },
+  ],
+}
+
+const registerRules: FormRules<RegisterForm> = {
+  username: [
+    { required: true, message: "请输入用户名", trigger: "blur" },
+    { max: 64, message: "用户名不能超过 64 个字符", trigger: "blur" },
+  ],
+  password: [
+    { required: true, message: "请输入密码", trigger: "blur" },
+    { max: 256, message: "密码不能超过 256 个字符", trigger: "blur" },
+  ],
+  confirm: [
+    { required: true, message: "请再次输入密码", trigger: "blur" },
+    {
+      validator: (_rule, value: string, callback) => {
+        if (value !== registerForm.password) callback(new Error("两次输入的密码不一致"))
+        else callback()
+      },
+      trigger: ["blur", "change"],
+    },
   ],
 }
 
@@ -45,17 +86,47 @@ onMounted(() => {
   }
 })
 
-async function submit(): Promise<void> {
-  if (!formRef.value || !(await formRef.value.validate().catch(() => false))) return
-  submitting.value = true
+async function switchMode(target: AuthMode): Promise<void> {
+  if (target === mode.value) return
+  registrationDone.value = false
+  const query = target === "login" && route.query.redirect
+    ? { redirect: route.query.redirect }
+    : undefined
+  await router.replace({ name: target, query })
+}
+
+async function submitLogin(): Promise<void> {
+  if (!loginFormRef.value || !(await loginFormRef.value.validate().catch(() => false))) return
+  loginSubmitting.value = true
   try {
-    await auth.login({ ...form })
+    await auth.login({ ...loginForm })
     ElMessage.success("登录成功")
     await router.replace(redirectTarget.value)
   } catch (error) {
     ElMessage.error(error instanceof HttpError ? error.response.message : "登录失败，请稍后重试")
   } finally {
-    submitting.value = false
+    loginSubmitting.value = false
+  }
+}
+
+async function submitRegister(): Promise<void> {
+  if (
+    !registerFormRef.value
+    || !(await registerFormRef.value.validate().catch(() => false))
+  ) return
+
+  registerSubmitting.value = true
+  try {
+    await accountApi.register(registerForm.username.trim(), registerForm.password)
+    registrationDone.value = true
+    ElMessage.success("注册申请已提交")
+  } catch (error) {
+    const code = (error as { response?: { code?: string } }).response?.code
+    ElMessage.error(
+      code === "ACCOUNT_USERNAME_EXISTS" ? "该用户名已存在或已被使用。" : "注册提交失败",
+    )
+  } finally {
+    registerSubmitting.value = false
   }
 }
 </script>
@@ -86,14 +157,42 @@ async function submit(): Promise<void> {
           <span class="brand-mark small">ZC</span>
           <strong>{{ appTitle }}</strong>
         </div>
+
+        <div class="auth-tabs" role="tablist" aria-label="账号入口">
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="mode === 'login'"
+            :class="{ active: mode === 'login' }"
+            @click="switchMode('login')"
+          >
+            登录
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="mode === 'register'"
+            :class="{ active: mode === 'register' }"
+            @click="switchMode('register')"
+          >
+            注册
+          </button>
+        </div>
+
         <div class="login-heading">
-          <p class="welcome">欢迎回来</p>
-          <h2>登录管理平台</h2>
-          <p>请输入账号信息以继续访问企业工作台</p>
+          <p class="welcome">{{ mode === "login" ? "欢迎回来" : "创建企业账号" }}</p>
+          <h2>{{ mode === "login" ? "登录管理平台" : "申请注册账号" }}</h2>
+          <p>
+            {{
+              mode === "login"
+                ? "请输入账号信息以继续访问企业工作台"
+                : "提交申请后，账号将由管理员审核并开放"
+            }}
+          </p>
         </div>
 
         <el-alert
-          v-if="isMockMode"
+          v-if="mode === 'login' && isMockMode"
           class="mock-alert"
           title="当前为本地 Mock 模式"
           type="warning"
@@ -104,19 +203,25 @@ async function submit(): Promise<void> {
         </el-alert>
 
         <el-form
-          ref="formRef"
-          :model="form"
-          :rules="rules"
+          v-if="mode === 'login'"
+          ref="loginFormRef"
+          :model="loginForm"
+          :rules="loginRules"
           label-position="top"
           size="large"
-          @keyup.enter="submit"
+          @keyup.enter="submitLogin"
         >
           <el-form-item label="用户名" prop="username">
-            <el-input v-model="form.username" :prefix-icon="User" autocomplete="username" placeholder="请输入用户名" />
+            <el-input
+              v-model="loginForm.username"
+              :prefix-icon="User"
+              autocomplete="username"
+              placeholder="请输入用户名"
+            />
           </el-form-item>
           <el-form-item label="密码" prop="password">
             <el-input
-              v-model="form.password"
+              v-model="loginForm.password"
               :prefix-icon="Lock"
               type="password"
               autocomplete="current-password"
@@ -124,16 +229,81 @@ async function submit(): Promise<void> {
               show-password
             />
           </el-form-item>
-          <el-button class="login-button" type="primary" :loading="submitting" @click="submit">
+          <el-button
+            class="submit-button"
+            type="primary"
+            :loading="loginSubmitting"
+            @click="submitLogin"
+          >
             登录
+          </el-button>
+        </el-form>
+
+        <el-alert
+          v-else-if="registrationDone"
+          class="registration-success"
+          title="注册申请已提交"
+          description="账号正在等待管理员审批，审批通过后即可登录。"
+          type="success"
+          :closable="false"
+          show-icon
+        >
+          <template #default>
+            <el-button type="primary" @click="switchMode('login')">返回登录</el-button>
+          </template>
+        </el-alert>
+
+        <el-form
+          v-else
+          ref="registerFormRef"
+          :model="registerForm"
+          :rules="registerRules"
+          label-position="top"
+          size="large"
+          @keyup.enter="submitRegister"
+        >
+          <el-form-item label="用户名" prop="username">
+            <el-input
+              v-model="registerForm.username"
+              :prefix-icon="User"
+              autocomplete="username"
+              placeholder="请输入用户名"
+            />
+          </el-form-item>
+          <el-form-item label="密码" prop="password">
+            <el-input
+              v-model="registerForm.password"
+              :prefix-icon="Lock"
+              type="password"
+              autocomplete="new-password"
+              placeholder="请输入密码"
+              show-password
+            />
+          </el-form-item>
+          <el-form-item label="确认密码" prop="confirm">
+            <el-input
+              v-model="registerForm.confirm"
+              :prefix-icon="Lock"
+              type="password"
+              autocomplete="new-password"
+              placeholder="请再次输入密码"
+              show-password
+            />
+          </el-form-item>
+          <el-button
+            class="submit-button"
+            type="primary"
+            :loading="registerSubmitting"
+            @click="submitRegister"
+          >
+            提交注册申请
           </el-button>
         </el-form>
 
         <div class="security-note">
           <el-icon><Connection /></el-icon>
-          <span>登录信息通过统一认证接口安全传输</span>
+          <span>{{ mode === "login" ? "登录信息" : "注册信息" }}通过统一认证接口安全传输</span>
         </div>
-        <el-button text class="register-link" @click="router.push('/register')">注册账号</el-button>
       </div>
       <footer>© 2026 众诚智链 · 企业商品管理平台</footer>
     </section>
@@ -155,19 +325,25 @@ async function submit(): Promise<void> {
 .brand-glow { position: absolute; border-radius: 50%; filter: blur(2px); }
 .brand-glow-one { right: -150px; top: -140px; width: 420px; height: 420px; background: rgba(76, 180, 255, .13); }
 .brand-glow-two { left: -140px; bottom: -200px; width: 460px; height: 460px; background: rgba(37, 111, 231, .24); }
-.login-panel { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px; background: radial-gradient(circle at 85% 10%, #edf5ff 0, transparent 28%), #fff; }
+.login-panel { display: flex; min-height: 100vh; box-sizing: border-box; flex-direction: column; align-items: center; justify-content: flex-start; overflow-y: auto; padding: 64px 48px 36px; background: radial-gradient(circle at 85% 10%, #edf5ff 0, transparent 28%), #fff; }
 .login-card { width: min(100%, 430px); }
 .mobile-brand { display: none; align-items: center; gap: 12px; margin-bottom: 36px; }
+.auth-tabs { display: grid; grid-template-columns: repeat(2, 1fr); margin-bottom: 30px; padding: 4px; border-radius: 11px; background: #f2f5f9; }
+.auth-tabs button { position: relative; height: 44px; border: 0; border-radius: 8px; color: #667085; font: inherit; font-weight: 650; background: transparent; cursor: pointer; transition: color .2s, background-color .2s, box-shadow .2s; }
+.auth-tabs button.active { color: var(--brand-700); background: #fff; box-shadow: 0 2px 10px rgba(15, 48, 91, .1); }
+.auth-tabs button:focus-visible { outline: 3px solid rgba(29,103,207,.2); outline-offset: 1px; }
 .login-heading { margin-bottom: 28px; }
 .welcome { margin: 0 0 8px; color: var(--brand-600); font-size: 14px; font-weight: 700; }
 .login-heading h2 { margin: 0 0 12px; color: #14213d; font-size: 34px; letter-spacing: -.03em; }
 .login-heading > p:last-child { margin: 0; color: var(--text-secondary); line-height: 1.7; }
 .mock-alert { margin-bottom: 24px; border-radius: 10px; }
-.login-button { width: 100%; height: 48px; margin-top: 8px; border: 0; border-radius: 9px; font-weight: 700; background: linear-gradient(100deg, var(--brand-700), var(--brand-600)); box-shadow: 0 8px 20px rgba(29,103,207,.22); }
+.submit-button { width: 100%; height: 48px; margin-top: 8px; border: 0; border-radius: 9px; font-weight: 700; background: linear-gradient(100deg, var(--brand-700), var(--brand-600)); box-shadow: 0 8px 20px rgba(29,103,207,.22); }
+.registration-success { padding: 20px; border-radius: 10px; }
+.registration-success .el-button { margin-top: 18px; }
 .security-note { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 24px; color: #98a2b3; font-size: 13px; }
 footer { margin-top: 54px; color: #98a2b3; font-size: 12px; }
 :deep(.el-form-item__label) { color: #344054; font-weight: 600; }
 :deep(.el-input__wrapper) { min-height: 46px; border-radius: 9px; box-shadow: 0 0 0 1px #d8dee8 inset; }
 :deep(.el-input__wrapper.is-focus) { box-shadow: 0 0 0 1px var(--brand-600) inset, 0 0 0 3px rgba(29,103,207,.1); }
-@media (max-width: 920px) { .login-page { grid-template-columns: 1fr; } .brand-panel { display: none; } .login-panel { min-height: 100vh; padding: 32px 22px; } .mobile-brand { display: flex; } }
+@media (max-width: 920px) { .login-page { grid-template-columns: 1fr; } .brand-panel { display: none; } .login-panel { padding: 32px 22px; } .mobile-brand { display: flex; } }
 </style>
