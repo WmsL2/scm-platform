@@ -1,19 +1,34 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue"
-import { ElMessage, ElMessageBox } from "element-plus"
+import { onMounted, ref } from "vue"
+import { ElMessage } from "element-plus"
 import { categoryApi } from "../../api/category"
-import type { Category, CategoryPayload, CategoryImportResult } from "../../types/category"
+import type { Category, CategoryImportResult } from "../../types/category"
 import { HttpError } from "../../shared/http"
-const rows = ref<Category[]>([]); const dialog = ref(false); const importing = ref(false); const file = ref<File>(); const result = ref<CategoryImportResult>(); const editing = ref<Category | null>(null)
-const empty = (): CategoryPayload => ({ source_type: "MALL_LEVEL3", level1_external_id: null, level1_name: "", level2_external_id: null, level2_name: "", level3_external_id: null, level3_name: "", deduction_rate: "0.0800", is_active: true, shelf_flag: null, business_unit: null })
-const form = reactive<CategoryPayload>(empty())
-async function load() { rows.value = await categoryApi.list() }
-function open(row?: Category) { editing.value = row ?? null; Object.assign(form, row ? { ...row } : empty()); dialog.value = true }
-async function save() { try { if (editing.value) await categoryApi.update(editing.value.id, form); else await categoryApi.create(form); ElMessage.success("已保存"); dialog.value=false; await load() } catch (e) { ElMessage.error(e instanceof HttpError ? e.response.message : "保存失败") } }
-async function remove(row: Category) { try { await ElMessageBox.confirm(`确认删除类目“${row.level3_name}”？`, "删除确认", { type: "warning" }); await categoryApi.remove(row.id); ElMessage.success("已删除"); await load() } catch (e) { if (e instanceof HttpError) ElMessage.error(e.response.message) } }
-async function upload() { if (!file.value) return; importing.value=true; try { result.value=await categoryApi.import(file.value); if (!result.value.failed) await load() } catch (e) { ElMessage.error(e instanceof HttpError ? e.response.message : "导入失败") } finally { importing.value=false } }
-async function template() { const blob=await categoryApi.template(); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="category-import-template.xlsx"; a.click(); URL.revokeObjectURL(a.href) }
+const rows = ref<Category[]>([])
+const page = ref(1)
+const total = ref(0)
+const file = ref<File>()
+const deductionRatePercent = ref("8")
+const importing = ref(false)
+const result = ref<CategoryImportResult>()
+async function load(): Promise<void> { const result = await categoryApi.list(page.value, 20); rows.value = result.items; total.value = result.total }
+async function upload(): Promise<void> {
+  if (!file.value || !deductionRatePercent.value.trim()) return
+  importing.value = true
+  try { result.value = await categoryApi.import(file.value, deductionRatePercent.value); if (!result.value.failed) await load() }
+  catch (error) { ElMessage.error(error instanceof HttpError ? error.response.message : "导入失败") }
+  finally { importing.value = false }
+}
+async function template(): Promise<void> { const blob = await categoryApi.template(); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "商城类目导入模板.xlsx"; link.click(); URL.revokeObjectURL(link.href) }
 onMounted(() => void load())
 </script>
-<template><section><div class="page-header"><h2>类目管理</h2><div><el-button @click="template">下载导入模板</el-button><el-button @click="$refs.input?.click()">导入类目</el-button><input ref="input" type="file" accept=".xlsx" hidden @change="file=($event.target as HTMLInputElement).files?.[0]"/><el-button type="primary" @click="open()">新增类目</el-button></div></div><div v-if="file" class="import-bar">{{ file.name }} <el-button size="small" :loading="importing" @click="upload">上传并导入</el-button></div><el-alert v-if="result" :type="result.failed ? 'error' : 'success'" :closable="false" :title="`总计 ${result.total}，成功 ${result.success}，跳过 ${result.skipped}，失败 ${result.failed}`"/><el-table :data="rows" row-key="id"><el-table-column prop="source_type" label="来源" width="150"/><el-table-column prop="level1_name" label="一级类目"/><el-table-column prop="level2_name" label="二级类目"/><el-table-column prop="level3_name" label="三级类目"/><el-table-column prop="deduction_rate" label="扣点" width="100"/><el-table-column label="状态" width="90"><template #default="{row}"><el-tag :type="row.is_active?'success':'info'">{{row.is_active?'启用':'停用'}}</el-tag></template></el-table-column><el-table-column label="操作" width="150"><template #default="{row}"><el-button link @click="open(row)">编辑</el-button><el-button link type="danger" @click="remove(row)">删除</el-button></template></el-table-column></el-table><el-table v-if="result?.errors.length" :data="result.errors" class="errors"><el-table-column prop="row_number" label="行号"/><el-table-column prop="field" label="字段"/><el-table-column prop="reason" label="原因"/></el-table><el-dialog v-model="dialog" :title="editing?'编辑类目':'新增类目'"><el-form label-width="100"><el-form-item label="来源"><el-select v-model="form.source_type"><el-option label="商城三级" value="MALL_LEVEL3"/><el-option label="工业产品线" value="INDUSTRIAL_LINE"/></el-select></el-form-item><el-form-item label="一级类目" required><el-input v-model="form.level1_name"/></el-form-item><el-form-item label="二级类目" required><el-input v-model="form.level2_name"/></el-form-item><el-form-item label="三级类目" required><el-input v-model="form.level3_name"/></el-form-item><el-form-item label="三级外部 ID"><el-input v-model="form.level3_external_id"/></el-form-item><el-form-item label="扣点"><el-input v-model="form.deduction_rate"/></el-form-item><el-form-item label="启用"><el-switch v-model="form.is_active"/></el-form-item></el-form><template #footer><el-button @click="dialog=false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template></el-dialog></section></template>
-<style scoped>.page-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}.import-bar,.errors{margin-top:12px}</style>
+<template>
+  <section><div class="page-header"><h2>类目管理</h2><el-button @click="template">下载模板</el-button></div>
+    <el-card><el-button @click="$refs.input?.click()">选择 Excel</el-button><input ref="input" type="file" accept=".xlsx" hidden @change="file = ($event.target as HTMLInputElement).files?.[0]" />
+      <span v-if="file">{{ file.name }}</span><el-input v-model="deductionRatePercent" type="number" min="0" max="100" step="0.01" placeholder="本批次扣点率（%）" /><el-button type="primary" :disabled="!file || !deductionRatePercent.trim()" :loading="importing" @click="upload">导入</el-button><p>本次 Excel 中所有新导入类目统一使用该扣点率。Excel 颜色不参与扣点率判断。</p></el-card>
+    <el-alert v-if="result" :type="result.failed ? 'error' : 'success'" :closable="false" :title="`总计 ${result.total}，成功 ${result.success}，跳过 ${result.skipped}，失败 ${result.failed}`" />
+    <el-table :data="rows"><el-table-column prop="level1_name" label="一级类目"/><el-table-column prop="level2_name" label="二级类目"/><el-table-column prop="level3_name" label="三级类目"/><el-table-column prop="deduction_rate" label="扣点"/></el-table><el-pagination v-model:current-page="page" :page-size="20" :total="total" layout="total, prev, pager, next" @current-change="load" />
+    <el-table v-if="result?.errors.length" :data="result.errors"><el-table-column prop="row_number" label="行号"/><el-table-column prop="field" label="字段"/><el-table-column prop="value" label="值"/><el-table-column prop="reason" label="原因"/></el-table>
+  </section>
+</template>
+<style scoped>.page-header{display:flex;justify-content:space-between;margin-bottom:16px}.el-input{width:200px;margin:0 12px}</style>
