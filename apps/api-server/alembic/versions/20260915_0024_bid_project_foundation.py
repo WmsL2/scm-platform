@@ -27,7 +27,7 @@ BID_PERMISSIONS = (
 
 
 def _uuid() -> sa.CHAR:
-    return sa.CHAR(36, collation="utf8mb4_unicode_ci")
+    return sa.CHAR(36)
 
 
 def _grant_default_administrator(permission_id: str) -> None:
