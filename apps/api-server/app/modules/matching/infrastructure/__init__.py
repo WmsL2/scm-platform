@@ -1,0 +1,1 @@
+"""Matching persistence adapters."""

@@ -3,8 +3,10 @@ from fastapi import APIRouter
 from app.modules.account.api import admin_router
 from app.modules.account.api import auth_router as account_auth_router
 from app.modules.auth.api import router as auth_router
+from app.modules.bid.api.router import router as bid_project_router
 from app.modules.catalog.api.category_router import router as category_router
 from app.modules.catalog.api.router import router as product_router
+from app.modules.matching.api.router import router as matching_router
 from app.modules.supplier.api.router import router as supplier_router
 
 router = APIRouter(prefix="/api/v1")
@@ -14,3 +16,5 @@ router.include_router(admin_router)
 router.include_router(supplier_router)
 router.include_router(product_router)
 router.include_router(category_router)
+router.include_router(bid_project_router)
+router.include_router(matching_router)
