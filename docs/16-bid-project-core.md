@@ -32,3 +32,12 @@
 - `POST /api/v1/bid-projects/{id}/commands/submit`：标记已投标。
 - `POST /api/v1/bid-projects/{id}/commands/win`：标记中标。
 - `POST /api/v1/bid-projects/{id}/commands/lose`：标记未中标。
+
+## 商品匹配与人工选品
+
+- `POST /api/v1/bid-projects/{id}/commands/start-matching`：针对已解析项目创建一次匹配任务，在本机 `inline` TaskQueue 中完成候选生成；写入任务、Top 20 候选和行级匹配状态。
+- `GET /api/v1/bid-projects/{id}/items/{item_id}/candidates`：读取该项目最新一次完成匹配任务的候选及评分依据。
+- `POST /api/v1/bid-projects/{id}/items/{item_id}/selections`：只能提交已持久化候选 ID 和 Decimal 单价。服务会重新校验商品、供应商、需求限价，并追加不可变快照。
+- `POST /api/v1/bid-projects/{id}/items/{item_id}/no-quote`：将该行标记为无法报价，保存原因；`OTHER` 必须填写说明。
+
+匹配接口分别需要 `bid:match`、`bid:detail`、`bid:select` 权限。候选只来自 `ACTIVE` Product 和 `ARCHIVED + NORMAL + not deleted` 的来源供应商；价格不参与商品身份评分。

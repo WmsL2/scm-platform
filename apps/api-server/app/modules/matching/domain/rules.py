@@ -54,7 +54,7 @@ class CanonicalRequirement:
     unit: str | None = None
     max_price: Decimal | None = None
     buyer_item_code: str | None = None
-    source_data: Mapping[str, str | None] = field(default_factory=dict)
+    source_data: Mapping[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

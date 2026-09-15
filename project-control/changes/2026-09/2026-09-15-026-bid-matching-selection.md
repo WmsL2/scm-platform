@@ -9,8 +9,8 @@ Branch: feat/bid-matching-selection
 
 Implement the deterministic portion of Task 2: product-candidate recall, scoring,
 explainable decisions and the request contracts for manual selection and no-quote.
-This change deliberately stops before persistence because Task 1 has not yet merged
-the shared bid-project tables into the current branch.
+Task 1's shared bid-project tables are now merged through PR #46, so this change
+also persists matching results and manual selection decisions on that schema.
 
 ## Code
 
@@ -30,20 +30,22 @@ the shared bid-project tables into the current branch.
 
 ## Database and API Boundary
 
-No Migration, ORM Model, Repository, router or permission seed was added. The
-following Task 2 operations remain blocked until Task 1's shared tables are present:
+No Migration, ORM Model or permission seed was added. This task uses Task 1's
+`20260915_0024` shared tables and existing `bid:match` / `bid:select` permissions.
 
-- match task and candidate persistence;
-- append-only `scm_bid_item_selection` snapshots and `current_selection_id` updates;
-- no-quote persistence;
-- the four bid-project API routes and TaskQueue progress handling.
-
-The required table and field contract is recorded in the paired Handoff. This change
-does not expose a partial HTTP endpoint that could fail at runtime.
+- `POST /api/v1/bid-projects/{id}/commands/start-matching` writes a task, processes
+  the project's parsed items from one eligible Product/Supplier batch, persists the
+  Top 20 candidates and moves the project to `SELECTING`.
+- `GET /api/v1/bid-projects/{id}/items/{item_id}/candidates` returns the newest
+  completed task's candidate list.
+- Selection locks the project, item, candidate, Product and Supplier, rechecks live
+  eligibility and max price, appends immutable snapshots, then moves the item's
+  `current_selection_id` in the same transaction.
+- No-quote clears the current selection pointer and stores the selected reason JSON.
 
 ## Tests and Verification
 
-- `.venv\\Scripts\\python.exe -m pytest tests/matching -q` — PASS (18 tests)
+- `.venv\\Scripts\\python.exe -m pytest tests/matching -q` — PASS (20 tests)
 - `.venv\\Scripts\\python.exe -m ruff check app/modules/matching tests/matching` — PASS
 - `.venv\\Scripts\\python.exe -m mypy app/modules/matching` — PASS
 
@@ -54,6 +56,6 @@ selection DTO isolation and no-quote validation.
 
 ## Remaining Work
 
-After Task 1 merges its schema, wire the matching engine to batch Product/Supplier
-queries, persist versioned candidates and snapshots transactionally, add permissioned
-routes, then run API and browser acceptance with Task 3.
+Perform browser acceptance with Task 3. Matching uses the existing `TaskQueue` abstraction
+with the local inline adapter; a future ARQ runtime must provide a worker/session-safe task
+runner before enabling asynchronous dispatch.
