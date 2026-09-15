@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from typing import cast
 
@@ -19,19 +20,8 @@ from app.modules.catalog.schemas import (
     CategoryWriteRequest,
 )
 
-IMPORT_HEADERS = (
-    "source_type",
-    "level1_external_id",
-    "level1_name",
-    "level2_external_id",
-    "level2_name",
-    "level3_external_id",
-    "level3_name",
-    "deduction_rate",
-    "is_active",
-    "shelf_flag",
-    "business_unit",
-)
+IMPORT_HEADERS = ("一级类目ID", "一级类目名称", "二级类目ID", "二级类目名称", "三级类目ID", "三级类目名称", "有效标记", "上下柜标记", "主营事业部")
+IMPORT_HEADER_MAP = dict(zip(IMPORT_HEADERS, ("level1_external_id", "level1_name", "level2_external_id", "level2_name", "level3_external_id", "level3_name", "is_active", "shelf_flag", "business_unit"), strict=True))
 
 
 class CategoryService:
@@ -119,7 +109,7 @@ class CategoryService:
         return output.getvalue()
 
     async def import_xlsx(
-        self, filename: str, content: bytes, actor_id: uuid.UUID
+        self, filename: str, content: bytes, deduction_rate_percent: str, actor_id: uuid.UUID
     ) -> CategoryImportResponse:
         if not filename.lower().endswith(".xlsx"):
             raise AppError(
@@ -127,6 +117,22 @@ class CategoryService:
             )
         if not content:
             raise AppError("CATEGORY_IMPORT_FILE_EMPTY", "The import file is empty", 422)
+        try:
+            percent = Decimal(deduction_rate_percent)
+            ratio = percent / Decimal("100")
+            if not percent.is_finite():
+                raise ValueError
+            exponent = ratio.as_tuple().exponent
+            if (
+                percent < Decimal("0")
+                or percent > Decimal("100")
+                or not isinstance(exponent, int)
+                or exponent < -4
+            ):
+                raise ValueError
+            ratio = ratio.quantize(Decimal("0.0001"))
+        except (InvalidOperation, ValueError):
+            raise AppError("CATEGORY_IMPORT_DEDUCTION_RATE_INVALID", "deduction_rate_percent must be 0..100 and precise to 0.01%", 422)
         try:
             sheet = load_workbook(BytesIO(content), read_only=True, data_only=True).active
             if sheet is None:
@@ -138,7 +144,7 @@ class CategoryService:
             raise AppError(
                 "CATEGORY_IMPORT_FILE_INVALID", "Unable to parse .xlsx file", 422
             ) from exc
-        if headers != IMPORT_HEADERS:
+        if len(headers) != len(IMPORT_HEADERS) or set(headers) != set(IMPORT_HEADERS):
             raise AppError(
                 "CATEGORY_IMPORT_HEADER_INVALID",
                 f"Required headers: {', '.join(IMPORT_HEADERS)}",
@@ -150,14 +156,22 @@ class CategoryService:
         for number, cells in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
             if not any(value is not None and str(value).strip() for value in cells):
                 continue
-            data: dict[str, object | None] = {
-                header: (None if value is None else str(value).strip())
-                for header, value in zip(IMPORT_HEADERS, cells, strict=True)
-            }
-            if data["is_active"] in ("TRUE", "true", "1", "是"):
+            source = {header: value for header, value in zip(headers, cells, strict=True)}
+            data: dict[str, object | None] = {target: (None if source[header] is None else str(source[header]).strip()) for header, target in IMPORT_HEADER_MAP.items()}
+            data["source_type"] = "MALL_LEVEL3"
+            data["deduction_rate"] = ratio
+            for key in ("level1_external_id", "level2_external_id", "level3_external_id"):
+                value = source[next(header for header, target in IMPORT_HEADER_MAP.items() if target == key)]
+                if isinstance(value, float) and not value.is_integer():
+                    errors.append(CategoryImportError(row_number=number, field=key, value=str(value), reason="External ID must be an integer or text")); continue
+                if isinstance(value, float) and value.is_integer(): data[key] = str(int(value))
+                elif isinstance(value, int): data[key] = str(value)
+            if data["is_active"] in (True, "TRUE", "true", "1", "是"):
                 data["is_active"] = True
-            elif data["is_active"] in ("FALSE", "false", "0", "否"):
+            elif data["is_active"] in (False, "FALSE", "false", "0", "否"):
                 data["is_active"] = False
+            else:
+                errors.append(CategoryImportError(row_number=number, field="is_active", value=str(data["is_active"]), reason="Invalid active flag")); continue
             try:
                 payload = CategoryWriteRequest.model_validate(data)
             except Exception as exc:

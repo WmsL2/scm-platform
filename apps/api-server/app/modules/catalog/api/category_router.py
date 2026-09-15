@@ -2,7 +2,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,12 +53,13 @@ async def download_template(
 @router.post("/imports", response_model=ApiResponse[CategoryImportResponse])
 async def import_categories(
     file: Annotated[UploadFile, File(...)],
+    deduction_rate_percent: Annotated[str, Form(...)],
     current: Annotated[CurrentUser, Depends(require_permission("product:import"))],
     session: SessionDep,
 ) -> ApiResponse[CategoryImportResponse]:
     return success(
         await CategoryService(session).import_xlsx(
-            file.filename or "category-import.xlsx", await file.read(), current.user_id
+            file.filename or "category-import.xlsx", await file.read(), deduction_rate_percent, current.user_id
         )
     )
 

@@ -6,6 +6,6 @@ export const categoryApi = {
   create(payload: CategoryPayload): Promise<Category> { return http.post<Category, CategoryPayload>("/api/v1/categories", payload) },
   update(id: string, payload: CategoryPayload): Promise<Category> { return http.put<Category, CategoryPayload>(`/api/v1/categories/${id}`, payload) },
   remove(id: string): Promise<void> { return http.delete<void>(`/api/v1/categories/${id}`) },
-  import(file: File): Promise<CategoryImportResult> { const body = new FormData(); body.append("file", file); return http.post<CategoryImportResult, FormData>("/api/v1/categories/imports", body) },
+  import(file: File, deductionRatePercent: string): Promise<CategoryImportResult> { const body = new FormData(); body.append("file", file); body.append("deduction_rate_percent", deductionRatePercent); return http.post<CategoryImportResult, FormData>("/api/v1/categories/imports", body) },
   template(): Promise<Blob> { return http.getBlob("/api/v1/categories/imports/template") },
 }
