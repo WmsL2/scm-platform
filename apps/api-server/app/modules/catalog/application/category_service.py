@@ -10,6 +10,7 @@ from openpyxl import Workbook, load_workbook
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.contracts import AppError, PageParams, PageResult
 from app.core.transaction import transaction_scope
@@ -29,15 +30,35 @@ class CategoryService:
         self.session = session
 
     async def list_page(
-        self, page_params: PageParams, active_only: bool = False
+        self,
+        page_params: PageParams,
+        active_only: bool = False,
+        level1_name: str | None = None,
+        level2_name: str | None = None,
+        level3_name: str | None = None,
+        deduction_rate: Decimal | None = None,
+        is_active: bool | None = None,
+        business_unit: str | None = None,
     ) -> PageResult[Category]:
-        statement = select(Category).order_by(
+        filters: list[ColumnElement[bool]] = []
+        for column, value in (
+            (Category.level1_name, level1_name),
+            (Category.level2_name, level2_name),
+            (Category.level3_name, level3_name),
+            (Category.business_unit, business_unit),
+        ):
+            if value and (keyword := value.strip()):
+                filters.append(column.ilike(f"%{keyword}%"))
+        if deduction_rate is not None:
+            filters.append(Category.deduction_rate == deduction_rate)
+        effective_active = is_active if is_active is not None else (True if active_only else None)
+        if effective_active is not None:
+            filters.append(Category.is_active.is_(effective_active))
+
+        statement = select(Category).where(*filters).order_by(
             Category.source_type, Category.level1_name, Category.level2_name, Category.level3_name, Category.id
         )
-        count_statement = select(func.count()).select_from(Category)
-        if active_only:
-            statement = statement.where(Category.is_active.is_(True))
-            count_statement = count_statement.where(Category.is_active.is_(True))
+        count_statement = select(func.count()).select_from(Category).where(*filters)
         total = int(await self.session.scalar(count_statement) or 0)
         items = list((await self.session.scalars(statement.offset((page_params.page - 1) * page_params.page_size).limit(page_params.page_size))).all())
         return PageResult(items=items, total=total, page=page_params.page, page_size=page_params.page_size)
