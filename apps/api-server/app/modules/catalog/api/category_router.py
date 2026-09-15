@@ -1,5 +1,6 @@
 # ruff: noqa: E501
 import uuid
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
@@ -27,8 +28,23 @@ async def list_categories(
     session: SessionDep,
     page_params: Annotated[PageParams, Depends()],
     active_only: bool = False,
+    level1_name: str | None = None,
+    level2_name: str | None = None,
+    level3_name: str | None = None,
+    deduction_rate: Decimal | None = None,
+    is_active: bool | None = None,
+    business_unit: str | None = None,
 ) -> ApiResponse[PageResult[CategoryResponse]]:
-    result = await CategoryService(session).list_page(page_params, active_only)
+    result = await CategoryService(session).list_page(
+        page_params,
+        active_only=active_only,
+        level1_name=level1_name,
+        level2_name=level2_name,
+        level3_name=level3_name,
+        deduction_rate=deduction_rate,
+        is_active=is_active,
+        business_unit=business_unit,
+    )
     return success(PageResult(items=[CategoryResponse.model_validate(item) for item in result.items], total=result.total, page=result.page, page_size=result.page_size))
 
 
