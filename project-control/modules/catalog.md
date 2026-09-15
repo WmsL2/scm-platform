@@ -31,7 +31,7 @@ Last Updated：2026-09-15
 - [x] 导入预览显示已导入、通过、不通过行并支持筛选；商品页可下载批准的原始 32 列模板
 - [x] 商品列表支持正常/已停用状态筛选、停用/启用和 SKU/名称二次确认的永久删除；页面保留普通纵向滚动，左侧导航固定于视口左侧
 - [x] 统一 API 请求禁用浏览器缓存，商品导入 Confirm 后重新加载列表可立即读取最新商品数据
-- [x] 类目管理页：三级路径列表、新增/编辑/删除确认、模板下载和 Excel 导入结果
+- [x] 类目管理页：与 Supplier 管理页统一的 Header / Card / Table 视觉结构，保留三级路径服务端分页、新增/编辑/删除确认、模板下载和 Excel 导入结果；CRUD 表单中的 `deduction_rate` 以 `×` 比率直接保存，导入批次倍率精确转换为后端所需百分数字符串
 
 ## Permissions
 - [x] `product:list`、`product:detail`、`product:update`、`product:cost:update`、`product:disable`、`product:purge`、`product:import`、`product:import:resolve`
