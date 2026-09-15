@@ -22,6 +22,7 @@ Last Updated：2026-09-15
 - [x] Supplier 为 `STOPPED` / `BLACKLIST` / 逻辑删除时，关联 Product 不能列表、详情、编辑或更新成本价；恢复 `NORMAL` 后自动恢复可见
 - [x] Product 可显式停用/启用；停用商品不能正常列表、详情、编辑或更新成本价，但保留业务键和商品字段
 - [x] 类目维表管理：三级路径列表、详情、新增、编辑、受 Product `RESTRICT` 引用保护的删除、轻量启用选择接口与 Excel 原子导入；真实身份为 `source_type + level3_external_id`，路径仅为属性
+- [x] 类目管理列表为服务端分页（默认每页 20）；商城导入使用公司 9 列中文模板，后端固定 `MALL_LEVEL3`，由批次 `deduction_rate_percent` 写入正式扣点，Excel 颜色不参与判断且不隐式更新既有类目
 - [x] 仅已停用 Product 可永久删除；删除前写入最小审计并依赖事务及外键保护，永久删除后同键可重新导入为新商品
 - [x] Product Import 对同来源供应商 + SKU 的停用商品报错并阻止 Confirm；不恢复、不覆盖，正常同键商品仍阻止导入
 

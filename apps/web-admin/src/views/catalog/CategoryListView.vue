@@ -5,11 +5,13 @@ import { categoryApi } from "../../api/category"
 import type { Category, CategoryImportResult } from "../../types/category"
 import { HttpError } from "../../shared/http"
 const rows = ref<Category[]>([])
+const page = ref(1)
+const total = ref(0)
 const file = ref<File>()
 const deductionRatePercent = ref("8")
 const importing = ref(false)
 const result = ref<CategoryImportResult>()
-async function load(): Promise<void> { rows.value = await categoryApi.list() }
+async function load(): Promise<void> { const result = await categoryApi.list(page.value, 20); rows.value = result.items; total.value = result.total }
 async function upload(): Promise<void> {
   if (!file.value || !deductionRatePercent.value.trim()) return
   importing.value = true
@@ -25,7 +27,7 @@ onMounted(() => void load())
     <el-card><el-button @click="$refs.input?.click()">选择 Excel</el-button><input ref="input" type="file" accept=".xlsx" hidden @change="file = ($event.target as HTMLInputElement).files?.[0]" />
       <span v-if="file">{{ file.name }}</span><el-input v-model="deductionRatePercent" type="number" min="0" max="100" step="0.01" placeholder="本批次扣点率（%）" /><el-button type="primary" :disabled="!file || !deductionRatePercent.trim()" :loading="importing" @click="upload">导入</el-button><p>本次 Excel 中所有新导入类目统一使用该扣点率。Excel 颜色不参与扣点率判断。</p></el-card>
     <el-alert v-if="result" :type="result.failed ? 'error' : 'success'" :closable="false" :title="`总计 ${result.total}，成功 ${result.success}，跳过 ${result.skipped}，失败 ${result.failed}`" />
-    <el-table :data="rows"><el-table-column prop="level1_name" label="一级类目"/><el-table-column prop="level2_name" label="二级类目"/><el-table-column prop="level3_name" label="三级类目"/><el-table-column prop="deduction_rate" label="扣点"/></el-table>
+    <el-table :data="rows"><el-table-column prop="level1_name" label="一级类目"/><el-table-column prop="level2_name" label="二级类目"/><el-table-column prop="level3_name" label="三级类目"/><el-table-column prop="deduction_rate" label="扣点"/></el-table><el-pagination v-model:current-page="page" :page-size="20" :total="total" layout="total, prev, pager, next" @current-change="load" />
     <el-table v-if="result?.errors.length" :data="result.errors"><el-table-column prop="row_number" label="行号"/><el-table-column prop="field" label="字段"/><el-table-column prop="value" label="值"/><el-table-column prop="reason" label="原因"/></el-table>
   </section>
 </template>

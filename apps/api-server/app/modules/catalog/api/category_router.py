@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.contracts import ApiResponse, success
+from app.common.contracts import ApiResponse, PageParams, PageResult, success
 from app.core.database import get_db_session
 from app.modules.auth.dependencies import require_permission
 from app.modules.auth.schemas import CurrentUser
@@ -21,21 +21,22 @@ router = APIRouter(prefix="/categories", tags=["categories"])
 SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
-@router.get("", response_model=ApiResponse[list[CategoryResponse]])
+@router.get("", response_model=ApiResponse[PageResult[CategoryResponse]])
 async def list_categories(
     _: Annotated[CurrentUser, Depends(require_permission("product:list"))],
     session: SessionDep,
+    page_params: Annotated[PageParams, Depends()],
     active_only: bool = False,
-) -> ApiResponse[list[CategoryResponse]]:
-    categories = await CategoryService(session).list(active_only)
-    return success([CategoryResponse.model_validate(item) for item in categories])
+) -> ApiResponse[PageResult[CategoryResponse]]:
+    result = await CategoryService(session).list_page(page_params, active_only)
+    return success(PageResult(items=[CategoryResponse.model_validate(item) for item in result.items], total=result.total, page=result.page, page_size=result.page_size))
 
 
 @router.get("/selection", response_model=ApiResponse[list[CategoryResponse]])
 async def category_selection(
     _: Annotated[CurrentUser, Depends(require_permission("product:list"))], session: SessionDep
 ) -> ApiResponse[list[CategoryResponse]]:
-    categories = await CategoryService(session).list(True)
+    categories = await CategoryService(session).list_active_selection()
     return success([CategoryResponse.model_validate(item) for item in categories])
 
 

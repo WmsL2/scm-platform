@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.contracts import AppError
+from app.common.contracts import AppError, PageParams, PageResult
 from app.core.transaction import transaction_scope
 from app.modules.catalog.infrastructure.models import Category, Product
 from app.modules.catalog.schemas import (
@@ -28,12 +28,22 @@ class CategoryService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list(self, active_only: bool = False) -> list[Category]:
+    async def list_page(
+        self, page_params: PageParams, active_only: bool = False
+    ) -> PageResult[Category]:
         statement = select(Category).order_by(
-            Category.source_type, Category.level1_name, Category.level2_name, Category.level3_name
+            Category.source_type, Category.level1_name, Category.level2_name, Category.level3_name, Category.id
         )
+        count_statement = select(func.count()).select_from(Category)
         if active_only:
             statement = statement.where(Category.is_active.is_(True))
+            count_statement = count_statement.where(Category.is_active.is_(True))
+        total = int(await self.session.scalar(count_statement) or 0)
+        items = list((await self.session.scalars(statement.offset((page_params.page - 1) * page_params.page_size).limit(page_params.page_size))).all())
+        return PageResult(items=items, total=total, page=page_params.page, page_size=page_params.page_size)
+
+    async def list_active_selection(self) -> list[Category]:
+        statement = select(Category).where(Category.is_active.is_(True)).order_by(Category.source_type, Category.level1_name, Category.level2_name, Category.level3_name, Category.id)
         return list((await self.session.scalars(statement)).all())
 
     async def get(self, category_id: uuid.UUID) -> Category:
