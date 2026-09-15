@@ -1,6 +1,6 @@
 # 商品主数据 / Catalog
 
-状态：IMPLEMENTED / PRODUCT_IMPORT_PARTIAL_CONFIRM
+状态：IMPLEMENTED / PRODUCT_IMPORT_PARTIAL_CONFIRM / CATEGORY_MANAGEMENT_IMPLEMENTED
 Owner：feat/product-import-partial-confirm-template-download
 Last Updated：2026-09-15
 
@@ -21,6 +21,7 @@ Last Updated：2026-09-15
 - [x] 固定 32 列商品大表导入、有效商城三级类目精确绑定、直接保存价格正式值、保存 WPS/Excel 内嵌图片、严格供应商精确匹配、SKU 防重预览和通过行原子 Confirm
 - [x] Supplier 为 `STOPPED` / `BLACKLIST` / 逻辑删除时，关联 Product 不能列表、详情、编辑或更新成本价；恢复 `NORMAL` 后自动恢复可见
 - [x] Product 可显式停用/启用；停用商品不能正常列表、详情、编辑或更新成本价，但保留业务键和商品字段
+- [x] 类目维表管理：三级路径列表、详情、新增、编辑、受 Product `RESTRICT` 引用保护的删除、轻量启用选择接口与 Excel 原子导入；真实身份为 `source_type + level3_external_id`，路径仅为属性
 - [x] 仅已停用 Product 可永久删除；删除前写入最小审计并依赖事务及外键保护，永久删除后同键可重新导入为新商品
 - [x] Product Import 对同来源供应商 + SKU 的停用商品报错并阻止 Confirm；不恢复、不覆盖，正常同键商品仍阻止导入
 
@@ -29,6 +30,7 @@ Last Updated：2026-09-15
 - [x] 导入预览显示已导入、通过、不通过行并支持筛选；商品页可下载批准的原始 32 列模板
 - [x] 商品列表支持正常/已停用状态筛选、停用/启用和 SKU/名称二次确认的永久删除；页面保留普通纵向滚动，左侧导航固定于视口左侧
 - [x] 统一 API 请求禁用浏览器缓存，商品导入 Confirm 后重新加载列表可立即读取最新商品数据
+- [x] 类目管理页：三级路径列表、新增/编辑/删除确认、模板下载和 Excel 导入结果
 
 ## Permissions
 - [x] `product:list`、`product:detail`、`product:update`、`product:cost:update`、`product:disable`、`product:purge`、`product:import`、`product:import:resolve`

@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -12,11 +13,62 @@ class CategoryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
     source_type: str
+    level1_external_id: str | None
     level1_name: str
+    level2_external_id: str | None
     level2_name: str
+    level3_external_id: str | None
     level3_name: str
     deduction_rate: Decimal
     is_active: bool
+    shelf_flag: str | None
+    business_unit: str | None
+
+
+class CategoryWriteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_type: Literal["MALL_LEVEL3", "INDUSTRIAL_LINE"]
+    level1_external_id: str | None = Field(default=None, max_length=128)
+    level1_name: str = Field(min_length=1, max_length=255)
+    level2_external_id: str | None = Field(default=None, max_length=128)
+    level2_name: str = Field(min_length=1, max_length=255)
+    level3_external_id: str | None = Field(default=None, max_length=128)
+    level3_name: str = Field(min_length=1, max_length=255)
+    deduction_rate: Decimal = Field(
+        default=Decimal("0.0800"), ge=0, le=1, max_digits=9, decimal_places=4
+    )
+    is_active: bool = True
+    shelf_flag: str | None = Field(default=None, max_length=32)
+    business_unit: str | None = Field(default=None, max_length=128)
+
+    @field_validator(
+        "level1_name",
+        "level2_name",
+        "level3_name",
+        "level1_external_id",
+        "level2_external_id",
+        "level3_external_id",
+        "shelf_flag",
+        "business_unit",
+    )
+    @classmethod
+    def normalize_category_text(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+
+class CategoryImportError(BaseModel):
+    row_number: int
+    field: str | None = None
+    value: str | None = None
+    reason: str
+
+
+class CategoryImportResponse(BaseModel):
+    total: int
+    success: int
+    skipped: int
+    failed: int
+    errors: list[CategoryImportError]
 
 
 class ProductListItem(BaseModel):
