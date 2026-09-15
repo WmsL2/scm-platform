@@ -3,7 +3,7 @@
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
-日期：2026-09-11
+日期：2026-09-15
 
 ## Repository
 
@@ -43,7 +43,7 @@ Sprint 1 — Auth/RBAC + Supplier
 
 ## 下一步
 
-- 主任务：Product Import 已实现固定 32 列 Staging、批准模板下载、类目/价格直接保存、WPS/Excel 图片仅在通过行 Confirm 时相对本地保存、来源供应商精确匹配、通过/不通过预览筛选、人工解析、供应商 + SKU 防重和通过行原子 Confirm；过期未完成任务仅清理自身临时源文件/未导入行媒体，绝不清理正式 Product 图片（Revision `20260914_0023`，ADR-0010/0011/0015/0016/0017）。
+- 主任务：Product Import 已实现固定 32 列 Staging、批准模板下载、有效商城三级类目绑定、WPS/Excel 图片仅在通过行 Confirm 时相对本地保存、来源供应商精确匹配、通过/不通过预览筛选、人工解析、供应商 + SKU 防重和通过行原子 Confirm；类目无匹配、停用或不唯一会显示行级原因并阻止入库。过期未完成任务仅清理自身临时源文件/未导入行媒体，绝不清理正式 Product 图片（Revision `20260914_0023`，ADR-0010/0011/0015/0016/0017/0018）。
 - 后续任务：准备真实商品大表需要的有效 Supplier Master，并处理 Excel 的空供应商；类目 Source Loader 不再是商品 Confirm 前置条件。
 - 业务冻结：Supplier Product Quote 已取消；后续供应商新报价直接更新正式 Product 的 `cost_price`，并原子重算派生价格；不创建报价历史、有效期或比价模块。
 - Auth 会话：Refresh Token、服务端 Session、令牌轮换、三天无活动过期、三十天绝对过期和全设备失效已实现；管理员设备会话管理页与 Role disable policy 仍待后续冻结。
@@ -64,6 +64,6 @@ Sprint 1 — Auth/RBAC + Supplier
   注册审批、`/login` 与 `/register` 兼容入口保持不变。
 - Role Management：自定义角色创建 IMPLEMENTED（Revision `20260908_0007`）；安全删除 IMPLEMENTED（Revision `20260911_0018`）。仅未分配给有效用户的自定义角色可逻辑删除；内置角色、仍关联有效用户的角色一律拒绝删除。权限配置页按权限码前缀动态分组，支持模块折叠、模块全选/半选和单项勾选。角色编辑与停用仍属未来范围。
 - Post-Merge Hardening：Request transaction ownership、Service caller-owned transaction participation、Account association ID 幂等去重与 Supplier UUID Router validation 已验证；ADR-0007 冻结事务规则，无 Migration 变化。
-- Catalog：`IMPLEMENTED / PRODUCT_IMPORT_PARTIAL_CONFIRM`；固定商品大表直接保存三级类目文字和价格值，`source_supplier_id` 是正式关系；来源供应商 + SKU 为 Product 防重业务键。Product 列表、详情、受控基础资料编辑、停用/启用、受确认的永久删除、模板下载、导入预览、通过/不通过筛选、供应商人工解析和通过行原子 Confirm 已可用；`DISPIMG` 预览显示确认后保存，只有正式通过行才生成图片文件。失败行不入库，已导入行不能重复 Confirm；同键正常或停用商品均阻止，不恢复也不覆盖。真实类目源数据无需作为 Confirm 前置条件。Supplier Detail Related Products IMPLEMENTED：`product:list` 可按来源供应商精确筛选正式商品；供应商停用/拉黑时关联商品不可查询或维护，恢复合作后自动恢复可见。
+- Catalog：`IMPLEMENTED / PRODUCT_IMPORT_PARTIAL_CONFIRM`；固定商品大表以一级、二级、三级文本唯一匹配有效商城 Category，正式 Product 写入 `category_id` 与 Category-owned 路径，价格值仍直接保存；`source_supplier_id` 是正式关系，来源供应商 + SKU 为 Product 防重业务键。历史 Product 回填必须在目标库存在候选记录时重新预检；当前配置开发库的 `scm_product` 为 0 条，未执行历史更新。Product 列表、详情、受控基础资料编辑、停用/启用、受确认的永久删除、模板下载、导入预览、通过/不通过筛选、供应商人工解析和通过行原子 Confirm 已可用；`DISPIMG` 预览显示确认后保存，临时源文件写入后会显式异步加载关联数据，避免延迟加载导致预览 500，只有正式通过行才生成图片文件。失败行不入库，已导入行不能重复 Confirm；同键正常或停用商品均阻止，不恢复也不覆盖。Supplier Detail Related Products IMPLEMENTED：`product:list` 可按来源供应商精确筛选正式商品；供应商停用/拉黑时关联商品不可查询或维护，恢复合作后自动恢复可见。
 - Product Cost Pricing：`cost_price` 是当前成本价和当前供应商报价，不建设 `scm_supplier_product_quote`；成本价更新已受 `product:cost:update` 保护，并原子重算已冻结派生值。
 - Web Admin Data Refresh：统一 API 客户端已设置 `cache: no-store`；新增、编辑、删除和导入确认后的页面重新加载不会复用浏览器中的旧 GET 响应，前端测试、类型检查和生产构建已验证。

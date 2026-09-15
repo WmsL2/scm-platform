@@ -22,6 +22,7 @@ from app.modules.catalog.application.excel_images import (
 )
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import (
+    Category,
     Product,
     ProductImportRow,
     ProductImportSupplierMatch,
@@ -133,6 +134,14 @@ class ProductImportService:
             async with transaction_scope(self.session):
                 self.session.add(task)
                 await self.session.flush()
+                # `rows` and `supplier_matches` are select-in relationships.  Reload them
+                # while the task is clean, before assigning the temporary source-file key.
+                # Otherwise an async lazy load can trigger an autoflush of that assignment
+                # and fail with MissingGreenlet for workbooks containing DISPIMG formulas.
+                reloaded_task = await self.repository.import_task_by_id(task.id)
+                if reloaded_task is None:
+                    raise RuntimeError("The new Product Import task could not be reloaded")
+                task = reloaded_task
                 if has_embedded_image_formula:
                     stored_source_key = await self.storage.save(
                         f"product-import-sources/{task.id}.xlsx", file_bytes
@@ -236,7 +245,18 @@ class ProductImportService:
                         existing_products = await self.repository.products_by_supplier_sku(
                             set(row_supplier_sku_keys.values()), for_update=True
                         )
-                        resolved_rows: list[tuple[ProductImportRow, uuid.UUID]] = []
+                        category_ids = {row.category_id for row in rows_to_import}
+                        if None in category_ids:
+                            raise RuntimeError(
+                                "A ready Product Import row is missing a resolved category"
+                            )
+                        resolved_category_ids = {
+                            category_id for category_id in category_ids if category_id is not None
+                        }
+                        categories = await self.repository.active_mall_categories_by_ids(
+                            resolved_category_ids, for_update=True
+                        )
+                        resolved_rows: list[tuple[ProductImportRow, uuid.UUID, Category]] = []
                         for row in rows_to_import:
                             match = (
                                 matches.get(row.supplier_match_id)
@@ -274,13 +294,24 @@ class ProductImportService:
                                     ),
                                     409,
                                 )
-                            resolved_rows.append((row, match.matched_supplier_id))
+                            if row.category_id is None:
+                                raise RuntimeError(
+                                    "A ready Product Import row is missing a resolved category"
+                                )
+                            category = categories.get(row.category_id)
+                            if category is None:
+                                raise AppError(
+                                    "PRODUCT_IMPORT_REFERENCE_CHANGED",
+                                    "A category changed after preview; preview the batch again",
+                                    409,
+                                )
+                            resolved_rows.append((row, match.matched_supplier_id, category))
                         staged_image_keys = await self._stage_confirmed_row_images(
                             task, rows_to_import
                         )
-                        for row, source_supplier_id in resolved_rows:
+                        for row, source_supplier_id, category in resolved_rows:
                             self.session.add(
-                                self._product_from_row(row, source_supplier_id, actor_id)
+                                self._product_from_row(row, source_supplier_id, category, actor_id)
                             )
                         imported_count = len(resolved_rows)
                         await self.session.flush()
@@ -424,6 +455,7 @@ class ProductImportService:
 
     async def _refresh_validation(self, task: ProductImportTask) -> None:
         matches = {match.id: match for match in task.supplier_matches}
+        category_errors = await self._refresh_category_bindings(task)
         row_supplier_sku_keys: dict[int, tuple[uuid.UUID, str]] = {}
         for row in task.rows:
             if row.is_imported:
@@ -458,6 +490,7 @@ class ProductImportService:
                 matches,
                 existing_products=existing_products,
                 first_excel_row=first_excel_row,
+                category_error=category_errors.get(row.source_row_number),
             )
             row.error_message = "；".join(errors) or None
             row.warning_message = "；".join(warnings) or None
@@ -484,6 +517,30 @@ class ProductImportService:
         else:
             task.status = "VALIDATED"
 
+    async def _refresh_category_bindings(self, task: ProductImportTask) -> dict[int, str]:
+        categories_by_path: dict[tuple[str, str, str], list[Category]] = {}
+        for category in await self.repository.mall_categories():
+            path = (category.level1_name, category.level2_name, category.level3_name)
+            categories_by_path.setdefault(path, []).append(category)
+
+        errors: dict[int, str] = {}
+        for row in task.rows:
+            if row.is_imported:
+                continue
+            path = self._category_path(row)
+            candidates = categories_by_path.get(path, [])
+            active_candidates = [category for category in candidates if category.is_active]
+            row.category_id = None
+            if len(active_candidates) == 1:
+                row.category_id = active_candidates[0].id
+            elif not candidates:
+                errors[row.source_row_number] = self._category_not_found_message(path)
+            elif not active_candidates:
+                errors[row.source_row_number] = self._category_inactive_message(path)
+            else:
+                errors[row.source_row_number] = self._category_ambiguous_message(path)
+        return errors
+
     async def _row_messages(
         self,
         row: ProductImportRow,
@@ -491,11 +548,14 @@ class ProductImportService:
         *,
         existing_products: dict[tuple[uuid.UUID, str], Product],
         first_excel_row: int | None,
+        category_error: str | None,
     ) -> tuple[list[str], list[str]]:
         values = row.source_data
         errors: list[str] = []
         warnings: list[str] = []
         self._required_decimal(row, "*成本价", errors)
+        if category_error is not None:
+            errors.append(category_error)
         sku = self._optional(values["sku"])
         if sku is None:
             errors.append("SKU不能为空")
@@ -527,6 +587,7 @@ class ProductImportService:
         self,
         row: ProductImportRow,
         source_supplier_id: uuid.UUID,
+        category: Category,
         actor_id: uuid.UUID,
     ) -> Product:
         values = row.source_data
@@ -544,10 +605,10 @@ class ProductImportService:
             model=self._optional(values["型号"]),
             sku=sku,
             product_name=self._optional(values["商品名称"]),
-            category_id=None,
-            category_level1_name=self._optional(values["一级类目"]),
-            category_level2_name=self._optional(values["二级类目"]),
-            category_level3_name=self._optional(values["三级类目"]),
+            category_id=category.id,
+            category_level1_name=category.level1_name,
+            category_level2_name=category.level2_name,
+            category_level3_name=category.level3_name,
             item_number=self._optional(values["货号"]),
             jd_same_product_url=self._optional(values["链接"]),
             cost_price=cost_price,
@@ -796,6 +857,25 @@ class ProductImportService:
     @staticmethod
     def _normalized(value: object) -> str:
         return str(value or "").strip()
+
+    def _category_path(self, row: ProductImportRow) -> tuple[str, str, str]:
+        return (
+            self._normalized(row.source_data["一级类目"]),
+            self._normalized(row.source_data["二级类目"]),
+            self._normalized(row.source_data["三级类目"]),
+        )
+
+    @staticmethod
+    def _category_not_found_message(path: tuple[str, str, str]) -> str:
+        return f"未找到有效商城三级类目：{' / '.join(path)}"
+
+    @staticmethod
+    def _category_inactive_message(path: tuple[str, str, str]) -> str:
+        return f"匹配的商城三级类目已停用：{' / '.join(path)}"
+
+    @staticmethod
+    def _category_ambiguous_message(path: tuple[str, str, str]) -> str:
+        return f"商城三级类目匹配不唯一：{' / '.join(path)}"
 
     @staticmethod
     def _optional(value: str | None) -> str | None:

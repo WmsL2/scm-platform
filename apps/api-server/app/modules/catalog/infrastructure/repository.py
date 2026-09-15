@@ -64,6 +64,25 @@ class ProductRepository:
         )
         return list((await self.session.scalars(statement)).all())
 
+    async def mall_categories(self) -> list[Category]:
+        statement = select(Category).where(Category.source_type == "MALL_LEVEL3")
+        return list((await self.session.scalars(statement)).all())
+
+    async def active_mall_categories_by_ids(
+        self, category_ids: set[uuid.UUID], *, for_update: bool = False
+    ) -> dict[uuid.UUID, Category]:
+        if not category_ids:
+            return {}
+        statement = select(Category).where(
+            Category.id.in_(category_ids),
+            Category.source_type == "MALL_LEVEL3",
+            Category.is_active.is_(True),
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        categories = list((await self.session.scalars(statement)).all())
+        return {category.id: category for category in categories}
+
     async def active_category_by_id(self, category_id: uuid.UUID) -> Category | None:
         statement = select(Category).where(Category.id == category_id, Category.is_active.is_(True))
         return cast(Category | None, await self.session.scalar(statement))
