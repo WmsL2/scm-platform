@@ -21,6 +21,8 @@ Sprint 1 — Auth/RBAC + Supplier
 状态：IN_PROGRESS
 进度：Auth Kernel DONE；Web Admin Auth DONE / REAL API VERIFIED；Business Sequence DONE / IMPLEMENTED（Revision `20260907_0003`）；Supplier Master Backend DONE / MERGED via PR #13（Revision `20260907_0004`）；Supplier Delete & Import Patch MERGED / IMPLEMENTED（Revision `20260908_0005`）；Supplier Name Uniqueness / Deleted-Record Recovery IMPLEMENTED（Revision `20260910_0016`）；Account / Registration / Profile IMPLEMENTED / VERIFIED（Revision `20260908_0006`）；Custom Role Create / Safe Delete IMPLEMENTED（Revision `20260908_0007`、`20260911_0018`）；Auth Session Refresh IMPLEMENTED（Revision `20260911_0021`）；Post-Merge P1 Transaction / Validation Hardening VERIFIED（无 Migration）；Product Master、Import、防重、基础资料编辑、停用/启用、永久删除、通过行分批导入、模板下载、确认时图片落盘及供应商合作状态联动 IMPLEMENTED（Revision `20260909_0008` → `20260914_0023`）。当前 Alembic 迁移链为单 Head：`20260907_0004` → `20260908_0005` → `20260908_0006` → `20260908_0007` → `20260909_0008` → `20260909_0009` → `20260910_0010`（用户逻辑删除）→ `20260910_0013` → `20260910_0014` → `20260910_0015` → `20260910_0016`（供应商名称唯一）→ `20260910_0017`（合作状态恢复）→ `20260911_0018`（商品防重、编辑与角色删除权限）→ `20260911_0019`（商品逻辑删除）→ `20260911_0020`（商品停用与永久删除）→ `20260911_0021`（Auth 服务端会话刷新）→ `20260911_0022`（通过行分批导入）→ `20260914_0023`（确认时图片落盘与过期临时媒体清理）。分支与合入状态以 GitHub / `main` 历史为准。
 
+投标项目核心已在分支 `feat/bid-project-core` 实现：新增唯一 Migration `20260915_0024`，包含项目、模板、文件版本、需求行、事件、匹配和人工选品共享表，项目编号序列及投标权限。项目创建、ORIGINAL 保存、模板指纹识别、分页查询、文件下载、报价版本、提交和结果接口已完成；真实买家 Excel 尚未提供，因此当前不预置客户模板或报价列。2 号匹配和 3 号前端可在本结构上并行开发。
+
 ## 已冻结
 
 - [x] FastAPI 唯一业务后端
