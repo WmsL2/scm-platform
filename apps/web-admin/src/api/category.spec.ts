@@ -18,5 +18,10 @@ describe("category api", () => {
     expect(http.delete).toHaveBeenCalledWith("/api/v1/categories/category-1")
     expect(http.getBlob).toHaveBeenCalledWith("/api/v1/categories/imports/template")
     expect(http.post).toHaveBeenNthCalledWith(2, "/api/v1/categories/imports", expect.any(FormData))
+    const importBody = http.post.mock.calls[1][1] as FormData
+    expect(importBody.get("file")).toBeInstanceOf(File)
+    expect(importBody.get("deduction_rate_percent")).toBe("6.25")
+    expect(importBody.has("source_type")).toBe(false)
+    expect(importBody.has("deduction_rate")).toBe(false)
   })
 })
