@@ -13,6 +13,7 @@ from app.modules.auth.security import create_token, hash_password
 from app.modules.catalog.application.import_service import PRODUCT_IMPORT_HEADERS
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import (
+    Category,
     Product,
     ProductImportRow,
     ProductImportSupplierMatch,
@@ -70,7 +71,30 @@ async def _cleanup_import_user(user_id: uuid.UUID) -> None:
         await session.commit()
 
 
-async def _create_references() -> uuid.UUID:
+async def _create_category(
+    path: tuple[str, str, str], *, is_active: bool = True
+) -> uuid.UUID:
+    category_id = uuid.uuid4()
+    async with SessionLocal() as session:
+        session.add(
+            Category(
+                id=category_id,
+                source_type="MALL_LEVEL3",
+                level1_external_id=f"L1-{category_id}",
+                level1_name=path[0],
+                level2_external_id=f"L2-{category_id}",
+                level2_name=path[1],
+                level3_external_id=f"L3-{category_id}",
+                level3_name=path[2],
+                deduction_rate=Decimal("0.0800"),
+                is_active=is_active,
+            )
+        )
+        await session.commit()
+    return category_id
+
+
+async def _create_references() -> tuple[uuid.UUID, uuid.UUID]:
     supplier_id = uuid.uuid4()
     async with SessionLocal() as session:
         session.add(
@@ -85,11 +109,14 @@ async def _create_references() -> uuid.UUID:
             )
         )
         await session.commit()
-    return supplier_id
+    category_id = await _create_category(("测试一级", "测试二级", "测试三级"))
+    return supplier_id, category_id
 
 
 def _workbook_bytes(
-    *supplier_names: str, image_value: str = "https://example.test/image.png"
+    *supplier_names: str,
+    image_value: str = "https://example.test/image.png",
+    category_path: tuple[str, str, str] = ("测试一级", "测试二级", "测试三级"),
 ) -> bytes:
     workbook = Workbook()
     worksheet = workbook.active
@@ -100,7 +127,7 @@ def _workbook_bytes(
             [
                 "2026-09-10", "测试品牌", image_value, "型号",
                 f"SKU-{index}", "测试商品",
-                "测试一级", "测试二级", "测试三级", "货号", "https://example.test/item", "100",
+                *category_path, "货号", "https://example.test/item", "100",
                 "999", "201", "199.9", "155.55", "55.55", "0.1234", "0.1111", "0.2778", "采销员",
                 supplier_name, "6900000000000", "规格", "卖点", "限售区域", "180", "https://example.test/ref",
                 "官方旗舰店", "0.8888", "-0.1111", "备注",
@@ -112,7 +139,7 @@ def _workbook_bytes(
 
 
 async def _cleanup_import_data(
-    supplier_id: uuid.UUID, user_id: uuid.UUID
+    supplier_id: uuid.UUID, user_id: uuid.UUID, category_ids: tuple[uuid.UUID, ...]
 ) -> None:
     async with SessionLocal() as session:
         task_ids = list(
@@ -138,12 +165,13 @@ async def _cleanup_import_data(
                 delete(ProductImportTask).where(ProductImportTask.id.in_(task_ids))
             )
         await session.execute(delete(Supplier).where(Supplier.id == supplier_id))
+        await session.execute(delete(Category).where(Category.id.in_(category_ids)))
         await session.commit()
 
 
-async def test_product_import_direct_values_do_not_require_category_or_recalculation() -> None:
+async def test_product_import_binds_unique_active_mall_category() -> None:
     user_id, headers = await _create_import_user()
-    supplier_id = await _create_references()
+    supplier_id, category_id = await _create_references()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             unresolved = await client.post(
@@ -176,6 +204,7 @@ async def test_product_import_direct_values_do_not_require_category_or_recalcula
             data = preview.json()["data"]
             assert data["status"] == "READY_TO_CONFIRM"
             assert data["valid_rows"] == 1
+            assert data["rows"][0]["category_id"] == str(category_id)
             confirmed = await client.post(
                 f"/api/v1/products/imports/{data['id']}/confirm", headers=headers
             )
@@ -244,19 +273,93 @@ async def test_product_import_direct_values_do_not_require_category_or_recalcula
             assert product.product_name == "停用前商品名称"
             assert product.cost_price == Decimal("321.0000")
             assert product.source_supplier_id == supplier_id
-            assert product.category_id is None
+            assert product.category_id == category_id
             assert product.category_level3_name == "测试三级"
             assert str(product.market_price) == "999.0000"
             assert str(product.agreement_price) == "199.9000"
             assert str(product.jd_margin) == "0.1234"
     finally:
-        await _cleanup_import_data(supplier_id, user_id)
+        await _cleanup_import_data(supplier_id, user_id, (category_id,))
+        await _cleanup_import_user(user_id)
+
+
+async def test_product_import_rejects_missing_ambiguous_and_inactive_categories() -> None:
+    user_id, headers = await _create_import_user()
+    supplier_id, default_category_id = await _create_references()
+    ambiguous_path = ("重复一级", "重复二级", "重复三级")
+    inactive_path = ("停用一级", "停用二级", "停用三级")
+    ambiguous_category_ids = (
+        await _create_category(ambiguous_path),
+        await _create_category(ambiguous_path),
+    )
+    inactive_category_id = await _create_category(inactive_path, is_active=False)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            missing = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "missing-category.xlsx",
+                        _workbook_bytes(
+                            "导入测试供应商",
+                            category_path=("未知一级", "未知二级", "未知三级"),
+                        ),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert missing.status_code == 200
+            missing_row = missing.json()["data"]["rows"][0]
+            assert missing_row["is_valid"] is False
+            assert missing_row["category_id"] is None
+            assert "未找到有效商城三级类目" in missing_row["error_message"]
+
+            ambiguous = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "ambiguous-category.xlsx",
+                        _workbook_bytes("导入测试供应商", category_path=ambiguous_path),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert ambiguous.status_code == 200
+            ambiguous_row = ambiguous.json()["data"]["rows"][0]
+            assert ambiguous_row["is_valid"] is False
+            assert ambiguous_row["category_id"] is None
+            assert "商城三级类目匹配不唯一" in ambiguous_row["error_message"]
+
+            inactive = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "inactive-category.xlsx",
+                        _workbook_bytes("导入测试供应商", category_path=inactive_path),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert inactive.status_code == 200
+            inactive_row = inactive.json()["data"]["rows"][0]
+            assert inactive_row["is_valid"] is False
+            assert inactive_row["category_id"] is None
+            assert "匹配的商城三级类目已停用" in inactive_row["error_message"]
+    finally:
+        await _cleanup_import_data(
+            supplier_id,
+            user_id,
+            (default_category_id, *ambiguous_category_ids, inactive_category_id),
+        )
         await _cleanup_import_user(user_id)
 
 
 async def test_product_import_confirms_valid_rows_and_retains_failed_rows() -> None:
     user_id, headers = await _create_import_user()
-    supplier_id = await _create_references()
+    supplier_id, category_id = await _create_references()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             preview = await client.post(
@@ -331,13 +434,13 @@ async def test_product_import_confirms_valid_rows_and_retains_failed_rows() -> N
             )
             assert sorted(product.sku for product in products) == ["SKU-1", "SKU-2"]
     finally:
-        await _cleanup_import_data(supplier_id, user_id)
+        await _cleanup_import_data(supplier_id, user_id, (category_id,))
         await _cleanup_import_user(user_id)
 
 
 async def test_product_import_defers_formula_image_storage_until_confirm() -> None:
     user_id, headers = await _create_import_user()
-    supplier_id = await _create_references()
+    supplier_id, category_id = await _create_references()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             preview = await client.post(
@@ -348,7 +451,7 @@ async def test_product_import_defers_formula_image_storage_until_confirm() -> No
                         "formula-image-products.xlsx",
                         _workbook_bytes(
                             "导入测试供应商",
-                            image_value='=DISPIMG("ID_PRODUCT",1)',
+                            image_value='=_xlfn.DISPIMG("ID_PRODUCT",1)',
                         ),
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
@@ -377,5 +480,5 @@ async def test_product_import_defers_formula_image_storage_until_confirm() -> No
                 task = await session.get(ProductImportTask, data["id"])
                 assert task is not None and task.source_file_storage_key is None
     finally:
-        await _cleanup_import_data(supplier_id, user_id)
+        await _cleanup_import_data(supplier_id, user_id, (category_id,))
         await _cleanup_import_user(user_id)

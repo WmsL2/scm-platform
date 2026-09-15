@@ -1,9 +1,9 @@
 # Category and Pricing Rules / 类目与价格规则门禁
 
-状态：PARTIALLY SUPERSEDED BY ADR-0010
+状态：PARTIALLY SUPERSEDED BY ADR-0010 / ADR-0018
 范围：类目来源、扣点规则、价格公式与计算责任；本文件不创建 Category 或 Product Schema。
 
-> ADR-0010 已明确：本文件的类目解析、`category_id` 必填和公式重算要求**不适用于固定商品大表导入**。它们仅保留给将来受控类目关联或单独成本价更新场景；固定大表导入直接保存完整类目和价格正式值。
+> ADR-0018 恢复固定商品大表导入的受控类目要求：Excel 一级、二级、三级类目必须唯一匹配有效商城三级类目，Confirm 写入 `category_id` 与 Category-owned 路径。ADR-0010 关于价格直接保存的结论保持有效：固定大表导入不因本规则重算或覆盖 Excel 的价格、毛利、折扣率和价格虚高比例；单独成本价更新仍按本文件的类目扣点和公式执行。
 
 ## 类目来源与扣点
 

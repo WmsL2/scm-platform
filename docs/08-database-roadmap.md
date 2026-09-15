@@ -58,8 +58,8 @@ Supplier：
 
 - `scm_product`
 - `scm_product.source_supplier_id` FK → `scm_supplier.id`（来源供应商，不是当前报价或唯一供应商）
-- `scm_product.category_level1_name`、`category_level2_name`、`category_level3_name`（固定商品大表直接保存的完整类目文字）
-- 可空的 `scm_product.category_id`（未来受控类目关联，不是导入前置条件）
+- `scm_product.category_level1_name`、`category_level2_name`、`category_level3_name`（由受控 Category 写入的完整类目路径）
+- `scm_product.category_id`（固定商品大表 Confirm 的受控类目关联）
 - `scm_product.cost_price`（当前成本价；业务确认等同当前供应商报价）
 - `scm_category`
 - 品牌相关表（如需要）
@@ -67,7 +67,7 @@ Supplier：
 
 是否拆品牌、分类、参数表，必须以真实大表字段和检索需求决定。
 
-当前已实现 Product 列表、详情、成本价更新和商品大表导入。固定商品大表直接保存完整类目和价格值；Category Source Loader 不是 Confirm 前置条件。
+当前已实现 Product 列表、详情、成本价更新和商品大表导入。固定商品大表必须唯一匹配有效商城三级类目并写入 Category 关联，价格值仍直接保存。
 
 明确：
 

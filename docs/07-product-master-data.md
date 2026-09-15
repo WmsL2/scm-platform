@@ -73,9 +73,9 @@ Revision `20260911_0020` 将 Product 生命周期冻结为 `ACTIVE` / `DISABLED`
 
 依据 ADR-0010，**固定商品大表导入本身不调用 Pricing Service**：Excel 的市场价、京东价、协议价、协议价采购价、利润、毛利、折扣率和价格虚高比例均作为已确认正式值直接保存。仅单独“更新当前成本价”操作仍须重算，因为该操作不同时提供整行完整价格数据。
 
-## 类目直接保存
+## 受控类目绑定
 
-依据 ADR-0010，固定商品大表的一级、二级、三级类目直接保存到 `scm_product.category_level1_name`、`category_level2_name`、`category_level3_name`。导入不读取或写入 `scm_category`，也不以类目路径生成 `category_id`；`category_id` 是可空的未来受控类目关联，不是 Confirm 前置条件。
+依据 ADR-0018，固定商品大表的一级、二级、三级类目文本只用于精确查询有效的商城三级 `scm_category`。只有唯一匹配时，Confirm 才会把该记录的 `id` 写入 `scm_product.category_id`，并由该记录写入三级类目路径；无匹配、停用或不唯一时，该行不通过且不入库。ADR-0010 关于价格直接保存的规则保持不变。
 
 ## 商品图片本地保存
 
