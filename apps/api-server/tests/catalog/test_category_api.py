@@ -84,3 +84,43 @@ async def test_category_import_write_failure_rolls_back_all_rows() -> None:
             remaining = list((await session.scalars(select(Category.id).where(Category.level3_external_id.in_(("cat-test-r1", "cat-test-r2"))))).all())
             assert remaining == []
     finally: await clean(uid)
+
+
+async def test_category_list_server_side_filters_pagination_and_selection() -> None:
+    uid, h = await auth()
+    try:
+        categories = [
+            Category(source_type="MALL_LEVEL3", level1_name="筛测个人护理", level2_name="筛测假发", level3_name="筛测配件甲", level3_external_id="cat-test-filter-a", deduction_rate=Decimal("0.0500"), is_active=True, business_unit="筛测京东零售-大商超事业部"),
+            Category(source_type="MALL_LEVEL3", level1_name="筛测个人防护", level2_name="筛测假发", level3_name="筛测配件乙", level3_external_id="cat-test-filter-b", deduction_rate=Decimal("0.0800"), is_active=False, business_unit="筛测京东零售-家电事业部"),
+            Category(source_type="MALL_LEVEL3", level1_name="筛测办公", level2_name="筛测收纳", level3_name="筛测桌面收纳", level3_external_id="cat-test-filter-c", deduction_rate=Decimal("0.0500"), is_active=True, business_unit="筛测企业服务"),
+            *[Category(source_type="MALL_LEVEL3", level1_name="分页测试", level2_name="二级", level3_name=f"三级{i:02}", level3_external_id=f"cat-test-filter-page-{i}", deduction_rate=Decimal("0.0500"), is_active=True, business_unit="分页事业部") for i in range(21)],
+        ]
+        async with SessionLocal() as s:
+            s.add_all(categories)
+            await s.commit()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            async def listed(query: str) -> dict[str, object]:
+                response = await c.get(f"/api/v1/categories?{query}", headers=h)
+                assert response.status_code == 200
+                return response.json()["data"]
+
+            assert (await listed("level1_name=%20%E7%AD%9B%E6%B5%8B%E4%B8%AA%E4%BA%BA%20"))["total"] == 2
+            assert (await listed("level2_name=%E7%AD%9B%E6%B5%8B%E5%81%87%E5%8F%91"))["total"] == 2
+            assert (await listed("level3_name=%E7%AD%9B%E6%B5%8B%E9%85%8D%E4%BB%B6"))["total"] == 2
+            assert (await listed("level1_name=%E7%AD%9B%E6%B5%8B&deduction_rate=0.05"))["total"] == 2
+            assert (await listed("level1_name=%E7%AD%9B%E6%B5%8B&is_active=true"))["total"] == 2
+            inactive = await listed("level1_name=%E7%AD%9B%E6%B5%8B&is_active=false")
+            assert inactive["total"] == 1 and inactive["items"][0]["level3_name"] == "筛测配件乙"  # type: ignore[index]
+            assert (await listed("business_unit=%E7%AD%9B%E6%B5%8B%E4%BA%AC%E4%B8%9C%E9%9B%B6%E5%94%AE"))["total"] == 2
+            combined = await listed("level1_name=%E7%AD%9B%E6%B5%8B%E4%B8%AA%E4%BA%BA&level2_name=%E7%AD%9B%E6%B5%8B%E5%81%87%E5%8F%91&level3_name=%E7%94%B2&deduction_rate=0.05&is_active=true&business_unit=%E5%A4%A7%E5%95%86%E8%B6%85")
+            assert combined["total"] == 1 and combined["items"][0]["level3_name"] == "筛测配件甲"  # type: ignore[index]
+            first = await listed("page=1&page_size=20&level1_name=%E5%88%86%E9%A1%B5%E6%B5%8B%E8%AF%95")
+            second = await listed("page=2&page_size=20&level1_name=%E5%88%86%E9%A1%B5%E6%B5%8B%E8%AF%95")
+            first_ids = {item["id"] for item in first["items"]}  # type: ignore[index]
+            second_ids = {item["id"] for item in second["items"]}  # type: ignore[index]
+            assert first["total"] == 21 and len(first_ids) == 20 and len(second_ids) == 1 and first_ids.isdisjoint(second_ids)
+            selection = (await c.get("/api/v1/categories/selection", headers=h)).json()["data"]
+            selected_ids = {item["id"] for item in selection}
+            assert str(categories[0].id) in selected_ids and str(categories[1].id) not in selected_ids
+    finally:
+        await clean(uid)

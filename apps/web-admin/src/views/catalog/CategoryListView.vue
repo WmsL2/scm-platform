@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue"
-import { Delete, Download, Edit, Plus, Upload } from "@element-plus/icons-vue"
+import { Delete, Download, Edit, Plus, Refresh, Search, Upload } from "@element-plus/icons-vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { categoryApi } from "../../api/category"
 import {
@@ -8,7 +8,7 @@ import {
   purchaseCoefficientToDeductionPercent,
   purchaseCoefficientToDeductionRate,
 } from "./categoryDeduction"
-import type { Category, CategoryImportResult, CategoryPayload } from "../../types/category"
+import type { Category, CategoryImportResult, CategoryListParams, CategoryPayload } from "../../types/category"
 
 const pageSize = 20
 const rows = ref<Category[]>([])
@@ -24,6 +24,14 @@ const importFile = ref<File>()
 const importCoefficient = ref("0.95")
 const purchaseCoefficient = ref("0.95")
 const importResult = ref<CategoryImportResult>()
+const filters = reactive<{
+  level1_name: string
+  level2_name: string
+  level3_name: string
+  purchase_coefficient: string
+  is_active: boolean | undefined
+  business_unit: string
+}>({ level1_name: "", level2_name: "", level3_name: "", purchase_coefficient: "", is_active: undefined, business_unit: "" })
 
 function emptyPayload(): CategoryPayload {
   return {
@@ -43,17 +51,55 @@ function emptyPayload(): CategoryPayload {
 
 const form = reactive<CategoryPayload>(emptyPayload())
 
-async function loadCategories() {
+function categoryListParams(targetPage: number): CategoryListParams | null {
+  const coefficient = filters.purchase_coefficient.trim()
+  let deductionRate: string | undefined
+  if (coefficient) {
+    const converted = purchaseCoefficientToDeductionRate(coefficient)
+    if (converted === null) {
+      ElMessage.error("请输入 0 到 1 之间的采购价系数，最多 4 位小数，例如 0.95。")
+      return null
+    }
+    deductionRate = converted
+  }
+  return {
+    page: targetPage,
+    page_size: pageSize,
+    level1_name: filters.level1_name.trim() || undefined,
+    level2_name: filters.level2_name.trim() || undefined,
+    level3_name: filters.level3_name.trim() || undefined,
+    deduction_rate: deductionRate,
+    is_active: filters.is_active,
+    business_unit: filters.business_unit.trim() || undefined,
+  }
+}
+
+async function loadCategories(targetPage = page.value) {
+  const params = categoryListParams(targetPage)
+  if (!params) return
   loading.value = true
   try {
-    const data = await categoryApi.list(page.value, pageSize)
+    const data = await categoryApi.list(params)
     rows.value = data.items
     total.value = data.total
+    page.value = data.page
   } catch {
     ElMessage.error("加载类目列表失败")
   } finally {
     loading.value = false
   }
+}
+
+function search() { void loadCategories(1) }
+
+function reset() {
+  filters.level1_name = ""
+  filters.level2_name = ""
+  filters.level3_name = ""
+  filters.purchase_coefficient = ""
+  filters.is_active = undefined
+  filters.business_unit = ""
+  void loadCategories(1)
 }
 
 function openCreate() {
@@ -180,6 +226,18 @@ onMounted(loadCategories)
       </div>
     </header>
 
+    <el-card class="page-card filter-card">
+      <el-form :inline="true" label-position="top" @submit.prevent="search">
+        <el-form-item label="一级类目" class="filter-item filter-item-category"><el-input v-model="filters.level1_name" clearable placeholder="请输入一级类目" @keyup.enter="search" /></el-form-item>
+        <el-form-item label="二级类目" class="filter-item filter-item-category"><el-input v-model="filters.level2_name" clearable placeholder="请输入二级类目" @keyup.enter="search" /></el-form-item>
+        <el-form-item label="三级类目" class="filter-item filter-item-category"><el-input v-model="filters.level3_name" clearable placeholder="请输入三级类目" @keyup.enter="search" /></el-form-item>
+        <el-form-item label="采购价系数" class="filter-item filter-item-coefficient"><el-input v-model="filters.purchase_coefficient" clearable placeholder="0.95" @keyup.enter="search"><template #prepend>×</template></el-input></el-form-item>
+        <el-form-item label="状态" class="filter-item filter-item-status"><el-select v-model="filters.is_active" clearable placeholder="全部"><el-option label="启用" :value="true" /><el-option label="停用" :value="false" /></el-select></el-form-item>
+        <el-form-item label="主营事业部" class="filter-item filter-item-business"><el-input v-model="filters.business_unit" clearable placeholder="请输入主营事业部" @keyup.enter="search" /></el-form-item>
+        <el-form-item class="filter-actions"><el-button type="primary" :icon="Search" :loading="loading" @click="search">查询</el-button><el-button :icon="Refresh" @click="reset">重置</el-button></el-form-item>
+      </el-form>
+    </el-card>
+
     <el-card class="page-card table-card">
       <template #header><strong>类目列表</strong></template>
       <el-table v-loading="loading" :data="rows" empty-text="暂无类目数据">
@@ -245,9 +303,17 @@ onMounted(loadCategories)
 .page-heading p { margin: 0 0 6px; color: var(--brand-600); font-size: 12px; font-weight: 700; letter-spacing: .08em; }
 .page-heading h1 { margin: 0 0 8px; color: #172b4d; font-size: 26px; }
 .page-heading span, .import-tip { color: var(--text-secondary); }
+.filter-card :deep(.el-card__body) { padding-bottom: 4px; }
+.filter-item-category { width: 240px; }
+.filter-item-coefficient { width: 296px; }
+.filter-item-status { width: 160px; }
+.filter-item-business { width: 240px; }
+.filter-item :deep(.el-input), .filter-item :deep(.el-select) { width: 100%; }
+.filter-actions { width: 190px; align-self: end; }
 .pagination { display: flex; justify-content: flex-end; margin-top: 16px; }
 .category-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; }
 .selected-file { margin-left: 12px; color: var(--text-secondary); }
 .coefficient-help { display: block; margin-top: 6px; line-height: 1.5; }
-@media (max-width: 640px) { .page-heading { flex-direction: column; } .category-form { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .filter-item-category, .filter-item-coefficient, .filter-item-status, .filter-item-business { width: min(100%, 280px); } }
+@media (max-width: 640px) { .page-heading { flex-direction: column; } .category-form { grid-template-columns: 1fr; } .filter-actions { width: 190px; } }
 </style>
