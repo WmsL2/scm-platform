@@ -3,7 +3,11 @@ import { onMounted, reactive, ref } from "vue"
 import { Delete, Download, Edit, Plus, Upload } from "@element-plus/icons-vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { categoryApi } from "../../api/category"
-import { ratioToPercent } from "./categoryDeduction"
+import {
+  deductionRateToPurchaseCoefficient,
+  purchaseCoefficientToDeductionPercent,
+  purchaseCoefficientToDeductionRate,
+} from "./categoryDeduction"
 import type { Category, CategoryImportResult, CategoryPayload } from "../../types/category"
 
 const pageSize = 20
@@ -17,7 +21,8 @@ const importVisible = ref(false)
 const formVisible = ref(false)
 const editingId = ref<string | null>(null)
 const importFile = ref<File>()
-const importRatio = ref("0.08")
+const importCoefficient = ref("0.95")
+const purchaseCoefficient = ref("0.95")
 const importResult = ref<CategoryImportResult>()
 
 function emptyPayload(): CategoryPayload {
@@ -29,7 +34,7 @@ function emptyPayload(): CategoryPayload {
     level2_name: "",
     level3_external_id: null,
     level3_name: "",
-    deduction_rate: "0.0800",
+    deduction_rate: "0.05",
     is_active: true,
     shelf_flag: null,
     business_unit: null,
@@ -54,6 +59,7 @@ async function loadCategories() {
 function openCreate() {
   editingId.value = null
   Object.assign(form, emptyPayload())
+  purchaseCoefficient.value = "0.95"
   formVisible.value = true
 }
 
@@ -61,17 +67,24 @@ function openEdit(category: Category) {
   editingId.value = category.id
   const { id: _id, ...payload } = category
   Object.assign(form, payload)
+  purchaseCoefficient.value = deductionRateToPurchaseCoefficient(category.deduction_rate) ?? ""
   formVisible.value = true
 }
 
 async function saveCategory() {
+  const deductionRate = purchaseCoefficientToDeductionRate(purchaseCoefficient.value)
+  if (deductionRate === null) {
+    ElMessage.error("请输入 0 到 1 之间的采购价系数，最多 4 位小数，例如 0.95。")
+    return
+  }
   saving.value = true
   try {
+    const payload = { ...form, deduction_rate: deductionRate }
     if (editingId.value) {
-      await categoryApi.update(editingId.value, { ...form })
+      await categoryApi.update(editingId.value, payload)
       ElMessage.success("类目已更新")
     } else {
-      await categoryApi.create({ ...form })
+      await categoryApi.create(payload)
       page.value = 1
       ElMessage.success("类目已新增")
     }
@@ -119,18 +132,18 @@ function selectImportFile(event: Event) {
 
 function resetImport() {
   importFile.value = undefined
-  importRatio.value = "0.08"
+  importCoefficient.value = "0.95"
   importResult.value = undefined
 }
 
 async function submitImport() {
-  const deductionRatePercent = ratioToPercent(importRatio.value)
+  const deductionRatePercent = purchaseCoefficientToDeductionPercent(importCoefficient.value)
   if (!importFile.value) {
     ElMessage.error("请选择 Excel 文件")
     return
   }
   if (deductionRatePercent === null) {
-    ElMessage.error("请输入 0 到 1 之间、最多四位小数的扣点倍率，例如 0.08")
+    ElMessage.error("请输入 0 到 1 之间的采购价系数，最多 4 位小数，例如 0.95。")
     return
   }
 
@@ -143,7 +156,7 @@ async function submitImport() {
       ElMessage.success(`导入完成：成功 ${importResult.value.success} 条，跳过 ${importResult.value.skipped} 条`)
     }
   } catch {
-    ElMessage.error("导入失败，请检查文件和扣点率")
+    ElMessage.error("导入失败，请检查文件和采购价系数")
   } finally {
     importing.value = false
   }
@@ -158,7 +171,7 @@ onMounted(loadCategories)
       <div>
         <p>CATEGORY MASTER</p>
         <h1>类目管理</h1>
-        <span>维护商城三级类目、启用状态及扣点规则。</span>
+        <span>维护商城三级类目、启用状态及采购价系数规则。</span>
       </div>
       <div class="header-actions">
         <el-button @click="downloadTemplate"><el-icon><Download /></el-icon>下载模板</el-button>
@@ -173,7 +186,7 @@ onMounted(loadCategories)
         <el-table-column prop="level1_name" label="一级类目" min-width="130" />
         <el-table-column prop="level2_name" label="二级类目" min-width="130" />
         <el-table-column prop="level3_name" label="三级类目" min-width="150" />
-        <el-table-column label="扣点率" width="110"><template #default="{ row }">×{{ row.deduction_rate }}</template></el-table-column>
+        <el-table-column label="采购价系数" width="130"><template #default="{ row }">×{{ deductionRateToPurchaseCoefficient(row.deduction_rate) ?? "-" }}</template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag effect="plain" :type="row.is_active ? 'success' : 'info'">{{ row.is_active ? "启用" : "停用" }}</el-tag></template></el-table-column>
         <el-table-column prop="business_unit" label="主营事业部" min-width="130" />
         <el-table-column label="操作" fixed="right" width="145">
@@ -195,7 +208,7 @@ onMounted(loadCategories)
         <el-form-item label="二级类目名称" required><el-input v-model="form.level2_name" /></el-form-item>
         <el-form-item label="三级类目 ID"><el-input v-model="form.level3_external_id" /></el-form-item>
         <el-form-item label="三级类目名称" required><el-input v-model="form.level3_name" /></el-form-item>
-        <el-form-item label="扣点倍率" required><el-input v-model="form.deduction_rate"><template #prepend>×</template></el-input></el-form-item>
+        <el-form-item label="采购价系数" required><el-input v-model="purchaseCoefficient" placeholder="0.95"><template #prepend>×</template></el-input><el-text class="coefficient-help" type="info">示例：0.95 表示扣点 5%，即协议价采购价 = 协议价 × 0.95。</el-text></el-form-item>
         <el-form-item label="有效状态"><el-switch v-model="form.is_active" active-text="启用" inactive-text="停用" /></el-form-item>
         <el-form-item label="上下柜标记"><el-input v-model="form.shelf_flag" /></el-form-item>
         <el-form-item label="主营事业部"><el-input v-model="form.business_unit" /></el-form-item>
@@ -210,10 +223,11 @@ onMounted(loadCategories)
           <input ref="importInput" type="file" accept=".xlsx" hidden @change="selectImportFile" />
           <span v-if="importFile" class="selected-file">已选择：{{ importFile.name }}</span>
         </el-form-item>
-        <el-form-item label="本批次扣点率" required>
-          <el-input v-model="importRatio" placeholder="0.08"><template #prepend>×</template></el-input>
+        <el-form-item label="本批次采购价系数" required>
+          <el-input v-model="importCoefficient" placeholder="0.95"><template #prepend>×</template></el-input>
+          <el-text class="coefficient-help" type="info">示例：填写 0.95，表示扣点 5%；协议价 100 元时，协议价采购价 = 100 × 0.95 = 95 元。</el-text>
         </el-form-item>
-        <p class="import-tip">本次 Excel 中所有新导入类目统一使用该扣点率。Excel 颜色不参与扣点率判断。</p>
+        <p class="import-tip">本次 Excel 中所有新导入类目统一使用该采购价系数。Excel 颜色不参与扣点规则判断。</p>
       </el-form>
       <el-alert v-if="importResult" :type="importResult.failed ? 'error' : 'success'" :title="`总计 ${importResult.total}，成功 ${importResult.success}，跳过 ${importResult.skipped}，失败 ${importResult.failed}`" :closable="false" />
       <el-table v-if="importResult?.errors.length" :data="importResult.errors" max-height="220">
@@ -234,5 +248,6 @@ onMounted(loadCategories)
 .pagination { display: flex; justify-content: flex-end; margin-top: 16px; }
 .category-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; }
 .selected-file { margin-left: 12px; color: var(--text-secondary); }
+.coefficient-help { display: block; margin-top: 6px; line-height: 1.5; }
 @media (max-width: 640px) { .page-heading { flex-direction: column; } .category-form { grid-template-columns: 1fr; } }
 </style>
