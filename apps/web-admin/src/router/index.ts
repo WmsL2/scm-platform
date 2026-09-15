@@ -11,6 +11,7 @@ import SupplierEditView from "../views/supplier/SupplierEditView.vue"
 import SupplierListView from "../views/supplier/SupplierListView.vue"
 import ProductDetailView from "../views/catalog/ProductDetailView.vue"
 import ProductListView from "../views/catalog/ProductListView.vue"
+import CategoryListView from "../views/catalog/CategoryListView.vue"
 
 const router = createRouter({
   history: createWebHistory(),
@@ -66,6 +67,12 @@ const router = createRouter({
           name: "product-list",
           component: ProductListView,
           meta: { title: "商品主数据", requiresAuth: true, permission: "product:list" },
+        },
+        {
+          path: "categories",
+          name: "category-list",
+          component: CategoryListView,
+          meta: { title: "类目管理", requiresAuth: true, permission: "product:list" },
         },
         {
           path: "products/:id",
