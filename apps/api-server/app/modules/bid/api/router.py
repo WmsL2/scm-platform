@@ -20,8 +20,10 @@ from app.modules.bid.schemas import (
     BidProjectItemResponse,
     BidProjectListItem,
     BidProjectStatusResponse,
+    BidProjectUpdateRequest,
     BidResultRequest,
     BidSubmitRequest,
+    BidVoidRequest,
 )
 
 router = APIRouter(prefix="/bid-projects", tags=["bid-projects"])
@@ -35,6 +37,7 @@ async def create_bid_project(
     buyer_name: Annotated[str, Form(min_length=1, max_length=255)],
     current: Annotated[CurrentUser, Depends(require_permission("bid:create"))],
     session: SessionDep,
+    start_at: Annotated[datetime | None, Form()] = None,
     deadline_at: Annotated[datetime | None, Form()] = None,
     remark: Annotated[str | None, Form(max_length=5000)] = None,
 ) -> ApiResponse[BidProjectCreateResponse]:
@@ -42,6 +45,7 @@ async def create_bid_project(
         await BidProjectService(session).create(
             project_name=project_name,
             buyer_name=buyer_name,
+            start_at=start_at,
             deadline_at=deadline_at,
             remark=remark,
             filename=file.filename or "投标文件.xlsx",
@@ -77,6 +81,16 @@ async def get_bid_project(
     return success(await BidProjectService(session).get(project_id))
 
 
+@router.patch("/{project_id}", response_model=ApiResponse[BidProjectDetailResponse])
+async def update_bid_project(
+    project_id: uuid.UUID,
+    payload: BidProjectUpdateRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("bid:update"))],
+    session: SessionDep,
+) -> ApiResponse[BidProjectDetailResponse]:
+    return success(await BidProjectService(session).update(project_id, payload, current.user_id))
+
+
 @router.get("/{project_id}/items", response_model=ApiResponse[PageResult[BidProjectItemResponse]])
 async def list_bid_project_items(
     project_id: uuid.UUID,
@@ -84,8 +98,13 @@ async def list_bid_project_items(
     session: SessionDep,
     page_params: Annotated[PageParams, Depends()],
     status: BidItemStatus | None = None,
+    keyword: Annotated[str | None, Query(max_length=255)] = None,
 ) -> ApiResponse[PageResult[BidProjectItemResponse]]:
-    return success(await BidProjectService(session).items(project_id, page_params, status=status))
+    return success(
+        await BidProjectService(session).items(
+            project_id, page_params, status=status, keyword=keyword
+        )
+    )
 
 
 @router.get("/{project_id}/files", response_model=ApiResponse[list[BidProjectFileResponse]])
@@ -160,4 +179,16 @@ async def lose_bid_project(
         await BidProjectService(session).result(
             project_id, BidProjectStatus.LOST, payload.note, current.user_id
         )
+    )
+
+
+@router.post("/{project_id}/commands/void", response_model=ApiResponse[BidProjectStatusResponse])
+async def void_bid_project(
+    project_id: uuid.UUID,
+    payload: BidVoidRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("bid:void"))],
+    session: SessionDep,
+) -> ApiResponse[BidProjectStatusResponse]:
+    return success(
+        await BidProjectService(session).void(project_id, payload.reason, current.user_id)
     )

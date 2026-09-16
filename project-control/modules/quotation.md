@@ -2,16 +2,18 @@
 
 状态：IN_PROGRESS
 Owner：投标项目 1 号任务
-Last Updated：2026-09-15
+Last Updated：2026-09-16
 
 ## Database
 - [x] 报价导出文件版本与实际投标文件引用已具备基础表结构。
+- [x] 投标项目已增加可空业务开始时间 `start_at`；`created_at` 继续只用于审计（Revision `20260916_0025`）。
 
 ## Backend
 - [x] ORIGINAL 副本生成报价文件、版本递增和文件下载已实现。
+- [x] 未提交项目可通过 `bid:void` 作废；原始 Excel、报价 Excel 和全部审计事件均保留，已提交后的业务结果不可用作废覆盖。
 
 ## Frontend
-- [ ] 投标文件版本页面由 3 号任务实现。
+- [x] 文件版本、下载、导出、标记投标及结果操作界面已实现；状态：IMPLEMENTED / TEMPLATE_DATA_GATE_BLOCKED。
 
 ## Permissions
 - [x] `bid:export`、`bid:file:download`、`bid:submit` 已创建。

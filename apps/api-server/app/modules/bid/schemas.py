@@ -39,6 +39,7 @@ class BidProjectListItem(BaseModel):
     project_code: str
     project_name: str
     buyer_name: str
+    start_at: datetime | None
     deadline_at: datetime | None
     status: BidProjectStatus
     import_status: BidImportStatus
@@ -68,7 +69,22 @@ class BidProjectCreateResponse(BaseModel):
     total_item_count: int
 
 
+class BidCurrentSelectionResponse(BaseModel):
+    selection_id: UUID
+    product_id: UUID
+    supplier_id: UUID
+    selected_unit_price: Decimal
+    requirement_snapshot: dict[str, object]
+    product_snapshot: dict[str, object]
+    supplier_snapshot: dict[str, object]
+    price_snapshot: dict[str, object]
+    note: str | None
+    created_at: datetime
+
+
 class BidProjectItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     sheet_name: str
     source_row_number: int
@@ -84,6 +100,7 @@ class BidProjectItemResponse(BaseModel):
     status: BidItemStatus
     current_selection_id: UUID | None
     no_quote_reason: str | None
+    current_selection: BidCurrentSelectionResponse | None = None
 
 
 class BidSubmitRequest(BaseModel):
@@ -96,6 +113,28 @@ class BidSubmitRequest(BaseModel):
     @classmethod
     def strip_note(cls, value: str | None) -> str | None:
         return value.strip() if value else None
+
+
+class BidProjectUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_name: str = Field(min_length=1, max_length=255)
+    buyer_name: str = Field(min_length=1, max_length=255)
+    start_at: datetime | None = None
+    deadline_at: datetime | None = None
+    remark: str | None = Field(default=None, max_length=5000)
+
+
+class BidVoidRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("reason")
+    @classmethod
+    def strip_reason(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("reason must not be blank")
+        return value
 
 
 class BidResultRequest(BaseModel):

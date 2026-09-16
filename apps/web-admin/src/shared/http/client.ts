@@ -30,6 +30,7 @@ export interface RequestOptions {
   authenticated?: boolean
   headers?: HeadersInit
   requestId?: string
+  timeoutMs?: number
 }
 
 export class HttpClient {
@@ -43,7 +44,9 @@ export class HttpClient {
     allowRefresh = true,
   ): Promise<T> {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 10_000)
+    const timeout = setTimeout(
+      () => controller.abort(), requestOptions.timeoutMs ?? this.options.timeoutMs ?? 10_000,
+    )
     try {
       const isFormData = body instanceof FormData
       const authorization = requestOptions.authenticated === false
@@ -114,7 +117,9 @@ export class HttpClient {
     allowRefresh: boolean,
   ): Promise<Blob> {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 10_000)
+    const timeout = setTimeout(
+      () => controller.abort(), requestOptions.timeoutMs ?? this.options.timeoutMs ?? 10_000,
+    )
     try {
       const authorization = requestOptions.authenticated === false
         ? undefined

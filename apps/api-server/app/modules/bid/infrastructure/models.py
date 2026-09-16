@@ -82,6 +82,7 @@ class BidProject(Base):
     project_code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
     project_name: Mapped[str] = mapped_column(String(255), nullable=False)
     buyer_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    start_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     deadline_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     remark: Mapped[str | None] = mapped_column(Text, nullable=True)
     template_id: Mapped[uuid.UUID | None] = mapped_column(

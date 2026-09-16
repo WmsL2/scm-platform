@@ -80,6 +80,9 @@ const router = createRouter({
           component: ProductDetailView,
           meta: { title: "商品详情", requiresAuth: true, permission: "product:detail" },
         },
+        { path: "bid-projects", name: "bid-project-list", component: () => import("../views/bid/BidProjectListView.vue"), meta: { title: "投标项目", requiresAuth: true, permission: "bid:list" } },
+        { path: "bid-projects/:id", name: "bid-project-detail", component: () => import("../views/bid/BidProjectDetailView.vue"), meta: { title: "投标项目详情", requiresAuth: true, permission: "bid:detail" } },
+        { path: "bid-projects/:id/workbench", name: "bid-project-workbench", component: () => import("../views/bid/BidMatchingWorkbenchView.vue"), meta: { title: "匹配工作台", requiresAuth: true, permission: "bid:detail" } },
       ],
     },
     {

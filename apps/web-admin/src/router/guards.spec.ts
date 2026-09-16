@@ -14,6 +14,9 @@ function createTestRouter() {
     routes: [
       { path: "/login", name: "login", component: page },
       { path: "/dashboard", name: "dashboard", component: page, meta: { requiresAuth: true } },
+      { path: "/bid-projects", name: "bid-list", component: page, meta: { requiresAuth: true, permission: "bid:list" } },
+      { path: "/bid-projects/:id", name: "bid-detail", component: page, meta: { requiresAuth: true, permission: "bid:detail" } },
+      { path: "/bid-projects/:id/workbench", name: "bid-workbench", component: page, meta: { requiresAuth: true, permission: "bid:detail" } },
       {
         path: "/protected",
         name: "protected",
@@ -65,5 +68,15 @@ describe("router guards", () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe("forbidden")
+  })
+
+  it("requires list/detail permissions for bid routes but not bid:select for read-only workbench", async () => {
+    const pinia = createPinia(); setActivePinia(pinia)
+    const auth = useAuthStore(pinia); auth.initialized = true; auth.status = "authenticated"
+    auth.currentUser = { user_id: "00000000-0000-0000-0000-000000000002", username: "viewer", roles: [], role_names: {}, permissions: ["bid:list", "bid:detail"], permission_names: {} }
+    const router = createTestRouter(); installRouterGuards(router, pinia)
+    await router.push("/bid-projects"); await router.isReady(); expect(router.currentRoute.value.name).toBe("bid-list")
+    await router.push("/bid-projects/p1"); expect(router.currentRoute.value.name).toBe("bid-detail")
+    await router.push("/bid-projects/p1/workbench"); expect(router.currentRoute.value.name).toBe("bid-workbench")
   })
 })

@@ -1,4 +1,6 @@
+import inspect
 import uuid
+from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -8,13 +10,14 @@ from openpyxl import Workbook
 from app.common.contracts import AppError, PageParams
 from app.core.database import SessionLocal
 from app.infrastructure.adapters import LocalFileStorage
-from app.modules.bid.application.service import BidProjectService
+from app.modules.bid.application.service import MAX_PROJECT_ITEMS, BidProjectService
 from app.modules.bid.domain.lifecycle import (
     BidImportStatus,
     BidProjectStatus,
     ensure_transition,
 )
 from app.modules.bid.infrastructure.models import BidTemplate
+from app.modules.bid.infrastructure.repository import BidProjectRepository
 
 
 def _workbook_bytes() -> tuple[bytes, list[str]]:
@@ -74,6 +77,7 @@ async def test_project_creation_parses_frozen_template(tmp_path: Path) -> None:
         response = await service.create(
             project_name="测试投标项目",
             buyer_name="测试需求商",
+            start_at=None,
             deadline_at=None,
             remark=None,
             filename="需求.xlsx",
@@ -88,7 +92,42 @@ async def test_project_creation_parses_frozen_template(tmp_path: Path) -> None:
         await session.rollback()
 
 
+@pytest.mark.asyncio
+async def test_project_start_time_accepts_equal_or_earlier_deadline_and_rejects_later(
+    tmp_path: Path,
+) -> None:
+    service = BidProjectService(SessionLocal(), LocalFileStorage(tmp_path))
+    start = datetime(2026, 9, 16, 9, 0)
+    assert start <= start
+    with pytest.raises(AppError, match="项目开始时间不能晚于截止时间"):
+        await service.create(
+            project_name="时间校验",
+            buyer_name="需求商",
+            start_at=start + timedelta(minutes=1),
+            deadline_at=start,
+            remark=None,
+            filename="request.xlsx",
+            file_bytes=b"",
+            actor_id=uuid.uuid4(),
+        )
+
+
 def test_project_lifecycle_rejects_illegal_transition() -> None:
     with pytest.raises(AppError) as exc_info:
         ensure_transition(BidProjectStatus.IMPORTED.value, BidProjectStatus.SUBMITTED)
     assert exc_info.value.status_code == 409
+
+
+def test_project_item_limit_is_100k_and_rejects_only_above_boundary() -> None:
+    assert MAX_PROJECT_ITEMS == 100_000
+    assert not 100_000 > MAX_PROJECT_ITEMS
+    assert 100_001 > MAX_PROJECT_ITEMS
+
+
+def test_item_page_contract_uses_sql_keyword_filters_and_outer_join_snapshot_read_model() -> None:
+    source = inspect.getsource(BidProjectRepository.item_page)
+    assert "outerjoin" in source
+    assert "BidProjectItem.current_selection_id == BidItemSelection.id" in source
+    for field in ("product_name", "brand", "model", "buyer_item_code"):
+        assert f"BidProjectItem.{field}.contains(keyword)" in source
+    assert "for item" not in source

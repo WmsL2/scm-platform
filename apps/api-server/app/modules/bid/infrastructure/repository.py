@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import cast
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.bid.domain.lifecycle import BidFileType
@@ -114,9 +114,19 @@ class BidProjectRepository:
         )
 
     async def item_page(
-        self, project_id: uuid.UUID, *, page: int, page_size: int, status: str | None
-    ) -> tuple[list[BidProjectItem], int]:
-        statement = select(BidProjectItem).where(BidProjectItem.project_id == project_id)
+        self,
+        project_id: uuid.UUID,
+        *,
+        page: int,
+        page_size: int,
+        status: str | None,
+        keyword: str | None,
+    ) -> tuple[list[tuple[BidProjectItem, BidItemSelection | None]], int]:
+        statement = (
+            select(BidProjectItem, BidItemSelection)
+            .outerjoin(BidItemSelection, BidProjectItem.current_selection_id == BidItemSelection.id)
+            .where(BidProjectItem.project_id == project_id)
+        )
         count_statement = (
             select(func.count())
             .select_from(BidProjectItem)
@@ -125,9 +135,18 @@ class BidProjectRepository:
         if status:
             statement = statement.where(BidProjectItem.status == status)
             count_statement = count_statement.where(BidProjectItem.status == status)
+        if keyword:
+            condition = or_(
+                BidProjectItem.product_name.contains(keyword),
+                BidProjectItem.brand.contains(keyword),
+                BidProjectItem.model.contains(keyword),
+                BidProjectItem.buyer_item_code.contains(keyword),
+            )
+            statement = statement.where(condition)
+            count_statement = count_statement.where(condition)
         statement = statement.order_by(BidProjectItem.sheet_name, BidProjectItem.source_row_number)
         statement = statement.offset((page - 1) * page_size).limit(page_size)
-        rows = list((await self.session.scalars(statement)).all())
+        rows = [(row[0], row[1]) for row in (await self.session.execute(statement)).all()]
         return rows, cast(int, await self.session.scalar(count_statement))
 
     async def export_rows(
