@@ -72,7 +72,7 @@ const router = createRouter({
           path: "categories",
           name: "category-list",
           component: CategoryListView,
-          meta: { title: "类目管理", requiresAuth: true, permission: "product:list" },
+          meta: { title: "类目管理", requiresAuth: true, permission: "category:list" },
         },
         {
           path: "products/:id",

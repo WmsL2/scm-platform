@@ -16,11 +16,19 @@ from app.modules.catalog.infrastructure.models import Category
 from app.modules.system.models import Permission, Role, RolePermission, User, UserRole
 
 HEADERS = ("一级类目ID", "一级类目名称", "二级类目ID", "二级类目名称", "三级类目ID", "三级类目名称", "有效标记", "上下柜标记", "主营事业部")
+CATEGORY_PERMISSIONS = (
+    "category:list",
+    "category:detail",
+    "category:create",
+    "category:update",
+    "category:delete",
+)
 
-async def auth() -> tuple[uuid.UUID, dict[str, str]]:
+async def auth(permission_codes: tuple[str, ...] = CATEGORY_PERMISSIONS + ("product:list", "product:import")) -> tuple[uuid.UUID, dict[str, str]]:
     uid, rid = uuid.uuid4(), uuid.uuid4()
     async with SessionLocal() as s:
-        ps = list((await s.scalars(select(Permission).where(Permission.permission_code.in_(("product:list", "product:update", "product:import"))))).all())
+        ps = list((await s.scalars(select(Permission).where(Permission.permission_code.in_(permission_codes)))).all())
+        assert {permission.permission_code for permission in ps} == set(permission_codes)
         s.add_all([User(id=uid, username=f"cat-{uid}", password_hash=hash_password("test")), Role(id=rid, role_code=f"cat-{rid}", role_name="cat"), UserRole(user_id=uid, role_id=rid), *[RolePermission(role_id=rid, permission_id=p.id) for p in ps]])
         await s.commit()
     return uid, {"Authorization": f"Bearer {create_token(uid, 1)}"}
@@ -124,3 +132,77 @@ async def test_category_list_server_side_filters_pagination_and_selection() -> N
             assert str(categories[0].id) in selected_ids and str(categories[1].id) not in selected_ids
     finally:
         await clean(uid)
+
+
+async def test_category_crud_permissions_are_independent() -> None:
+    actors: dict[str, tuple[uuid.UUID, dict[str, str]]] = {}
+    for permission_code in CATEGORY_PERMISSIONS + ("product:list",):
+        actors[permission_code] = await auth((permission_code,))
+    viewer_headers = actors["category:list"][1]
+    payload = {
+        "source_type": "MALL_LEVEL3",
+        "level1_external_id": "cat-test-rbac-l1",
+        "level1_name": "权限一级",
+        "level2_external_id": "cat-test-rbac-l2",
+        "level2_name": "权限二级",
+        "level3_external_id": "cat-test-rbac-crud",
+        "level3_name": "权限三级",
+        "deduction_rate": "0.0500",
+        "is_active": True,
+        "shelf_flag": None,
+        "business_unit": "权限测试",
+    }
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = await client.post("/api/v1/categories", headers=actors["category:create"][1], json=payload)
+            assert created.status_code == 200
+            category_id = created.json()["data"]["id"]
+
+            assert (await client.get("/api/v1/categories", headers=viewer_headers)).status_code == 200
+            assert (await client.get(f"/api/v1/categories/{category_id}", headers=viewer_headers)).status_code == 403
+            assert (await client.post("/api/v1/categories", headers=viewer_headers, json=payload)).status_code == 403
+            assert (await client.put(f"/api/v1/categories/{category_id}", headers=viewer_headers, json=payload)).status_code == 403
+            assert (await client.delete(f"/api/v1/categories/{category_id}", headers=viewer_headers)).status_code == 403
+            assert (await client.get("/api/v1/categories/selection", headers=viewer_headers)).status_code == 403
+
+            product_headers = actors["product:list"][1]
+            assert (await client.get("/api/v1/categories", headers=product_headers)).status_code == 403
+            assert (await client.get("/api/v1/categories/selection", headers=product_headers)).status_code == 200
+
+            detail_headers = actors["category:detail"][1]
+            assert (await client.get(f"/api/v1/categories/{category_id}", headers=detail_headers)).status_code == 200
+            updated_payload = {**payload, "level3_name": "权限三级已更新"}
+            updated = await client.put(
+                f"/api/v1/categories/{category_id}",
+                headers=actors["category:update"][1],
+                json=updated_payload,
+            )
+            assert updated.status_code == 200
+            assert updated.json()["data"]["level3_name"] == "权限三级已更新"
+            deleted = await client.delete(
+                f"/api/v1/categories/{category_id}",
+                headers=actors["category:delete"][1],
+            )
+            assert deleted.status_code == 200
+    finally:
+        for uid, _ in actors.values():
+            await clean(uid)
+
+
+async def test_category_permissions_are_seeded_for_boss_role() -> None:
+    async with SessionLocal() as session:
+        codes = set(
+            (
+                await session.scalars(
+                    select(Permission.permission_code)
+                    .join(RolePermission, RolePermission.permission_id == Permission.id)
+                    .join(Role, Role.id == RolePermission.role_id)
+                    .where(
+                        Role.role_code == "boss",
+                        Role.is_deleted.is_(False),
+                        Permission.permission_code.in_(CATEGORY_PERMISSIONS),
+                    )
+                )
+            ).all()
+        )
+    assert codes == set(CATEGORY_PERMISSIONS)

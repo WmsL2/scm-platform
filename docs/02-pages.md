@@ -152,9 +152,16 @@
 
 在实际数据字典确认需要独立品牌主数据后启用。
 
-## 4.7 商品分类
+## 4.7 类目管理
 
-分类树。
+类目管理维护既有 `scm_category` 三级路径维表，不提供任意层级分类树。页面入口需要
+`category:list`；详情、新增、编辑、删除分别由 `category:detail`、`category:create`、
+`category:update`、`category:delete` 控制。前端菜单、路由和操作按钮按实时权限显示，后端
+仍通过 `require_permission` 强制校验；缺少权限返回 403。
+
+商品新增/编辑使用的轻量类目选择接口仍属于商品用例，要求 `product:list`。类目 Excel
+模板下载及导入继续属于商品导入准备流程，要求 `product:import`，本次不新增
+`category:import`。删除仍受 Product 外键引用保护。
 
 ## 4.8 商品参数
 
