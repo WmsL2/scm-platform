@@ -104,7 +104,7 @@ async function changePassword(): Promise<void> { if (passwordForm.new_password !
           <el-icon><Box /></el-icon>
           <template #title>商品主数据</template>
         </el-menu-item>
-        <el-menu-item v-if="auth.hasPermission('product:list')" index="/categories">
+        <el-menu-item v-if="auth.hasPermission('category:list')" index="/categories">
           <el-icon><Box /></el-icon>
           <template #title>类目管理</template>
         </el-menu-item>

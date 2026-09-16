@@ -22,8 +22,9 @@ const moduleNames: Record<string, string> = {
   system: "系统管理",
   supplier: "供应商管理",
   product: "商品管理",
+  category: "类目管理",
 }
-const moduleOrder = ["system", "supplier", "product"]
+const moduleOrder = ["system", "supplier", "product", "category"]
 
 interface PermissionGroup {
   key: string

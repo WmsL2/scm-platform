@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from "vue"
 import { Delete, Download, Edit, Plus, Refresh, Search, Upload } from "@element-plus/icons-vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { categoryApi } from "../../api/category"
+import { useAuthStore } from "../../stores/auth"
 import {
   deductionRateToPurchaseCoefficient,
   purchaseCoefficientToDeductionPercent,
@@ -10,6 +11,7 @@ import {
 } from "./categoryDeduction"
 import type { Category, CategoryImportResult, CategoryListParams, CategoryPayload } from "../../types/category"
 
+const auth = useAuthStore()
 const pageSize = 20
 const rows = ref<Category[]>([])
 const page = ref(1)
@@ -220,9 +222,9 @@ onMounted(loadCategories)
         <span>维护商城三级类目、启用状态及采购价系数规则。</span>
       </div>
       <div class="header-actions">
-        <el-button @click="downloadTemplate"><el-icon><Download /></el-icon>下载模板</el-button>
-        <el-button @click="importVisible = true"><el-icon><Upload /></el-icon>导入 Excel</el-button>
-        <el-button type="primary" @click="openCreate"><el-icon><Plus /></el-icon>新增类目</el-button>
+        <el-button v-if="auth.hasPermission('product:import')" @click="downloadTemplate"><el-icon><Download /></el-icon>下载模板</el-button>
+        <el-button v-if="auth.hasPermission('product:import')" @click="importVisible = true"><el-icon><Upload /></el-icon>导入 Excel</el-button>
+        <el-button v-if="auth.hasPermission('category:create')" type="primary" @click="openCreate"><el-icon><Plus /></el-icon>新增类目</el-button>
       </div>
     </header>
 
@@ -247,10 +249,10 @@ onMounted(loadCategories)
         <el-table-column label="采购价系数" width="130"><template #default="{ row }">×{{ deductionRateToPurchaseCoefficient(row.deduction_rate) ?? "-" }}</template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag effect="plain" :type="row.is_active ? 'success' : 'info'">{{ row.is_active ? "启用" : "停用" }}</el-tag></template></el-table-column>
         <el-table-column prop="business_unit" label="主营事业部" min-width="130" />
-        <el-table-column label="操作" fixed="right" width="145">
+        <el-table-column v-if="auth.hasPermission('category:update') || auth.hasPermission('category:delete')" label="操作" fixed="right" width="145">
           <template #default="{ row }">
-            <el-button link type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" :icon="Delete" @click="deleteCategory(row)">删除</el-button>
+            <el-button v-if="auth.hasPermission('category:update')" link type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
+            <el-button v-if="auth.hasPermission('category:delete')" link type="danger" :icon="Delete" @click="deleteCategory(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

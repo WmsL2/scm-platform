@@ -11,6 +11,7 @@ Last Updated：2026-09-16
 - [x] `20260911_0018` 增加 `UNIQUE(source_supplier_id, sku)`；迁移会先拒绝历史重复键，禁止静默清理
 - [x] `20260911_0020` 以 `ACTIVE` / `DISABLED` 替代 Product 逻辑删除，增加停用审计、永久删除审计及 `product:disable` / `product:purge` 权限
 - [x] `20260911_0022` 支持 Product Import 通过行分批确认，记录导入行状态与已导入计数
+- [x] `20260916_0028` 新增类目列表、详情、新增、编辑、删除五项独立权限，并默认授予现有 `boss` 角色
 - [x] 未创建独立 Supplier Product Quote 表或报价历史表
 
 ## Backend
@@ -34,13 +35,16 @@ Last Updated：2026-09-16
 - [x] 商品主数据增加“商品列表 / 操作记录”可切换页签；操作记录按商品展示图片、导入人、导入时间、最后更新人和最后更新时间，用户名从既有 `created_by` / `updated_by` 解析，未新增审计表
 - [x] 类目管理页：与 Supplier 管理页统一的 Header / Card / Table 视觉结构，保留三级路径服务端分页、新增/编辑/删除确认、模板下载和 Excel 导入结果；用户侧统一填写“采购价系数”（如 `×0.95` 表示扣点 5%），精确转换为 API / DB 的 `deduction_rate = 0.05` 或 Import `deduction_rate_percent = "5"`。UI coefficient ≠ database deduction rate；正式 Pricing 公式仍为 `agreement_purchase_price = agreement_price × (1 - deduction_rate)`。
 - [x] 类目管理列表：支持一级/二级/三级类目、主营事业部的服务端包含筛选，以及采购价系数（转换后对 `scm_category.deduction_rate` Decimal 精确匹配）和状态精确筛选；多条件为 AND，筛选后仍使用每页 20 条的服务端分页，COUNT 与列表使用相同 SQL 条件。
+- [x] 类目管理菜单、路由和新增/编辑/删除按钮按独立类目权限显示；模板下载和 Excel 导入仍由 `product:import` 控制
 
 ## Permissions
 - [x] `product:list`、`product:detail`、`product:update`、`product:cost:update`、`product:disable`、`product:purge`、`product:import`、`product:import:resolve`
+- [x] `category:list`、`category:detail`、`category:create`、`category:update`、`category:delete`；类目选择接口保留 `product:list`，类目模板/导入保留 `product:import`
 
 ## Tests
 - [x] Pricing Unit Tests（定价单元测试）已完成
 - [x] Product / Catalog Integration Tests（含导入预览与 Confirm）已完成
+- [x] 类目 CRUD 权限隔离、商品类目选择权限边界及前端菜单/路由/按钮权限契约测试已完成
 
 ## Known Issues
 - 商城三级品类维表已写入 `scm_category`。依据 ADR-0018，后续固定商品大表导入必须唯一匹配有效 `MALL_LEVEL3` 类目；工业品类目尚未成为本模板的匹配来源。
