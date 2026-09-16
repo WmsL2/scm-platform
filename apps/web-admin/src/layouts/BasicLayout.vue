@@ -77,7 +77,7 @@ async function changePassword(): Promise<void> { if (passwordForm.new_password !
 <template>
   <el-container class="app-shell">
     <el-aside :width="sidebarWidth" class="sidebar">
-      <div class="logo-area">
+      <div class="logo-area" :class="{ compact: collapsed }">
         <div class="logo-mark">ZC</div>
         <div v-show="!collapsed" class="logo-copy">
           <strong>众诚智链</strong>
@@ -179,6 +179,10 @@ async function changePassword(): Promise<void> { if (passwordForm.new_password !
 .logo-copy span { color: #7fa6d3; font-size: 9px; letter-spacing: .16em; }
 .sidebar-menu { flex: 1; padding: 16px 10px; border-right: 0; background: transparent; }
 .sidebar-menu:not(.el-menu--collapse) { width: 232px; }
+:deep(.sidebar-menu.el-menu--collapse) { width: 72px; padding-inline: 10px; box-sizing: border-box; }
+:deep(.sidebar-menu.el-menu--collapse .el-menu-item) { position: relative; width: 52px; padding: 0; }
+:deep(.sidebar-menu.el-menu--collapse .el-menu-item .el-icon) { position: absolute; left: 50%; margin: 0; transform: translateX(-50%); }
+:deep(.sidebar-menu.el-menu--collapse .el-menu-item-group__title) { display: none; }
 :deep(.el-menu-item) { height: 46px; margin-bottom: 6px; border-radius: 8px; color: #b9cbe1; }
 :deep(.el-menu-item:hover) { color: #fff; background: rgba(255,255,255,.08); }
 :deep(.el-menu-item.is-active) { color: #fff; background: linear-gradient(100deg, rgba(35,116,224,.9), rgba(42,137,239,.78)); box-shadow: 0 8px 20px rgba(0, 75, 178, .22); }
@@ -186,7 +190,8 @@ async function changePassword(): Promise<void> { if (passwordForm.new_password !
 .sidebar-boundary span { color: #9ec8f8; font-size: 12px; font-weight: 700; }
 .sidebar-boundary p { margin: 7px 0 0; color: #7896b9; font-size: 11px; line-height: 1.6; }
 .sidebar-version { padding: 15px 22px; color: #55779e; font-size: 10px; border-top: 1px solid rgba(255,255,255,.06); }
-.sidebar-version.compact { padding-inline: 28px; }
+.logo-area.compact, .sidebar-version.compact { justify-content: center; padding-inline: 0; }
+.sidebar-version.compact { display: grid; place-items: center; }
 .main-shell { min-width: 0; transition: margin-left .2s ease, width .2s ease; }
 .topbar { display: flex; height: 72px; align-items: center; justify-content: space-between; padding: 0 24px 0 16px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.96); }
 .topbar-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
