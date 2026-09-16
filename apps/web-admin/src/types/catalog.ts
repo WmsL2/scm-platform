@@ -27,10 +27,18 @@ export interface ProductListItem {
   agreement_price: string | null
   jd_price: string | null
   status: ProductStatus
+  created_by: string | null
+  created_by_username: string | null
+  created_at: string
+  updated_by: string | null
+  updated_by_username: string | null
   updated_at: string
 }
 
-export interface ProductDetail extends Omit<ProductListItem, "category_path"> {
+export interface ProductDetail extends Omit<
+  ProductListItem,
+  "category_path" | "created_by" | "created_by_username" | "updated_by" | "updated_by_username"
+> {
   category: CategorySummary | null
   category_level1_name: string | null
   category_level2_name: string | null
@@ -54,7 +62,6 @@ export interface ProductDetail extends Omit<ProductListItem, "category_path"> {
   storefront_type: string | null
   price_inflation_rate: string | null
   deduction_rate: string | null
-  created_at: string
 }
 
 export interface ProductListParams {

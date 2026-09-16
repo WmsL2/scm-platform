@@ -34,6 +34,17 @@ class UserRepository:
             ),
         )
 
+    async def usernames_by_ids(self, user_ids: set[uuid.UUID]) -> dict[uuid.UUID, str]:
+        """Return historical usernames for audit display, including deleted accounts."""
+        if not user_ids:
+            return {}
+        rows = (
+            await self.session.execute(
+                select(User.id, User.username).where(User.id.in_(user_ids))
+            )
+        ).all()
+        return {user_id: username for user_id, username in rows}
+
     async def codes(
         self, user_id: uuid.UUID
     ) -> tuple[list[str], dict[str, str], list[str], dict[str, str]]:

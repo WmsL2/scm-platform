@@ -88,6 +88,11 @@ class ProductListItem(BaseModel):
     agreement_price: Decimal | None
     jd_price: Decimal | None
     status: ProductStatus
+    created_by: uuid.UUID | None
+    created_by_username: str | None
+    created_at: datetime
+    updated_by: uuid.UUID | None
+    updated_by_username: str | None
     updated_at: datetime
 
 
