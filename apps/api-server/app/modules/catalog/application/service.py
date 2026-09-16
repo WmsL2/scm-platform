@@ -24,6 +24,7 @@ from app.modules.catalog.schemas import (
 from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
 from app.modules.supplier.infrastructure.models import Supplier
 from app.modules.supplier.infrastructure.repository import SupplierRepository
+from app.modules.system.repository import UserRepository
 
 
 class ProductService:
@@ -31,6 +32,7 @@ class ProductService:
         self.session = session
         self.repository = ProductRepository(session)
         self.supplier_repository = SupplierRepository(session)
+        self.user_repository = UserRepository(session)
 
     async def list(
         self,
@@ -48,8 +50,16 @@ class ProductService:
             source_supplier_id=source_supplier_id,
             status=status,
         )
+        usernames = await self.user_repository.usernames_by_ids(
+            {
+                user_id
+                for product in products
+                for user_id in (product.created_by, product.updated_by)
+                if user_id is not None
+            }
+        )
         return PageResult(
-            items=[await self._list_item(product) for product in products],
+            items=[await self._list_item(product, usernames) for product in products],
             total=total,
             page=page_params.page,
             page_size=page_params.page_size,
@@ -228,7 +238,9 @@ class ProductService:
             ) from exc
         return ProductPurgeResponse(id=product_id)
 
-    async def _list_item(self, product: Product) -> ProductListItem:
+    async def _list_item(
+        self, product: Product, usernames: dict[uuid.UUID, str]
+    ) -> ProductListItem:
         category = await self._category(product.category_id)
         supplier = await self.supplier_repository.active_by_id(product.source_supplier_id)
         return ProductListItem(
@@ -248,6 +260,15 @@ class ProductService:
             agreement_price=product.agreement_price,
             jd_price=product.jd_price,
             status=product.status,
+            created_by=product.created_by,
+            created_by_username=usernames.get(product.created_by)
+            if product.created_by is not None
+            else None,
+            created_at=product.created_at,
+            updated_by=product.updated_by,
+            updated_by_username=usernames.get(product.updated_by)
+            if product.updated_by is not None
+            else None,
             updated_at=product.updated_at,
         )
 
