@@ -2,7 +2,7 @@
 
 状态：IMPLEMENTED / PRODUCT_IMPORT_PARTIAL_CONFIRM / CATEGORY_MANAGEMENT_IMPLEMENTED
 Owner：feat/product-import-partial-confirm-template-download
-Last Updated：2026-09-15
+Last Updated：2026-09-16
 
 ## Database
 - [x] `20260909_0008` / `20260909_0009` 创建并对齐 `scm_category` 与 `scm_product`
@@ -31,6 +31,7 @@ Last Updated：2026-09-15
 - [x] 导入预览显示已导入、通过、不通过行并支持筛选；商品页可下载批准的原始 32 列模板
 - [x] 商品列表支持正常/已停用状态筛选、停用/启用和 SKU/名称二次确认的永久删除；页面保留普通纵向滚动，左侧导航固定于视口左侧
 - [x] 统一 API 请求禁用浏览器缓存，商品导入 Confirm 后重新加载列表可立即读取最新商品数据
+- [x] 商品主数据增加“商品列表 / 操作记录”可切换页签；操作记录按商品展示图片、导入人、导入时间、最后更新人和最后更新时间，用户名从既有 `created_by` / `updated_by` 解析，未新增审计表
 - [x] 类目管理页：与 Supplier 管理页统一的 Header / Card / Table 视觉结构，保留三级路径服务端分页、新增/编辑/删除确认、模板下载和 Excel 导入结果；用户侧统一填写“采购价系数”（如 `×0.95` 表示扣点 5%），精确转换为 API / DB 的 `deduction_rate = 0.05` 或 Import `deduction_rate_percent = "5"`。UI coefficient ≠ database deduction rate；正式 Pricing 公式仍为 `agreement_purchase_price = agreement_price × (1 - deduction_rate)`。
 - [x] 类目管理列表：支持一级/二级/三级类目、主营事业部的服务端包含筛选，以及采购价系数（转换后对 `scm_category.deduction_rate` Decimal 精确匹配）和状态精确筛选；多条件为 AND，筛选后仍使用每页 20 条的服务端分页，COUNT 与列表使用相同 SQL 条件。
 

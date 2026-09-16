@@ -67,7 +67,9 @@ async def cleanup_user(user_id: uuid.UUID) -> None:
         await session.commit()
 
 
-async def create_product_fixture() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+async def create_product_fixture(
+    *, created_by: uuid.UUID | None = None, updated_by: uuid.UUID | None = None
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     supplier_id, category_id, product_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     async with SessionLocal() as session:
         session.add_all(
@@ -106,6 +108,8 @@ async def create_product_fixture() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
                 cost_price=Decimal("100.0000"),
                 jd_price=Decimal("200.0000"),
                 jd_self_operated_price=Decimal("180.0000"),
+                created_by=created_by,
+                updated_by=updated_by,
             )
         )
         await session.commit()
@@ -126,8 +130,11 @@ async def cleanup_fixture(
 
 
 async def test_product_api_lists_details_and_recalculates_cost_atomically() -> None:
-    user_id, headers = await create_product_user(PRODUCT_PERMISSIONS)
-    supplier_id, category_id, product_id = await create_product_fixture()
+    importer_id, headers = await create_product_user(PRODUCT_PERMISSIONS)
+    updater_id, updater_headers = await create_product_user(("product:cost:update",))
+    supplier_id, category_id, product_id = await create_product_fixture(
+        created_by=importer_id, updated_by=importer_id
+    )
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             listing = await client.get("/api/v1/products?keyword=成本价", headers=headers)
@@ -139,6 +146,12 @@ async def test_product_api_lists_details_and_recalculates_cost_atomically() -> N
             assert listed_product["image_reference"] == (
                 "local-media/product-images/test-product.png"
             )
+            assert listed_product["created_by"] == str(importer_id)
+            assert listed_product["created_by_username"] == f"product-test-{importer_id}"
+            assert listed_product["created_at"]
+            assert listed_product["updated_by"] == str(importer_id)
+            assert listed_product["updated_by_username"] == f"product-test-{importer_id}"
+            assert listed_product["updated_at"]
 
             supplier_products = await client.get(
                 f"/api/v1/products?source_supplier_id={supplier_id}", headers=headers
@@ -156,7 +169,7 @@ async def test_product_api_lists_details_and_recalculates_cost_atomically() -> N
 
             updated = await client.patch(
                 f"/api/v1/products/{product_id}/cost-price",
-                headers=headers,
+                headers=updater_headers,
                 json={"cost_price": "120.0000"},
             )
             assert updated.status_code == 200
@@ -168,6 +181,15 @@ async def test_product_api_lists_details_and_recalculates_cost_atomically() -> N
             assert data["profit"] == "16.8000"
             assert data["deduction_rate"] == "0.0500"
 
+            refreshed_listing = await client.get("/api/v1/products?keyword=成本价", headers=headers)
+            refreshed_product = next(
+                item
+                for item in refreshed_listing.json()["data"]["items"]
+                if item["id"] == str(product_id)
+            )
+            assert refreshed_product["updated_by"] == str(updater_id)
+            assert refreshed_product["updated_by_username"] == f"product-test-{updater_id}"
+
         async with SessionLocal() as session:
             stored = await session.get(Product, product_id)
             assert stored is not None
@@ -175,7 +197,8 @@ async def test_product_api_lists_details_and_recalculates_cost_atomically() -> N
             assert stored.source_supplier_id == supplier_id
     finally:
         await cleanup_fixture(supplier_id, category_id, product_id)
-        await cleanup_user(user_id)
+        await cleanup_user(importer_id)
+        await cleanup_user(updater_id)
 
 
 async def test_product_api_enforces_permissions_and_validates_paths() -> None:

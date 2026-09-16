@@ -33,6 +33,7 @@ const importPreview = ref<ProductImportPreview>()
 const supplierCandidates = ref<ProductImportSupplierCandidate[]>([])
 const selections = reactive<Record<string, string>>({})
 const importRowFilter = ref<"ALL" | "PASSED" | "FAILED">("ALL")
+const activeTab = ref<"products" | "audit">("products")
 
 const filteredImportRows = computed(() => {
   const rows = importPreview.value?.rows ?? []
@@ -71,6 +72,11 @@ function reset(): void {
 
 function money(value: string | null): string {
   return value === null ? "—" : `¥ ${value}`
+}
+
+function formatDateTime(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false })
 }
 
 function productImageUrl(reference: string | null): string | undefined {
@@ -237,6 +243,11 @@ onMounted(() => void loadProducts())
       </div>
     </header>
 
+    <el-tabs v-model="activeTab" class="product-tabs">
+      <el-tab-pane label="商品列表" name="products" />
+      <el-tab-pane label="操作记录" name="audit" />
+    </el-tabs>
+
     <el-card class="page-card filter-card">
       <el-alert
         v-if="filters.source_supplier_id"
@@ -272,8 +283,8 @@ onMounted(() => void loadProducts())
     </el-card>
 
     <el-card class="page-card table-card">
-      <template #header><strong>商品列表</strong></template>
-      <el-table v-loading="loading" :data="products" empty-text="暂无正式商品数据">
+      <template #header><strong>{{ activeTab === "products" ? "商品列表" : "商品操作记录" }}</strong></template>
+      <el-table v-if="activeTab === 'products'" v-loading="loading" :data="products" empty-text="暂无正式商品数据">
         <el-table-column label="商品图片" width="108" fixed="left">
           <template #default="{ row }">
             <el-image
@@ -317,6 +328,39 @@ onMounted(() => void loadProducts())
             <el-button v-if="row.status === 'DISABLED' && auth.hasPermission('product:disable')" link type="success" @click="enableProduct(row)">启用</el-button>
             <el-button v-if="row.status === 'DISABLED' && auth.hasPermission('product:purge')" link type="danger" :icon="Delete" @click="purgeProduct(row)">永久删除</el-button>
           </template>
+        </el-table-column>
+      </el-table>
+      <el-table v-else v-loading="loading" :data="products" empty-text="暂无正式商品数据">
+        <el-table-column label="商品图片" width="108" fixed="left">
+          <template #default="{ row }">
+            <el-image
+              v-if="productImageUrl(row.image_reference)"
+              class="product-thumbnail"
+              :src="productImageUrl(row.image_reference)"
+              fit="contain"
+              :preview-src-list="[productImageUrl(row.image_reference)]"
+              preview-teleported
+            >
+              <template #error><div class="image-placeholder">加载失败</div></template>
+            </el-image>
+            <div v-else class="image-placeholder">暂无图片</div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="product_name" label="商品名称" min-width="220" show-overflow-tooltip />
+        <el-table-column prop="brand" label="品牌" min-width="120" />
+        <el-table-column prop="model" label="型号" min-width="150" />
+        <el-table-column prop="sku" label="SKU" min-width="150" />
+        <el-table-column label="导入人" min-width="130">
+          <template #default="{ row }">{{ row.created_by_username ?? "—" }}</template>
+        </el-table-column>
+        <el-table-column label="导入时间" min-width="180">
+          <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column label="最后更新人" min-width="130">
+          <template #default="{ row }">{{ row.updated_by_username ?? "—" }}</template>
+        </el-table-column>
+        <el-table-column label="最后更新时间" min-width="180">
+          <template #default="{ row }">{{ formatDateTime(row.updated_at) }}</template>
         </el-table-column>
       </el-table>
       <div class="pagination">
@@ -416,6 +460,7 @@ onMounted(() => void loadProducts())
 .table-card strong { color: #344054; }
 .pagination { display: flex; justify-content: flex-end; margin-top: 16px; }
 .header-actions { display: flex; align-items: flex-start; }
+.product-tabs { margin-bottom: -4px; }
 .file-input { display: none; }
 .import-warning { display: block; margin-top: 5px; color: var(--text-secondary); }
 .import-error { color: var(--el-color-danger); }
