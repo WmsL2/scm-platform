@@ -18,11 +18,19 @@
 
 `IMPORTED → MATCHING → SELECTING → READY → EXPORTED → SUBMITTED → WON / LOST`
 
+在 `IMPORTED`、`MATCHING`、`SELECTING`、`READY` 或 `EXPORTED` 阶段可以业务作废为 `VOIDED`。`VOIDED` 是终态；不物理删除项目、需求行、选品快照、文件或事件，以保留投标审计历史。已提交、已中标和未中标项目不可作废。
+
+## 项目时间
+
+`start_at` 是用户填写的项目业务开始时间，`deadline_at` 是用户填写的投标截止时间；两者均不等同于数据库自动生成、只读的审计时间 `created_at`。开始时间不得晚于截止时间。
+
 重新选品后，已导出项目回到 `READY`，旧报价文件保留，新结果必须重新导出。中标和未中标是终态。
 
 ## 接口
 
 - `POST /api/v1/bid-projects`：新建项目并上传 Excel。
+- `PATCH /api/v1/bid-projects/{id}`：在允许状态下更新名称、需求商、业务时间和备注（`bid:update`）。
+- `POST /api/v1/bid-projects/{id}/commands/void`：记录必填作废原因并转为 `VOIDED`（`bid:void`）。
 - `GET /api/v1/bid-projects`：项目分页列表。
 - `GET /api/v1/bid-projects/{id}`：项目详情和事件历史。
 - `GET /api/v1/bid-projects/{id}/items`：需求行服务端分页。
@@ -39,5 +47,9 @@
 - `GET /api/v1/bid-projects/{id}/items/{item_id}/candidates`：读取该项目最新一次完成匹配任务的候选及评分依据。
 - `POST /api/v1/bid-projects/{id}/items/{item_id}/selections`：只能提交已持久化候选 ID 和 Decimal 单价。服务会重新校验商品、供应商、需求限价，并追加不可变快照。
 - `POST /api/v1/bid-projects/{id}/items/{item_id}/no-quote`：将该行标记为无法报价，保存原因；`OTHER` 必须填写说明。
+
+## Web 工作台
+
+Web Admin 已提供项目列表、创建、详情、事件与文件版本，以及按需求行服务端分页的匹配工作台。候选仅在用户打开对应行时加载；已选品行展示持久化的不可变快照。未识别模板仍为数据门禁，页面不会猜测或伪造字段映射。
 
 匹配接口分别需要 `bid:match`、`bid:detail`、`bid:select` 权限。候选只来自 `ACTIVE` Product 和 `ARCHIVED + NORMAL + not deleted` 的来源供应商；价格不参与商品身份评分。

@@ -32,6 +32,7 @@ from app.modules.bid.infrastructure.models import (
 )
 from app.modules.bid.infrastructure.repository import BidProjectRepository
 from app.modules.bid.schemas import (
+    BidCurrentSelectionResponse,
     BidProjectCreateResponse,
     BidProjectDetailResponse,
     BidProjectEventResponse,
@@ -43,7 +44,7 @@ from app.modules.bid.schemas import (
 from app.modules.system.service import BusinessSequenceService
 
 MAX_FILE_BYTES = 25 * 1024 * 1024
-MAX_PROJECT_ITEMS = 65_000
+MAX_PROJECT_ITEMS = 100_000
 
 
 class BidProjectService:
@@ -57,12 +58,15 @@ class BidProjectService:
         *,
         project_name: str,
         buyer_name: str,
+        start_at: datetime | None,
         deadline_at: datetime | None,
         remark: str | None,
         filename: str,
         file_bytes: bytes,
         actor_id: uuid.UUID,
     ) -> BidProjectCreateResponse:
+        if start_at is not None and deadline_at is not None and start_at > deadline_at:
+            raise AppError("BID_PROJECT_INVALID_TIME_RANGE", "项目开始时间不能晚于截止时间", 422)
         self._validate_upload(filename, file_bytes)
         project_id = uuid.uuid4()
         template: BidTemplate | None = None
@@ -90,6 +94,7 @@ class BidProjectService:
                     project_code=project_code,
                     project_name=project_name.strip(),
                     buyer_name=buyer_name.strip(),
+                    start_at=start_at,
                     deadline_at=deadline_at,
                     remark=remark.strip() if remark else None,
                     template_id=template.id if template else None,
@@ -176,6 +181,7 @@ class BidProjectService:
         page_params: PageParams,
         *,
         status: BidItemStatus | None,
+        keyword: str | None = None,
     ) -> PageResult[BidProjectItemResponse]:
         await self._project_or_404(project_id)
         rows, total = await self.repository.item_page(
@@ -183,10 +189,32 @@ class BidProjectService:
             page=page_params.page,
             page_size=page_params.page_size,
             status=status.value if status else None,
+            keyword=keyword.strip() or None if keyword else None,
         )
         return PageResult(
             items=[
-                BidProjectItemResponse.model_validate(item, from_attributes=True) for item in rows
+                BidProjectItemResponse(
+                    **BidProjectItemResponse.model_validate(item, from_attributes=True).model_dump(
+                        exclude={"current_selection"}
+                    ),
+                    current_selection=(
+                        BidCurrentSelectionResponse(
+                            selection_id=selection.id,
+                            product_id=selection.product_id,
+                            supplier_id=selection.supplier_id,
+                            selected_unit_price=selection.selected_unit_price,
+                            requirement_snapshot=selection.requirement_snapshot,
+                            product_snapshot=selection.product_snapshot,
+                            supplier_snapshot=selection.supplier_snapshot,
+                            price_snapshot=selection.price_snapshot,
+                            note=selection.note,
+                            created_at=selection.created_at,
+                        )
+                        if selection is not None
+                        else None
+                    ),
+                )
+                for item, selection in rows
             ],
             total=total,
             page=page_params.page,
@@ -307,6 +335,55 @@ class BidProjectService:
             submitted_file_id=project.submitted_file_id,
         )
 
+    async def update(
+        self, project_id: uuid.UUID, payload: object, actor_id: uuid.UUID
+    ) -> BidProjectDetailResponse:
+        async with transaction_scope(self.session):
+            project = await self._project_or_404(project_id, lock=True)
+            if project.status in {
+                BidProjectStatus.SUBMITTED.value,
+                BidProjectStatus.WON.value,
+                BidProjectStatus.LOST.value,
+                BidProjectStatus.VOIDED.value,
+            }:
+                raise AppError(
+                    "BID_PROJECT_UPDATE_FORBIDDEN", "当前项目状态不允许修改基本信息", 409
+                )
+            start_at = getattr(payload, "start_at")
+            deadline_at = getattr(payload, "deadline_at")
+            if start_at is not None and deadline_at is not None and start_at > deadline_at:
+                raise AppError(
+                    "BID_PROJECT_INVALID_TIME_RANGE", "项目开始时间不能晚于投标截止时间", 422
+                )
+            project.project_name = getattr(payload, "project_name").strip()
+            project.buyer_name = getattr(payload, "buyer_name").strip()
+            project.start_at, project.deadline_at = start_at, deadline_at
+            project.remark = (
+                getattr(payload, "remark").strip() if getattr(payload, "remark") else None
+            )
+            project.updated_by = actor_id
+            self._add_event(
+                project_id,
+                actor_id,
+                "PROJECT_UPDATED",
+                project.status,
+                project.status,
+                "更新项目基本信息",
+            )
+        return await self.get(project_id)
+
+    async def void(
+        self, project_id: uuid.UUID, reason: str, actor_id: uuid.UUID
+    ) -> BidProjectStatusResponse:
+        async with transaction_scope(self.session):
+            project = await self._project_or_404(project_id, lock=True)
+            self._transition(project, actor_id, BidProjectStatus.VOIDED, "PROJECT_VOIDED", reason)
+        return BidProjectStatusResponse(
+            id=project.id,
+            status=BidProjectStatus(project.status),
+            submitted_file_id=project.submitted_file_id,
+        )
+
     async def advance_lifecycle(
         self,
         project_id: uuid.UUID,
@@ -320,7 +397,9 @@ class BidProjectService:
             project = await self._project_or_404(project_id, lock=True)
             if target == BidProjectStatus.READY:
                 unfinished_count = await self.session.scalar(
-                    select(func.count()).select_from(BidProjectItem).where(
+                    select(func.count())
+                    .select_from(BidProjectItem)
+                    .where(
                         BidProjectItem.project_id == project_id,
                         BidProjectItem.status.not_in(
                             [BidItemStatus.SELECTED.value, BidItemStatus.NO_QUOTE.value]

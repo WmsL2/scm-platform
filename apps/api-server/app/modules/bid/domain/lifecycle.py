@@ -12,6 +12,7 @@ class BidProjectStatus(StrEnum):
     SUBMITTED = "SUBMITTED"
     WON = "WON"
     LOST = "LOST"
+    VOIDED = "VOIDED"
 
 
 class BidImportStatus(StrEnum):
@@ -35,14 +36,19 @@ class BidItemStatus(StrEnum):
 
 
 _TRANSITIONS: dict[BidProjectStatus, set[BidProjectStatus]] = {
-    BidProjectStatus.IMPORTED: {BidProjectStatus.MATCHING},
-    BidProjectStatus.MATCHING: {BidProjectStatus.SELECTING},
-    BidProjectStatus.SELECTING: {BidProjectStatus.READY},
-    BidProjectStatus.READY: {BidProjectStatus.EXPORTED},
-    BidProjectStatus.EXPORTED: {BidProjectStatus.READY, BidProjectStatus.SUBMITTED},
+    BidProjectStatus.IMPORTED: {BidProjectStatus.MATCHING, BidProjectStatus.VOIDED},
+    BidProjectStatus.MATCHING: {BidProjectStatus.SELECTING, BidProjectStatus.VOIDED},
+    BidProjectStatus.SELECTING: {BidProjectStatus.READY, BidProjectStatus.VOIDED},
+    BidProjectStatus.READY: {BidProjectStatus.EXPORTED, BidProjectStatus.VOIDED},
+    BidProjectStatus.EXPORTED: {
+        BidProjectStatus.READY,
+        BidProjectStatus.SUBMITTED,
+        BidProjectStatus.VOIDED,
+    },
     BidProjectStatus.SUBMITTED: {BidProjectStatus.WON, BidProjectStatus.LOST},
     BidProjectStatus.WON: set(),
     BidProjectStatus.LOST: set(),
+    BidProjectStatus.VOIDED: set(),
 }
 
 

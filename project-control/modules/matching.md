@@ -14,7 +14,7 @@ Last Updated：2026-09-15
 - [x] Selection 追加写入需求、商品、供应商、价格快照，再原子更新 `current_selection_id`；重新选品后已导出项目回到 `READY`。
 
 ## Frontend
-- [ ] 未开始
+- [x] Web 工作台已实现（服务端分页、按需候选抽屉、不可变选品快照展示）；状态：IMPLEMENTED / TEMPLATE_DATA_GATE_BLOCKED。
 
 ## Permissions
 - [x] 使用 1 号任务提供的 `bid:match`、`bid:select` 和 `bid:detail` 权限。
