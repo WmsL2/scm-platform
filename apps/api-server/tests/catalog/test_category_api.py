@@ -189,17 +189,32 @@ async def test_category_crud_permissions_are_independent() -> None:
             await clean(uid)
 
 
-async def test_category_permissions_are_seeded_for_boss_role() -> None:
+async def test_category_permissions_are_seeded_and_existing_boss_is_granted() -> None:
     async with SessionLocal() as session:
+        permission_codes = set(
+            (
+                await session.scalars(
+                    select(Permission.permission_code).where(
+                        Permission.permission_code.in_(CATEGORY_PERMISSIONS)
+                    )
+                )
+            ).all()
+        )
+        assert permission_codes == set(CATEGORY_PERMISSIONS)
+
+        boss_id = await session.scalar(
+            select(Role.id).where(Role.role_code == "boss", Role.is_deleted.is_(False))
+        )
+        if boss_id is None:
+            return
+
         codes = set(
             (
                 await session.scalars(
                     select(Permission.permission_code)
                     .join(RolePermission, RolePermission.permission_id == Permission.id)
-                    .join(Role, Role.id == RolePermission.role_id)
                     .where(
-                        Role.role_code == "boss",
-                        Role.is_deleted.is_(False),
+                        RolePermission.role_id == boss_id,
                         Permission.permission_code.in_(CATEGORY_PERMISSIONS),
                     )
                 )
