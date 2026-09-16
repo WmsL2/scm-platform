@@ -1,18 +1,48 @@
 <script setup lang="ts">
-import { markRaw } from "vue"
+import { computed, markRaw, onMounted, ref } from "vue"
 import { Box, DataAnalysis, Document, OfficeBuilding } from "@element-plus/icons-vue"
 
 import { isMockMode } from "../../api/auth"
+import { dashboardApi } from "../../api/dashboard"
 import { useAuthStore } from "../../stores/auth"
+import type { DashboardSummary } from "../../types/dashboard"
 
 const auth = useAuthStore()
+const summary = ref<DashboardSummary>()
+const summaryLoading = ref(false)
+const summaryLoadFailed = ref(false)
 
-const summaryCards = [
-  { label: "正式商品", value: "--", note: "等待商品主数据接口", icon: markRaw(Box), tone: "blue" },
-  { label: "已归档供应商", value: "--", note: "供应商统计接口待建设", icon: markRaw(OfficeBuilding), tone: "indigo" },
+const summaryCards = computed(() => [
+  {
+    label: "正式商品",
+    value: summary.value ? String(summary.value.formal_product_count) : "--",
+    note: summaryLoadFailed.value ? "统计加载失败" : summary.value ? "来自正式商品主数据" : "正在加载统计数据",
+    icon: markRaw(Box),
+    tone: "blue",
+  },
+  {
+    label: "已归档供应商",
+    value: summary.value ? String(summary.value.archived_supplier_count) : "--",
+    note: summaryLoadFailed.value ? "统计加载失败" : summary.value ? "来自供应商主数据" : "正在加载统计数据",
+    icon: markRaw(OfficeBuilding),
+    tone: "indigo",
+  },
   { label: "有效供应商报价", value: "--", note: "计划于 Sprint 2 建设", icon: markRaw(DataAnalysis), tone: "cyan" },
   { label: "待处理导入", value: "--", note: "计划于 Sprint 4 建设", icon: markRaw(Document), tone: "amber" },
-]
+])
+
+async function loadSummary(): Promise<void> {
+  summaryLoading.value = true
+  summaryLoadFailed.value = false
+  try {
+    summary.value = await dashboardApi.summary()
+  } catch {
+    summary.value = undefined
+    summaryLoadFailed.value = true
+  } finally {
+    summaryLoading.value = false
+  }
+}
 
 const progressItems = [
   { title: "前端认证与后台壳层", description: "登录、状态恢复、路由守卫和工作台", state: "功能已实现", type: "primary" },
@@ -20,6 +50,8 @@ const progressItems = [
   { title: "Business Sequence", description: "供应商永久编码所需的并发安全序列", state: "后端已合入", type: "success" },
   { title: "Supplier Master", description: "列表、详情、创建、编辑和状态操作已接入真实 API", state: "前后端已联调", type: "success" },
 ] as const
+
+onMounted(() => void loadSummary())
 </script>
 
 <template>
@@ -66,7 +98,7 @@ const progressItems = [
         </template>
         <div class="boundary-content">
           <div class="boundary-line"><span>认证数据</span><strong>{{ isMockMode ? "仅本机演示" : "来自 FastAPI" }}</strong></div>
-          <div class="boundary-line"><span>业务统计</span><strong>尚未接入</strong></div>
+          <div class="boundary-line"><span>业务统计</span><strong>{{ summaryLoading ? "加载中" : summaryLoadFailed ? "加载失败" : "部分已接入" }}</strong></div>
           <div class="boundary-line"><span>供应商数据</span><strong>已接入 FastAPI</strong></div>
           <div class="boundary-line"><span>正式权限</span><strong>以后端校验为准</strong></div>
           <el-alert title="页面中的 -- 代表暂无可信数据，不使用虚构数字填充。" type="info" :closable="false" show-icon />

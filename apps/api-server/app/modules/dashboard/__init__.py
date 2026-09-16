@@ -1,0 +1,1 @@
+"""Authenticated dashboard summary module."""
