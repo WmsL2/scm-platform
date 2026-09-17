@@ -17,6 +17,7 @@ function createTestRouter() {
       { path: "/bid-projects", name: "bid-list", component: page, meta: { requiresAuth: true, permission: "bid:list" } },
       { path: "/bid-projects/:id", name: "bid-detail", component: page, meta: { requiresAuth: true, permission: "bid:detail" } },
       { path: "/bid-projects/:id/workbench", name: "bid-workbench", component: page, meta: { requiresAuth: true, permission: "bid:detail" } },
+      { path: "/categories", name: "category-list", component: page, meta: { requiresAuth: true, permission: "category:list" } },
       {
         path: "/protected",
         name: "protected",
@@ -78,5 +79,13 @@ describe("router guards", () => {
     await router.push("/bid-projects"); await router.isReady(); expect(router.currentRoute.value.name).toBe("bid-list")
     await router.push("/bid-projects/p1"); expect(router.currentRoute.value.name).toBe("bid-detail")
     await router.push("/bid-projects/p1/workbench"); expect(router.currentRoute.value.name).toBe("bid-workbench")
+  })
+
+  it("requires category:list instead of product:list for category management", async () => {
+    const pinia = createPinia(); setActivePinia(pinia)
+    const auth = useAuthStore(pinia); auth.initialized = true; auth.status = "authenticated"
+    auth.currentUser = { user_id: "00000000-0000-0000-0000-000000000002", username: "product-viewer", roles: [], role_names: {}, permissions: ["product:list"], permission_names: {} }
+    const router = createTestRouter(); installRouterGuards(router, pinia)
+    await router.push("/categories"); await router.isReady(); expect(router.currentRoute.value.name).toBe("forbidden")
   })
 })

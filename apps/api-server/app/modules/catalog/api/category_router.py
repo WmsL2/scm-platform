@@ -24,7 +24,7 @@ SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 @router.get("", response_model=ApiResponse[PageResult[CategoryResponse]])
 async def list_categories(
-    _: Annotated[CurrentUser, Depends(require_permission("product:list"))],
+    _: Annotated[CurrentUser, Depends(require_permission("category:list"))],
     session: SessionDep,
     page_params: Annotated[PageParams, Depends()],
     active_only: bool = False,
@@ -84,7 +84,7 @@ async def import_categories(
 @router.get("/{category_id}", response_model=ApiResponse[CategoryResponse])
 async def get_category(
     category_id: uuid.UUID,
-    _: Annotated[CurrentUser, Depends(require_permission("product:list"))],
+    _: Annotated[CurrentUser, Depends(require_permission("category:detail"))],
     session: SessionDep,
 ) -> ApiResponse[CategoryResponse]:
     return success(CategoryResponse.model_validate(await CategoryService(session).get(category_id)))
@@ -93,7 +93,7 @@ async def get_category(
 @router.post("", response_model=ApiResponse[CategoryResponse])
 async def create_category(
     payload: CategoryWriteRequest,
-    current: Annotated[CurrentUser, Depends(require_permission("product:update"))],
+    current: Annotated[CurrentUser, Depends(require_permission("category:create"))],
     session: SessionDep,
 ) -> ApiResponse[CategoryResponse]:
     return success(CategoryResponse.model_validate(await CategoryService(session).create(payload, current.user_id)))
@@ -103,7 +103,7 @@ async def create_category(
 async def update_category(
     category_id: uuid.UUID,
     payload: CategoryWriteRequest,
-    current: Annotated[CurrentUser, Depends(require_permission("product:update"))],
+    current: Annotated[CurrentUser, Depends(require_permission("category:update"))],
     session: SessionDep,
 ) -> ApiResponse[CategoryResponse]:
     return success(CategoryResponse.model_validate(await CategoryService(session).update(category_id, payload, current.user_id)))
@@ -112,7 +112,7 @@ async def update_category(
 @router.delete("/{category_id}", response_model=ApiResponse[None])
 async def delete_category(
     category_id: uuid.UUID,
-    _: Annotated[CurrentUser, Depends(require_permission("product:update"))],
+    _: Annotated[CurrentUser, Depends(require_permission("category:delete"))],
     session: SessionDep,
 ) -> ApiResponse[None]:
     await CategoryService(session).delete(category_id)
