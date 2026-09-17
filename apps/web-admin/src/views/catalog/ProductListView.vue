@@ -32,12 +32,15 @@ const importDialogVisible = ref(false)
 const importPreview = ref<ProductImportPreview>()
 const supplierCandidates = ref<ProductImportSupplierCandidate[]>([])
 const selections = reactive<Record<string, string>>({})
-const importRowFilter = ref<"ALL" | "PASSED" | "FAILED">("ALL")
+const importRowFilter = ref<"ALL" | "PASSED" | "FAILED" | "UPDATE">("ALL")
 const activeTab = ref<"products" | "audit">("products")
 
 const filteredImportRows = computed(() => {
   const rows = importPreview.value?.rows ?? []
-  if (importRowFilter.value === "PASSED") return rows.filter((row) => row.is_valid && !row.is_imported)
+  if (importRowFilter.value === "PASSED") {
+    return rows.filter((row) => row.is_valid && !row.is_imported && row.write_action === "CREATE")
+  }
+  if (importRowFilter.value === "UPDATE") return rows.filter((row) => row.write_action === "UPDATE")
   if (importRowFilter.value === "FAILED") return rows.filter((row) => !row.is_valid && !row.is_imported)
   return rows
 })
@@ -150,7 +153,7 @@ async function confirmImport(): Promise<void> {
   try {
     const result = await productApi.confirmImport(importPreview.value.id)
     importPreview.value = await productApi.getImportPreview(importPreview.value.id)
-    ElMessage.success(`已正式导入 ${result.imported_count} 条商品`)
+    ElMessage.success(`本次新增 ${result.created_count} 条，更新 ${result.updated_count} 条商品`)
     if (result.status === "CONFIRMED") {
       importDialogVisible.value = false
       importPreview.value = undefined
@@ -383,8 +386,8 @@ onMounted(() => void loadProducts())
     >
       <template v-if="importPreview">
         <el-alert :type="importPreview.valid_rows > 0 ? 'success' : 'warning'" :closable="false" show-icon>
-          共 {{ importPreview.total_rows }} 行；已导入 {{ importPreview.imported_rows }} 行；通过 {{ importPreview.valid_rows }} 行；不通过 {{ importPreview.invalid_rows }} 行。
-          仅“通过”行会写入正式商品库；不通过行保留在当前预览中，不会入库。
+          共 {{ importPreview.total_rows }} 行；已处理 {{ importPreview.imported_rows }} 行；通过 {{ importPreview.valid_rows }} 行；更新 {{ importPreview.update_rows }} 行；不通过 {{ importPreview.invalid_rows }} 行。
+          “通过”行会新增商品，“更新”行会覆盖同键正常商品的模板字段；不通过行保留在当前预览中，不会入库。
         </el-alert>
 
         <h3>来源供应商解析</h3>
@@ -412,6 +415,7 @@ onMounted(() => void loadProducts())
         <el-radio-group v-model="importRowFilter" class="import-row-filter">
           <el-radio-button label="ALL">全部（{{ importPreview.total_rows }}）</el-radio-button>
           <el-radio-button label="PASSED">通过（{{ importPreview.valid_rows }}）</el-radio-button>
+          <el-radio-button label="UPDATE">更新（{{ importPreview.update_rows }}）</el-radio-button>
           <el-radio-button label="FAILED">不通过（{{ importPreview.invalid_rows }}）</el-radio-button>
         </el-radio-group>
         <el-table :data="filteredImportRows" max-height="300">
@@ -424,13 +428,15 @@ onMounted(() => void loadProducts())
           <el-table-column prop="supplier_name_raw" label="供应商原值" min-width="180" />
           <el-table-column label="状态" width="105">
             <template #default="{ row }">
-              <el-tag v-if="row.is_imported" type="info">已导入</el-tag>
+              <el-tag v-if="row.is_imported" type="info">{{ row.write_action === "UPDATE" ? "已更新" : "已导入" }}</el-tag>
+              <el-tag v-else-if="row.write_action === 'UPDATE'" type="warning">更新</el-tag>
               <el-tag v-else :type="row.is_valid ? 'success' : 'danger'">{{ row.is_valid ? '通过' : '不通过' }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="结果" min-width="260">
             <template #default="{ row }">
-              <span v-if="row.is_imported">已写入正式商品库</span>
+              <span v-if="row.is_imported">{{ row.write_action === "UPDATE" ? "已更新正式商品库" : "已写入正式商品库" }}</span>
+              <span v-else-if="row.write_action === 'UPDATE'">将更新正式商品：{{ row.changed_fields?.length ? row.changed_fields.join("、") : "无业务字段变化" }}</span>
               <span v-else-if="!row.is_valid" class="import-error">{{ row.error_message }}</span>
               <span v-else>校验通过</span>
               <small v-if="row.warning_message" class="import-warning">{{ row.warning_message }}</small>
@@ -440,8 +446,8 @@ onMounted(() => void loadProducts())
       </template>
       <template #footer>
         <el-button :disabled="importing" @click="importDialogVisible = false">关闭</el-button>
-        <el-button type="primary" :loading="importing" :disabled="!importPreview || importPreview.valid_rows === 0" @click="confirmImport">
-          导入通过的 {{ importPreview?.valid_rows ?? 0 }} 行
+        <el-button type="primary" :loading="importing" :disabled="!importPreview || importPreview.valid_rows + importPreview.update_rows === 0" @click="confirmImport">
+          确认新增/更新 {{ (importPreview?.valid_rows ?? 0) + (importPreview?.update_rows ?? 0) }} 行
         </el-button>
       </template>
     </el-dialog>

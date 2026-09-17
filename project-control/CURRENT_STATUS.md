@@ -47,7 +47,7 @@ Sprint 1 — Auth/RBAC + Supplier
 
 ## 下一步
 
-- 主任务：Product Import 已实现固定 32 列 Staging、批准模板下载、有效商城三级类目绑定、WPS/Excel 图片仅在通过行 Confirm 时相对本地保存、来源供应商精确匹配、通过/不通过预览筛选、人工解析、供应商 + SKU 防重和通过行原子 Confirm；类目无匹配、停用或不唯一会显示行级原因并阻止入库。过期未完成任务仅清理自身临时源文件/未导入行媒体，绝不清理正式 Product 图片（Revision `20260914_0023`，ADR-0010/0011/0015/0016/0017/0018）。
+- 主任务：Product Import 已实现固定 32 列 Staging、批准模板下载、有效商城三级类目绑定、WPS/Excel 图片仅在实际 Confirm 行相对本地保存、来源供应商精确匹配、通过/更新/不通过预览筛选、人工解析、供应商 + SKU 正常同键更新以及新增/更新原子 Confirm；更新行显示变更字段并保留原商品 ID、创建审计与状态，停用同键商品仍阻止入库。过期未完成任务仅清理自身临时源文件/未导入行媒体，绝不清理正式 Product 图片（Revision `20260917_0028`，合并 Head `20260917_0029`，ADR-0010/0011/0015/0016/0017/0018/0020）。
 - 后续任务：准备真实商品大表需要的有效 Supplier Master，并处理 Excel 的空供应商；类目 Source Loader 不再是商品 Confirm 前置条件。
 - 业务冻结：Supplier Product Quote 已取消；后续供应商新报价直接更新正式 Product 的 `cost_price`，并原子重算派生价格；不创建报价历史、有效期或比价模块。
 - Auth 会话：Refresh Token、服务端 Session、令牌轮换、三天无活动过期、三十天绝对过期和全设备失效已实现；管理员设备会话管理页与 Role disable policy 仍待后续冻结。
@@ -56,7 +56,7 @@ Sprint 1 — Auth/RBAC + Supplier
 
 - Repository：无代码合并 Blocker。
 - Supplier：名称唯一与重复数据清理已实现：同名只保留最早历史记录，后建重复记录已物理删除；创建/导入遇到已逻辑删除的同名记录会恢复并覆盖。合作状态已冻结为 NORMAL ↔ STOPPED / BLACKLIST，恢复均保留原因和历史；Import Confirm 已按原子持久化加固：锁定实际导入行、flush 成功和数量一致后才确认批次，异常整批回滚。未确认的企业、税务、地址、银行、资质等字段仍不得自行添加。资质业务字段及其 API 继续冻结。
-- Product / Catalog：Product Master 与 Product Import 已实现；实际 Confirm 仅写入当前通过行，空/无效来源供应商或同键正常/停用商品等失败行保留在 Staging，不会入库。Product 已冻结为 `ACTIVE` / `DISABLED`：停用保留业务键并阻止导入；仅已停用商品可由 `product:purge` 永久删除，删除后可新建同键商品。覆盖式 Excel 更新和无受控类目关联 Product 的独立成本价维护仍待后续范围。
+- Product / Catalog：Product Master 与 Product Import 已实现；实际 Confirm 写入当前通过新增行与正常同键更新行，空/无效来源供应商、同 Excel 重复或停用同键商品等失败行保留在 Staging，不会入库。Product 已冻结为 `ACTIVE` / `DISABLED`：停用保留业务键并阻止导入；仅已停用商品可由 `product:purge` 永久删除，删除后可新建同键商品。无受控类目关联 Product 的独立成本价维护仍待后续范围。
 
 ## Workstreams / Implementation Context
 

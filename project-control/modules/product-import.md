@@ -2,7 +2,7 @@
 
 状态：IMPLEMENTED / PARTIAL_CONFIRM_AND_TEMPLATE_DOWNLOAD
 Owner：feat/product-import-partial-confirm-template-download
-Last Updated：2026-09-15
+Last Updated：2026-09-17
 
 ## Database
 - [x] `20260910_0013` 创建 `scm_product_import_task`、`scm_product_import_row`、`scm_product_import_supplier_match`
@@ -18,9 +18,10 @@ Last Updated：2026-09-15
 - [x] Confirm 锁定任务并重新校验有效来源供应商；当前通过且尚未导入的行作为一次单事务写入 `scm_product`
 - [x] `GET /api/v1/products/imports/template` 下载批准的原始 32 列模板
 - [x] 同来源供应商 + SKU 命中停用 Product 时按行报错并阻止 Confirm；不隐式恢复或覆盖，永久删除后才可作为新商品导入
+- [x] 同来源供应商 + SKU 命中正常 Product 时按行标识为更新，并在 Confirm 保留 ID/创建审计/状态的前提下原子覆盖固定模板字段；记录变更字段供预览和确认后查看
 
 ## Frontend
-- [x] 商品主数据页提供模板下载、Excel 上传、通过/不通过/已导入行预览筛选、供应商解析和“导入通过行”入口
+- [x] 商品主数据页提供模板下载、Excel 上传、通过/更新/不通过/已处理行预览筛选、供应商解析和“确认新增/更新”入口
 
 ## Permissions
 - [x] `product:import`
@@ -49,4 +50,5 @@ Last Updated：2026-09-15
 - Import表只做Staging；
 - 通过行确认后写正式 `scm_product`；不通过行保留在 Staging，绝不静默入库；
 - 已导入 Staging 行不得再次写入；Task 以 `PARTIALLY_CONFIRMED` 表示尚有未导入行。
+- 正常同键 Product 的待处理行是 `UPDATE`，更新后仍以 Staging 行的 `write_action` 与 `changed_fields` 区分“已更新”；同键停用 Product 仍不通过。
 - Excel 三级类目文本仅作为受控商城类目的精确查询条件；唯一有效匹配后，正式 Product 从 Category 写入 `category_id` 与完整路径。价格字段仍直接保存；导入先执行模板、类目、必要字段/数值、供应商及重复/冲突校验，再错误预览与人工确认；错误行不得静默入库。

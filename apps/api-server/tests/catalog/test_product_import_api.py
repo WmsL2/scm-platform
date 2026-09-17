@@ -117,6 +117,9 @@ def _workbook_bytes(
     *supplier_names: str,
     image_value: str = "https://example.test/image.png",
     category_path: tuple[str, str, str] = ("测试一级", "测试二级", "测试三级"),
+    product_name: str = "测试商品",
+    cost_price: str = "100",
+    sku_override: str | None = None,
 ) -> bytes:
     workbook = Workbook()
     worksheet = workbook.active
@@ -126,8 +129,8 @@ def _workbook_bytes(
         worksheet.append(
             [
                 "2026-09-10", "测试品牌", image_value, "型号",
-                f"SKU-{index}", "测试商品",
-                *category_path, "货号", "https://example.test/item", "100",
+                sku_override or f"SKU-{index}", product_name,
+                *category_path, "货号", "https://example.test/item", cost_price,
                 "999", "201", "199.9", "155.55", "55.55", "0.1234", "0.1111", "0.2778", "采销员",
                 supplier_name, "6900000000000", "规格", "卖点", "限售区域", "180", "https://example.test/ref",
                 "官方旗舰店", "0.8888", "-0.1111", "备注",
@@ -217,16 +220,56 @@ async def test_product_import_binds_unique_active_mall_category() -> None:
                 files={
                     "file": (
                         "duplicate-products.xlsx",
-                        _workbook_bytes("导入测试供应商"),
+                        _workbook_bytes(
+                            "导入测试供应商", product_name="更新后商品", cost_price="222"
+                        ),
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
                 },
             )
             assert duplicate_preview.status_code == 200
             duplicate_data = duplicate_preview.json()["data"]
-            assert duplicate_data["status"] == "VALIDATED"
-            assert duplicate_data["invalid_rows"] == 1
-            assert "来源供应商与SKU组合已存在" in duplicate_data["rows"][0]["error_message"]
+            assert duplicate_data["status"] == "READY_TO_CONFIRM"
+            assert duplicate_data["valid_rows"] == 0
+            assert duplicate_data["update_rows"] == 1
+            assert duplicate_data["invalid_rows"] == 0
+            assert duplicate_data["rows"][0]["write_action"] == "UPDATE"
+            assert {"商品名称", "成本价"}.issubset(duplicate_data["rows"][0]["changed_fields"])
+            updated = await client.post(
+                f"/api/v1/products/imports/{duplicate_data['id']}/confirm", headers=headers
+            )
+            assert updated.status_code == 200
+            assert updated.json()["data"]["created_count"] == 0
+            assert updated.json()["data"]["updated_count"] == 1
+            updated_preview = await client.get(
+                f"/api/v1/products/imports/{duplicate_data['id']}", headers=headers
+            )
+            assert updated_preview.status_code == 200
+            assert updated_preview.json()["data"]["rows"][0]["is_imported"] is True
+            assert updated_preview.json()["data"]["rows"][0]["write_action"] == "UPDATE"
+
+            duplicate_rows_preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "duplicate-rows-products.xlsx",
+                        _workbook_bytes(
+                            "导入测试供应商",
+                            "导入测试供应商",
+                            sku_override="SKU-1",
+                        ),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert duplicate_rows_preview.status_code == 200
+            duplicate_rows_data = duplicate_rows_preview.json()["data"]
+            assert duplicate_rows_data["update_rows"] == 1
+            assert duplicate_rows_data["invalid_rows"] == 1
+            assert "与Excel第2行的来源供应商与SKU重复" in (
+                duplicate_rows_data["rows"][1]["error_message"]
+            )
 
         async with SessionLocal() as session:
             deleted_product = await session.scalar(
@@ -234,6 +277,8 @@ async def test_product_import_binds_unique_active_mall_category() -> None:
             )
             assert deleted_product is not None
             disabled_product_id = deleted_product.id
+            assert deleted_product.product_name == "更新后商品"
+            assert deleted_product.cost_price == Decimal("222.0000")
             deleted_product.product_name = "停用前商品名称"
             deleted_product.cost_price = Decimal("321.0000")
             deleted_product.status = ProductStatus.DISABLED
@@ -389,8 +434,11 @@ async def test_product_import_confirms_valid_rows_and_retains_failed_rows() -> N
                 "id": data["id"],
                 "status": "PARTIALLY_CONFIRMED",
                 "imported_count": 1,
+                "created_count": 1,
+                "updated_count": 0,
                 "imported_rows": 1,
                 "valid_rows": 0,
+                "update_rows": 0,
                 "invalid_rows": 1,
             }
 

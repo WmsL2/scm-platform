@@ -63,7 +63,7 @@ Supplier Excel -> Supplier Import -> scm_supplier
 
 Revision `20260911_0020` 将 Product 生命周期冻结为 `ACTIVE` / `DISABLED`。`POST /api/v1/products/{product_id}/commands/disable` 与 `enable` 均要求 `product:disable`；停用后商品从正常列表、详情、编辑及成本价更新中隐藏，但 Product ID、字段和 `source_supplier_id + sku` 防重业务键继续保留。
 
-`DELETE /api/v1/products/{product_id}` 是永久删除，要求 `product:purge` 和请求体 `{"confirm": true}`，且仅允许删除已停用商品。服务端会在同一事务锁定商品、写入 `scm_product_purge_audit` 的最小审计信息后物理删除；存在数据库受保护关联时返回冲突。永久删除后同键释放，重新导入会创建一条新商品。正常或停用商品的同键 Excel 行均会在预览阶段阻止 Confirm，导入不恢复也不覆盖既有字段。
+`DELETE /api/v1/products/{product_id}` 是永久删除，要求 `product:purge` 和请求体 `{"confirm": true}`，且仅允许删除已停用商品。服务端会在同一事务锁定商品、写入 `scm_product_purge_audit` 的最小审计信息后物理删除；存在数据库受保护关联时返回冲突。永久删除后同键释放，重新导入会创建一条新商品。正常商品的同键 Excel 行依据 ADR-0020 标记为更新并可在 Confirm 覆盖固定模板字段；停用商品的同键 Excel 行仍在预览阶段阻止 Confirm，不恢复也不覆盖既有字段。
 
 ## 当前成本价
 
@@ -93,6 +93,6 @@ Excel“供应商”原值只写入 Staging 的 `supplier_name_raw`，用于审�
 
 有效候选必须同时为 `ARCHIVED`、`NORMAL`、未逻辑删除。多个有效候选为 `AMBIGUOUS`；没有同名供应商为 `UNMATCHED`；存在同名但均不符合有效条件为 `INELIGIBLE`。后三者必须由用户从当前有效 Supplier Master 中人工选择（`MANUAL`），或先在 Supplier Master 处理后重试；不得在导入页面创建、归档或恢复供应商，也不得创建独立报价记录。
 
-当前实现的 Import Task 状态为 `VALIDATED`、`NEEDS_RESOLUTION`、`READY_TO_CONFIRM`、`PARTIALLY_CONFIRMED`、`CONFIRMED`、`EXPIRED`。Confirm 对当前所有通过且尚未导入的行保持单事务原子性：重新校验必要字段、Match Decision 和每个 `matched_supplier_id` 仍为有效候选后，才提取该批行的图片、写正式商品并将其作为 `source_supplier_id`。类目和 Excel 价格不再被二次解析或重算。任一拟导入行的供应商/必要字段失败不得让本次其他通过行部分写入；不通过行保留在 Staging，绝不入库。已导入行不再参与后续校验，避免被其自身的正式 Product 防重键阻塞或重复写入。
+当前实现的 Import Task 状态为 `VALIDATED`、`NEEDS_RESOLUTION`、`READY_TO_CONFIRM`、`PARTIALLY_CONFIRMED`、`CONFIRMED`、`EXPIRED`。每个未处理行另记录 `CREATE` 或 `UPDATE`；`UPDATE` 保留变更字段列表，确认后仍可显示“已更新”。Confirm 对当前所有通过新增行和更新行保持单事务原子性：重新校验必要字段、Match Decision 和每个 `matched_supplier_id` 仍为有效候选后，才提取该批行的图片，创建新 Product 或更新锁定的正常同键 Product。更新保留 ID、创建审计、生命周期状态和键，并写入更新审计；类目和 Excel 价格不再被二次解析或重算。任一拟导入行的供应商/必要字段失败不得让本次其他通过行部分写入；不通过行保留在 Staging，绝不入库。已处理行不再参与后续校验，避免被其自身的正式 Product 防重键阻塞或重复写入。
 
 已实现 API：`GET /api/v1/products/imports/template`、`POST /api/v1/products/imports/preview`、`GET /api/v1/products/imports/{task_id}`、`GET /api/v1/products/imports/supplier-candidates`、`POST /api/v1/products/imports/{task_id}/supplier-matches/{match_id}/resolve`、`POST /api/v1/products/imports/{task_id}/confirm`。模板下载与其他导入 API 均要求 `product:import`；人工解析请求只提交 `{ "supplier_id": "<UUID>" }`；Backend 必须再次验证该 UUID 当前有效，前端不得把 supplier_name 作为正式选择结果。
