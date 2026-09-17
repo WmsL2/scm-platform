@@ -1,7 +1,7 @@
 # 商品主数据定义 / Product Master Data
 
 状态：ACCEPTED
-版本：V1.3.2
+版本：V1.4.0
 
 ## 核心定义
 
@@ -35,6 +35,8 @@ Supplier Excel -> Supplier Import -> scm_supplier
 - 场景方案
 - 商品统计
 
+`GET /api/v1/products` 支持综合关键字，所属公司/采销员/品牌/供应商名称包含查询，三级类目精确过滤，成本价/协议价/折扣率/销量闭区间，以及生命周期状态；多条件按 AND 组合。页面类目输入为可搜索三级联动，折扣率输入按百分数换算。
+
 ## Import 表
 
 `scm_product_import_task`
@@ -57,7 +59,7 @@ Supplier Excel -> Supplier Import -> scm_supplier
 
 ## 唯一键
 
-系统生成的 `id` 是主键。`source_supplier_id + sku` 是 Product 防重业务键，并由数据库 UNIQUE 强制；`model`、`product_name`、`brand + model`、货号及源69码文本均不设业务 UNIQUE。不得自行假设型号或品牌+型号唯一。
+系统生成的 `id` 是主键。`source_supplier_id + sku` 是 Product 防重业务键，并由数据库 UNIQUE 强制；两个字段对新导入必填，创建后不能通过重新导入或普通编辑修改。`model`、`product_name`、`brand + model`、货号及源69码文本均不设业务 UNIQUE。
 
 ## 商品停用与永久删除
 
@@ -81,7 +83,7 @@ Revision `20260911_0020` 将 Product 生命周期冻结为 `ACTIVE` / `DISABLED`
 
 预览只检测固定大表的 WPS/Excel `DISPIMG` 图片，并在有公式图片时受控保留临时源 Excel；预览不提取或保存商品图片。Confirm 时仅当前实际写入正式 Product 的通过行才从临时源文件提取媒体，保存到项目相对目录 `local-data/files/product-images/<import-task-id>/`。实际媒体文件受 `.gitignore` 隔离；数据库不保存本机绝对路径，只保存形如 `local-media/product-images/...` 的站内相对引用。后端通过 `/local-media/` 提供该本地开发媒体。
 
-无法从工作簿找到对应内嵌图片时不阻断其他业务校验；正式 Product 的图片引用为空。非公式图片列仍按原始 URL/文本保存。全量 Confirm 后临时源 Excel 立即删除；每次新预览会将超过 `PRODUCT_IMPORT_UNCONFIRMED_RETENTION_DAYS`（默认 7 天）的未完成或部分确认任务标记为 `EXPIRED`，仅删除其临时源文件与未导入行媒体。正式 Product 引用的图片不参与清理，过期任务必须重新上传。
+无法从工作簿找到对应内嵌图片时不阻断其他业务校验；正式 Product 的图片引用为空。非公式图片列仍按原始 URL/文本保存。重新导入替换或清空图片时，先成功提交 Product 更新事务，再删除被替代的旧本地图片。全量 Confirm 后临时源 Excel 立即删除；每次新预览会将超过 `PRODUCT_IMPORT_UNCONFIRMED_RETENTION_DAYS`（默认 7 天）的未完成或部分确认任务标记为 `EXPIRED`，仅删除其临时源文件与未导入行媒体。普通编辑使用 `POST /api/v1/products/{product_id}/image` 上传图片、`DELETE /api/v1/products/{product_id}/image` 清除图片，均要求 `product:update`。
 
 `scm_product.source_supplier_id` 表示商品大表该行的**来源供应商**，不是当前报价供应商，也不是唯一供应商。成本价更新不自动新建报价关联或历史记录。
 
@@ -93,6 +95,6 @@ Excel“供应商”原值只写入 Staging 的 `supplier_name_raw`，用于审�
 
 有效候选必须同时为 `ARCHIVED`、`NORMAL`、未逻辑删除。多个有效候选为 `AMBIGUOUS`；没有同名供应商为 `UNMATCHED`；存在同名但均不符合有效条件为 `INELIGIBLE`。后三者必须由用户从当前有效 Supplier Master 中人工选择（`MANUAL`），或先在 Supplier Master 处理后重试；不得在导入页面创建、归档或恢复供应商，也不得创建独立报价记录。
 
-当前实现的 Import Task 状态为 `VALIDATED`、`NEEDS_RESOLUTION`、`READY_TO_CONFIRM`、`PARTIALLY_CONFIRMED`、`CONFIRMED`、`EXPIRED`。每个未处理行另记录 `CREATE` 或 `UPDATE`；`UPDATE` 保留变更字段列表，确认后仍可显示“已更新”。Confirm 对当前所有通过新增行和更新行保持单事务原子性：重新校验必要字段、Match Decision 和每个 `matched_supplier_id` 仍为有效候选后，才提取该批行的图片，创建新 Product 或更新锁定的正常同键 Product。更新保留 ID、创建审计、生命周期状态和键，并写入更新审计；类目和 Excel 价格不再被二次解析或重算。任一拟导入行的供应商/必要字段失败不得让本次其他通过行部分写入；不通过行保留在 Staging，绝不入库。已处理行不再参与后续校验，避免被其自身的正式 Product 防重键阻塞或重复写入。
+当前实现的 Import Task 状态为 `VALIDATED`、`NEEDS_RESOLUTION`、`READY_TO_CONFIRM`、`PARTIALLY_CONFIRMED`、`CONFIRMED`、`EXPIRED`。每个未处理行另记录 `CREATE` 或 `UPDATE`；`UPDATE` 保留变更字段列表，确认后仍可显示“已更新”。Confirm 对当前所有通过新增行和更新行保持单事务原子性：重新校验必要字段、Match Decision 和每个 `matched_supplier_id` 仍为有效候选后，才提取该批行的图片，创建新 Product 或更新锁定的正常同键 Product。更新保留 ID、创建审计、生命周期状态及供应商 + SKU 键；其余 41 个模板字段按 Excel 覆盖，空单元格清空，价格不重算。任一拟导入行失败不得让本次其他通过行部分写入；不通过行保留在 Staging，绝不入库。
 
 已实现 API：`GET /api/v1/products/imports/template`、`POST /api/v1/products/imports/preview`、`GET /api/v1/products/imports/{task_id}`、`GET /api/v1/products/imports/supplier-candidates`、`POST /api/v1/products/imports/{task_id}/supplier-matches/{match_id}/resolve`、`POST /api/v1/products/imports/{task_id}/confirm`。模板下载与其他导入 API 均要求 `product:import`；人工解析请求只提交 `{ "supplier_id": "<UUID>" }`；Backend 必须再次验证该 UUID 当前有效，前端不得把 supplier_name 作为正式选择结果。

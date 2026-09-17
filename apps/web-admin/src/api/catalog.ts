@@ -44,6 +44,16 @@ export const productApi = {
     return http.patch<ProductDetail, ProductUpdatePayload>(path(`/${id}`), payload)
   },
 
+  updateImage(id: string, file: File): Promise<ProductDetail> {
+    const form = new FormData()
+    form.append("file", file)
+    return http.post<ProductDetail, FormData>(path(`/${id}/image`), form)
+  },
+
+  clearImage(id: string): Promise<ProductDetail> {
+    return http.delete<ProductDetail>(path(`/${id}/image`))
+  },
+
   disable(id: string): Promise<ProductLifecycleResult> {
     return http.post<ProductLifecycleResult>(path(`/${id}/commands/disable`))
   },

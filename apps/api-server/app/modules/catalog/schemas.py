@@ -73,6 +73,7 @@ class CategoryImportResponse(BaseModel):
 
 class ProductListItem(BaseModel):
     id: uuid.UUID
+    company_name: str | None
     listed_at: date | None
     brand: str | None
     image_reference: str | None
@@ -80,6 +81,7 @@ class ProductListItem(BaseModel):
     sku: str | None
     product_name: str | None
     item_number: str | None
+    jd_same_product_url: str | None
     category_id: uuid.UUID | None
     category_path: str
     source_supplier_id: uuid.UUID
@@ -87,6 +89,33 @@ class ProductListItem(BaseModel):
     cost_price: Decimal
     agreement_price: Decimal | None
     jd_price: Decimal | None
+    market_price: Decimal | None
+    agreement_purchase_price: Decimal | None
+    profit: Decimal | None
+    jd_margin: Decimal | None
+    deduction_review: Decimal | None
+    gross_margin: Decimal | None
+    purchasing_agent: str | None
+    barcode_text: str | None
+    certification_3c_code: str | None
+    product_specification: str | None
+    selling_points: str | None
+    packaging_list: str | None
+    warranty_period: str | None
+    restricted_regions: str | None
+    jd_self_operated_price: Decimal | None
+    storefront_type: str | None
+    reference_url: str | None
+    sales_volume: int | None
+    positive_rating: Decimal | None
+    discount_rate: Decimal | None
+    price_inflation_rate: Decimal | None
+    tax_code: str | None
+    invoice_name: str | None
+    tax_category: str | None
+    shipping_courier: str | None
+    after_sales_policy: str | None
+    remark: str | None
     status: ProductStatus
     created_by: uuid.UUID | None
     created_by_username: str | None
@@ -98,6 +127,7 @@ class ProductListItem(BaseModel):
 
 class ProductDetailResponse(BaseModel):
     id: uuid.UUID
+    company_name: str | None
     listed_at: date | None
     brand: str | None
     image_reference: str | None
@@ -121,9 +151,12 @@ class ProductDetailResponse(BaseModel):
     source_supplier_id: uuid.UUID
     source_supplier_name: str | None
     barcode_text: str | None
+    certification_3c_code: str | None
     deduction_review: Decimal | None
     product_specification: str | None
     selling_points: str | None
+    packaging_list: str | None
+    warranty_period: str | None
     gross_margin: Decimal | None
     remark: str | None
     discount_rate: Decimal | None
@@ -131,8 +164,16 @@ class ProductDetailResponse(BaseModel):
     jd_self_operated_price: Decimal | None
     reference_url: str | None
     storefront_type: str | None
+    sales_volume: int | None
+    positive_rating: Decimal | None
     price_inflation_rate: Decimal | None
     deduction_rate: Decimal | None
+    tax_code: str | None
+    invoice_name: str | None
+    tax_category: str | None
+    shipping_courier: str | None
+    after_sales_policy: str | None
+    status: ProductStatus
     created_at: datetime
     updated_at: datetime
 
@@ -159,44 +200,74 @@ class ProductCostUpdateRequest(BaseModel):
 
 
 class ProductUpdateRequest(BaseModel):
-    """Editable source-business fields; pricing and category controls stay out of this contract."""
+    """Editable Product Master fields; supplier, SKU and image reference are immutable here."""
 
     model_config = ConfigDict(extra="forbid")
 
+    company_name: str | None = Field(default=None, max_length=255)
     listed_at: date | None = None
     brand: str | None = Field(default=None, max_length=128)
-    image_reference: str | None = Field(default=None, max_length=2048)
     model: str | None = Field(default=None, max_length=255)
-    sku: str | None = Field(default=None, min_length=1, max_length=255)
     product_name: str | None = Field(default=None, max_length=512)
+    category_id: uuid.UUID | None = None
     item_number: str | None = Field(default=None, max_length=255)
     jd_same_product_url: str | None = Field(default=None, max_length=2048)
+    cost_price: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=4)
+    market_price: Decimal | None = Field(default=None, max_digits=18, decimal_places=4)
+    jd_price: Decimal | None = Field(default=None, max_digits=18, decimal_places=4)
+    agreement_price: Decimal | None = Field(default=None, max_digits=18, decimal_places=4)
+    agreement_purchase_price: Decimal | None = Field(
+        default=None, max_digits=18, decimal_places=4
+    )
+    profit: Decimal | None = Field(default=None, max_digits=18, decimal_places=4)
+    jd_margin: Decimal | None = Field(default=None, max_digits=9, decimal_places=4)
+    deduction_review: Decimal | None = Field(default=None, max_digits=9, decimal_places=4)
+    gross_margin: Decimal | None = Field(default=None, max_digits=9, decimal_places=4)
     purchasing_agent: str | None = Field(default=None, max_length=128)
-    source_supplier_id: uuid.UUID | None = None
     barcode_text: str | None = Field(default=None, max_length=255)
+    certification_3c_code: str | None = Field(default=None, max_length=255)
     product_specification: str | None = None
     selling_points: str | None = None
+    packaging_list: str | None = None
+    warranty_period: str | None = Field(default=None, max_length=255)
     remark: str | None = None
+    discount_rate: Decimal | None = Field(default=None, ge=0, le=1, max_digits=9, decimal_places=4)
     restricted_regions: str | None = None
+    jd_self_operated_price: Decimal | None = Field(default=None, max_digits=18, decimal_places=4)
     reference_url: str | None = Field(default=None, max_length=2048)
     storefront_type: str | None = Field(default=None, max_length=64)
+    sales_volume: int | None = Field(default=None, ge=0)
+    positive_rating: Decimal | None = Field(default=None, ge=0, le=1, max_digits=9, decimal_places=4)
+    price_inflation_rate: Decimal | None = Field(default=None, max_digits=9, decimal_places=4)
+    tax_code: str | None = Field(default=None, max_length=255)
+    invoice_name: str | None = Field(default=None, max_length=512)
+    tax_category: str | None = Field(default=None, max_length=255)
+    shipping_courier: str | None = Field(default=None, max_length=255)
+    after_sales_policy: str | None = None
 
     @field_validator(
+        "company_name",
         "brand",
-        "image_reference",
         "model",
-        "sku",
         "product_name",
         "item_number",
         "jd_same_product_url",
         "purchasing_agent",
         "barcode_text",
+        "certification_3c_code",
         "product_specification",
         "selling_points",
+        "packaging_list",
+        "warranty_period",
         "remark",
         "restricted_regions",
         "reference_url",
         "storefront_type",
+        "tax_code",
+        "invoice_name",
+        "tax_category",
+        "shipping_courier",
+        "after_sales_policy",
     )
     @classmethod
     def normalize_text(cls, value: str | None) -> str | None:

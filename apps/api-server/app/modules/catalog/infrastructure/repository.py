@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import cast
 
 from sqlalchemy import Select, and_, func, or_, select, tuple_
@@ -183,8 +184,22 @@ class ProductRepository:
         page_params: PageParams,
         *,
         keyword: str | None,
-        category_id: uuid.UUID | None,
+        company_name: str | None,
+        purchasing_agent: str | None,
+        brand: str | None,
+        supplier_name: str | None,
         source_supplier_id: uuid.UUID | None,
+        category_level1_name: str | None,
+        category_level2_name: str | None,
+        category_id: uuid.UUID | None,
+        cost_price_min: Decimal | None,
+        cost_price_max: Decimal | None,
+        agreement_price_min: Decimal | None,
+        agreement_price_max: Decimal | None,
+        discount_rate_min: Decimal | None,
+        discount_rate_max: Decimal | None,
+        sales_volume_min: int | None,
+        sales_volume_max: int | None,
         status: ProductStatus,
     ) -> tuple[list[Product], int]:
         supplier_criteria = (
@@ -212,6 +227,14 @@ class ProductRepository:
                 Product.product_name.contains(keyword),
                 Product.item_number.contains(keyword),
                 Product.barcode_text.contains(keyword),
+                Product.product_specification.contains(keyword),
+                Product.selling_points.contains(keyword),
+                Product.category_level1_name.contains(keyword),
+                Product.category_level2_name.contains(keyword),
+                Product.category_level3_name.contains(keyword),
+                Product.company_name.contains(keyword),
+                Product.purchasing_agent.contains(keyword),
+                Supplier.supplier_name.contains(keyword),
             )
             statement = statement.where(criteria)
             count_statement = count_statement.where(criteria)
@@ -223,6 +246,39 @@ class ProductRepository:
             count_statement = count_statement.where(
                 Product.source_supplier_id == source_supplier_id
             )
+        filters = (
+            (company_name, Product.company_name.contains),
+            (purchasing_agent, Product.purchasing_agent.contains),
+            (brand, Product.brand.contains),
+            (supplier_name, Supplier.supplier_name.contains),
+            (category_level1_name, Product.category_level1_name.__eq__),
+            (category_level2_name, Product.category_level2_name.__eq__),
+        )
+        for value, operation in filters:
+            if value:
+                criterion = operation(value)
+                statement = statement.where(criterion)
+                count_statement = count_statement.where(criterion)
+        range_criteria = []
+        if cost_price_min is not None:
+            range_criteria.append(Product.cost_price >= cost_price_min)
+        if cost_price_max is not None:
+            range_criteria.append(Product.cost_price <= cost_price_max)
+        if agreement_price_min is not None:
+            range_criteria.append(Product.agreement_price >= agreement_price_min)
+        if agreement_price_max is not None:
+            range_criteria.append(Product.agreement_price <= agreement_price_max)
+        if discount_rate_min is not None:
+            range_criteria.append(Product.discount_rate >= discount_rate_min)
+        if discount_rate_max is not None:
+            range_criteria.append(Product.discount_rate <= discount_rate_max)
+        if sales_volume_min is not None:
+            range_criteria.append(Product.sales_volume >= sales_volume_min)
+        if sales_volume_max is not None:
+            range_criteria.append(Product.sales_volume <= sales_volume_max)
+        if range_criteria:
+            statement = statement.where(*range_criteria)
+            count_statement = count_statement.where(*range_criteria)
         statement = (
             statement.order_by(Product.updated_at.desc(), Product.id.desc())
             .offset((page_params.page - 1) * page_params.page_size)

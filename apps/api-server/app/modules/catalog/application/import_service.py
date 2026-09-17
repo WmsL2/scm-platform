@@ -49,6 +49,7 @@ from app.modules.supplier.infrastructure.models import Supplier
 from app.modules.supplier.infrastructure.repository import SupplierRepository
 
 PRODUCT_IMPORT_HEADERS = (
+    "所属公司",
     "上架日期",
     "品牌",
     "图片",
@@ -60,47 +61,67 @@ PRODUCT_IMPORT_HEADERS = (
     "三级类目",
     "货号",
     "链接",
-    "*成本价",
+    "成本价",
     "市场价",
     "京东价",
     "协议价",
     "协议价采购价",
     "利润",
     "京东价毛利（30-50）",
-    "毛利复核",
-    "众诚毛利",
+    "扣点复核",
+    "毛利率",
     "采销员",
     "供应商",
     "69码",
+    "3c编码",
     "产品规格",
     "卖点",
+    "包装清单",
+    "质保期",
     "限售区域",
     "京东自营前台价",
-    "参考链接",
     "自营旗舰店/官方旗舰店",
+    "参考链接",
+    "销量",
+    "好评率",
     "折扣率",
-    "价格虚高比例（30%)",
+    "价格虚高比例",
+    "税收编码",
+    "开票名称",
+    "税收分类",
+    "发货快递",
+    "售后政策",
     "备注",
 )
 MAX_IMPORT_FILE_BYTES = 25 * 1024 * 1024
 MAX_IMPORT_ROWS = 20_000
 
 _DIRECT_DECIMAL_HEADERS = (
-    "*成本价",
+    "成本价",
     "市场价",
     "京东价",
     "协议价",
     "协议价采购价",
     "利润",
     "京东价毛利（30-50）",
-    "毛利复核",
-    "众诚毛利",
+    "扣点复核",
+    "毛利率",
     "京东自营前台价",
     "折扣率",
-    "价格虚高比例（30%)",
+    "价格虚高比例",
+    "好评率",
 )
+_PERCENT_HEADERS = {
+    "京东价毛利（30-50）",
+    "扣点复核",
+    "毛利率",
+    "好评率",
+    "折扣率",
+    "价格虚高比例",
+}
 
 _IMPORT_UPDATE_FIELD_LABELS = {
+    "company_name": "所属公司",
     "listed_at": "上架日期",
     "brand": "品牌",
     "image_reference": "图片",
@@ -116,18 +137,28 @@ _IMPORT_UPDATE_FIELD_LABELS = {
     "agreement_purchase_price": "协议价采购价",
     "profit": "利润",
     "jd_margin": "京东价毛利",
-    "deduction_review": "毛利复核",
-    "gross_margin": "众诚毛利",
+    "deduction_review": "扣点复核",
+    "gross_margin": "毛利率",
     "purchasing_agent": "采销员",
     "barcode_text": "69码",
+    "certification_3c_code": "3c编码",
     "product_specification": "产品规格",
     "selling_points": "卖点",
+    "packaging_list": "包装清单",
+    "warranty_period": "质保期",
     "restricted_regions": "限售区域",
     "jd_self_operated_price": "京东自营前台价",
     "reference_url": "参考链接",
     "storefront_type": "自营旗舰店/官方旗舰店",
     "discount_rate": "折扣率",
     "price_inflation_rate": "价格虚高比例",
+    "sales_volume": "销量",
+    "positive_rating": "好评率",
+    "tax_code": "税收编码",
+    "invoice_name": "开票名称",
+    "tax_category": "税收分类",
+    "shipping_courier": "发货快递",
+    "after_sales_policy": "售后政策",
     "remark": "备注",
 }
 
@@ -240,6 +271,7 @@ class ProductImportService:
         self, task_id: uuid.UUID, actor_id: uuid.UUID
     ) -> ProductImportConfirmResponse:
         staged_image_keys: list[str] = []
+        retired_image_keys: set[str] = set()
         completed_source: tuple[uuid.UUID, str] | None = None
         try:
             async with transaction_scope(self.session):
@@ -363,9 +395,14 @@ class ProductImportService:
                                 )
                                 created_count += 1
                             else:
+                                previous_image_reference = existing_product.image_reference
                                 self._update_product_from_row(
                                     existing_product, row, source_supplier_id, category, actor_id
                                 )
+                                if previous_image_reference != existing_product.image_reference:
+                                    previous_key = self._local_media_key(previous_image_reference)
+                                    if previous_key is not None:
+                                        retired_image_keys.add(previous_key)
                                 updated_count += 1
                         imported_count = created_count + updated_count
                         await self.session.flush()
@@ -403,6 +440,11 @@ class ProductImportService:
             raise
         if completed_source is not None:
             await self._delete_completed_source(*completed_source)
+        for key in retired_image_keys:
+            try:
+                await self.storage.delete(key)
+            except Exception:
+                pass
         return response
 
     def _validate_upload(self, filename: str, file_bytes: bytes) -> None:
@@ -433,7 +475,7 @@ class ProductImportService:
             raise AppError(
                 "PRODUCT_IMPORT_TEMPLATE_INVALID",
                 "Template headers must exactly match the approved "
-                "32-column Product Master template",
+                "43-column Product Master template",
                 422,
             )
         rows: list[ProductImportRow] = []
@@ -618,18 +660,31 @@ class ProductImportService:
         warnings: list[str] = []
         row.write_action = "CREATE"
         row.changed_fields = None
-        self._required_decimal(row, "*成本价", errors)
+        cost_price = self._required_decimal(row, "成本价", errors)
+        if cost_price is not None and cost_price <= 0:
+            errors.append("成本价必须大于0")
         if category_error is not None:
             errors.append(category_error)
         sku = self._optional(values["sku"])
         if sku is None:
             errors.append("SKU不能为空")
         for header in _DIRECT_DECIMAL_HEADERS:
-            if header == "*成本价":
+            if header == "成本价":
                 continue
             value = self._import_value(row, header)
-            if value and self._decimal_or_none(value) is None:
-                warnings.append(f"{header}无可用数值，正式字段暂不写入")
+            if value and self._decimal_or_none(
+                value, percentage=header in _PERCENT_HEADERS
+            ) is None:
+                errors.append(f"{header}必须是数字")
+        for header in ("好评率", "折扣率"):
+            rate_value = self._decimal_or_none(
+                self._import_value(row, header), percentage=True
+            )
+            if rate_value is not None and not Decimal("0") <= rate_value <= Decimal("1"):
+                errors.append(f"{header}必须在0%到100%之间，裸数字请填写0到1")
+        sales_value = self._optional(self._import_value(row, "销量"))
+        if sales_value is not None and self._integer_or_none(sales_value) is None:
+            errors.append("销量必须是大于等于0的整数")
         match = matches.get(row.supplier_match_id) if row.supplier_match_id is not None else None
         if not row.supplier_name_raw:
             errors.append("供应商不能为空")
@@ -696,7 +751,7 @@ class ProductImportService:
         category: Category | None,
     ) -> dict[str, object]:
         values = row.source_data
-        cost_price = self._decimal_or_none(self._import_value(row, "*成本价"))
+        cost_price = self._decimal_or_none(self._import_value(row, "成本价"))
         if cost_price is None:
             raise RuntimeError("A ready Product Import row is missing a cost price")
         sku = self._optional(values["sku"])
@@ -704,6 +759,7 @@ class ProductImportService:
             raise RuntimeError("A ready Product Import row is missing an SKU")
         image_reference = self._image_reference(row)
         return {
+            "company_name": self._optional(values["所属公司"]),
             "listed_at": self._optional_date(values["上架日期"]),
             "brand": self._optional(values["品牌"]),
             "image_reference": self._optional(image_reference),
@@ -730,26 +786,46 @@ class ProductImportService:
                 self._import_value(row, "协议价采购价")
             ),
             "profit": self._decimal_or_none(self._import_value(row, "利润")),
-            "jd_margin": self._decimal_or_none(self._import_value(row, "京东价毛利（30-50）")),
+            "jd_margin": self._decimal_or_none(
+                self._import_value(row, "京东价毛利（30-50）"), percentage=True
+            ),
             "purchasing_agent": self._optional(values["采销员"]),
             "source_supplier_id": source_supplier_id,
             "barcode_text": self._optional(values["69码"]),
-            "deduction_review": self._decimal_or_none(self._import_value(row, "毛利复核")),
+            "certification_3c_code": self._optional(values["3c编码"]),
+            "deduction_review": self._decimal_or_none(
+                self._import_value(row, "扣点复核"), percentage=True
+            ),
             "product_specification": self._optional(values["产品规格"]),
             "selling_points": self._optional(values["卖点"]),
-            "gross_margin": self._decimal_or_none(self._import_value(row, "众诚毛利")),
+            "packaging_list": self._optional(values["包装清单"]),
+            "warranty_period": self._optional(values["质保期"]),
+            "gross_margin": self._decimal_or_none(
+                self._import_value(row, "毛利率"), percentage=True
+            ),
             "remark": self._optional(values["备注"]),
-            "discount_rate": self._decimal_or_none(self._import_value(row, "折扣率")),
+            "discount_rate": self._decimal_or_none(
+                self._import_value(row, "折扣率"), percentage=True
+            ),
             "restricted_regions": self._optional(values["限售区域"]),
             "jd_self_operated_price": self._decimal_or_none(
                 self._import_value(row, "京东自营前台价")
             ),
             "reference_url": self._optional(values["参考链接"]),
             "storefront_type": self._optional(values["自营旗舰店/官方旗舰店"]),
+            "sales_volume": self._integer_or_none(self._import_value(row, "销量")),
+            "positive_rating": self._decimal_or_none(
+                self._import_value(row, "好评率"), percentage=True
+            ),
             "price_inflation_rate": self._decimal_or_none(
-                self._import_value(row, "价格虚高比例（30%)")
+                self._import_value(row, "价格虚高比例"), percentage=True
             ),
             "deduction_rate": None,
+            "tax_code": self._optional(values["税收编码"]),
+            "invoice_name": self._optional(values["开票名称"]),
+            "tax_category": self._optional(values["税收分类"]),
+            "shipping_courier": self._optional(values["发货快递"]),
+            "after_sales_policy": self._optional(values["售后政策"]),
         }
 
     async def _stage_confirmed_row_images(
@@ -864,6 +940,13 @@ class ProductImportService:
             return f"local-media/{row.image_storage_key}"
         image_value = row.source_data.get("图片") or ""
         return None if image_value.startswith("=") else ProductImportService._optional(image_value)
+
+    @staticmethod
+    def _local_media_key(image_reference: str | None) -> str | None:
+        prefix = "local-media/"
+        if image_reference and image_reference.startswith(prefix):
+            return image_reference[len(prefix) :]
+        return None
 
     @staticmethod
     def _assert_editable_task(task: ProductImportTask | None, actor_id: uuid.UUID) -> None:
@@ -996,13 +1079,28 @@ class ProductImportService:
         return value
 
     @staticmethod
-    def _decimal_or_none(value: str | None) -> Decimal | None:
+    def _decimal_or_none(value: str | None, *, percentage: bool = False) -> Decimal | None:
         if value is None or not value.strip() or value.startswith("="):
             return None
         try:
-            return Decimal(value.strip())
+            normalized = value.strip()
+            if percentage and normalized.endswith("%"):
+                return Decimal(normalized[:-1].strip()) / Decimal("100")
+            return Decimal(normalized)
         except (InvalidOperation, ValueError):
             return None
+
+    @staticmethod
+    def _integer_or_none(value: str | None) -> int | None:
+        if value is None or not value.strip() or value.startswith("="):
+            return None
+        try:
+            parsed = Decimal(value.strip())
+        except (InvalidOperation, ValueError):
+            return None
+        if parsed != parsed.to_integral_value() or parsed < 0:
+            return None
+        return int(parsed)
 
     def _required_decimal(
         self, row: ProductImportRow, header: str, errors: list[str]
