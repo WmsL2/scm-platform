@@ -175,6 +175,7 @@ class ProductImportTask(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     total_rows: Mapped[int] = mapped_column(nullable=False)
     valid_rows: Mapped[int] = mapped_column(nullable=False)
+    update_rows: Mapped[int] = mapped_column(nullable=False, default=0)
     invalid_rows: Mapped[int] = mapped_column(nullable=False)
     imported_rows: Mapped[int] = mapped_column(nullable=False, default=0)
     source_file_storage_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
@@ -258,6 +259,8 @@ class ProductImportRow(Base):
         nullable=True,
     )
     is_valid: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    write_action: Mapped[str] = mapped_column(String(16), nullable=False, default="CREATE")
+    changed_fields: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     is_imported: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     imported_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
     imported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

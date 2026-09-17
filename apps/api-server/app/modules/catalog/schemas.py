@@ -230,6 +230,8 @@ class ProductImportRowResponse(BaseModel):
     category_id: uuid.UUID | None
     supplier_match_id: uuid.UUID | None
     is_valid: bool
+    write_action: Literal["CREATE", "UPDATE"]
+    changed_fields: list[str] | None
     is_imported: bool
     error_message: str | None
     warning_message: str | None
@@ -241,6 +243,7 @@ class ProductImportPreviewResponse(BaseModel):
     status: str
     total_rows: int
     valid_rows: int
+    update_rows: int
     invalid_rows: int
     imported_rows: int
     rows: list[ProductImportRowResponse]
@@ -263,6 +266,9 @@ class ProductImportConfirmResponse(BaseModel):
     id: uuid.UUID
     status: str
     imported_count: int
+    created_count: int
+    updated_count: int
     imported_rows: int
     valid_rows: int
+    update_rows: int
     invalid_rows: int

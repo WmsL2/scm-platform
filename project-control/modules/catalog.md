@@ -2,7 +2,7 @@
 
 状态：IMPLEMENTED / PRODUCT_IMPORT_PARTIAL_CONFIRM / CATEGORY_MANAGEMENT_IMPLEMENTED
 Owner：feat/product-import-partial-confirm-template-download
-Last Updated：2026-09-16
+Last Updated：2026-09-17
 
 ## Database
 - [x] `20260909_0008` / `20260909_0009` 创建并对齐 `scm_category` 与 `scm_product`
@@ -11,6 +11,7 @@ Last Updated：2026-09-16
 - [x] `20260911_0018` 增加 `UNIQUE(source_supplier_id, sku)`；迁移会先拒绝历史重复键，禁止静默清理
 - [x] `20260911_0020` 以 `ACTIVE` / `DISABLED` 替代 Product 逻辑删除，增加停用审计、永久删除审计及 `product:disable` / `product:purge` 权限
 - [x] `20260911_0022` 支持 Product Import 通过行分批确认，记录导入行状态与已导入计数
+- [x] `20260917_0028` 支持同来源供应商 + SKU 命中正常 Product 的重新导入更新，记录暂存行新增/更新类型与变更字段
 - [x] 未创建独立 Supplier Product Quote 表或报价历史表
 
 ## Backend
@@ -24,11 +25,11 @@ Last Updated：2026-09-16
 - [x] 类目维表管理：三级路径列表、详情、新增、编辑、受 Product `RESTRICT` 引用保护的删除、轻量启用选择接口与 Excel 原子导入；真实身份为 `source_type + level3_external_id`，路径仅为属性
 - [x] 类目管理列表为服务端分页（默认每页 20）；商城导入使用公司 9 列中文模板，后端固定 `MALL_LEVEL3`，由批次 `deduction_rate_percent` 写入正式扣点，Excel 颜色不参与判断且不隐式更新既有类目
 - [x] 仅已停用 Product 可永久删除；删除前写入最小审计并依赖事务及外键保护，永久删除后同键可重新导入为新商品
-- [x] Product Import 对同来源供应商 + SKU 的停用商品报错并阻止 Confirm；不恢复、不覆盖，正常同键商品仍阻止导入
+- [x] Product Import 对同来源供应商 + SKU 的正常商品标记为更新候选并在 Confirm 原子覆盖固定模板字段；停用商品仍报错并阻止 Confirm
 
 ## Frontend
 - [x] 商品列表、详情（含本地图片预览）、按权限显示的基础资料编辑/成本价更新及导入预览/供应商解析页面；商品列表首列显示本地图片缩略图及无图/加载失败占位，供应商详情可跳转至其相关商品的筛选列表
-- [x] 导入预览显示已导入、通过、不通过行并支持筛选；商品页可下载批准的原始 32 列模板
+- [x] 导入预览显示已导入、已更新、通过、新增更新候选和不通过行，支持“更新”筛选并展示更新字段；商品页可下载批准的原始 32 列模板
 - [x] 商品列表支持正常/已停用状态筛选、停用/启用和 SKU/名称二次确认的永久删除；页面保留普通纵向滚动，左侧导航固定于视口左侧
 - [x] 统一 API 请求禁用浏览器缓存，商品导入 Confirm 后重新加载列表可立即读取最新商品数据
 - [x] 商品主数据增加“商品列表 / 操作记录”可切换页签；操作记录按商品展示图片、导入人、导入时间、最后更新人和最后更新时间，用户名从既有 `created_by` / `updated_by` 解析，未新增审计表
@@ -45,7 +46,7 @@ Last Updated：2026-09-16
 ## Known Issues
 - 商城三级品类维表已写入 `scm_category`。依据 ADR-0018，后续固定商品大表导入必须唯一匹配有效 `MALL_LEVEL3` 类目；工业品类目尚未成为本模板的匹配来源。
 - 历史 `category_id IS NULL` Product 的受控回填需在目标库重新发现候选记录后执行；当前配置开发库中没有 Product 候选记录，本次未更新历史商品。
-- 停用商品只能显式启用；同键导入始终阻止。永久删除成功后可重新导入同键商品。未来若要批量以 Excel 覆盖已有商品，仍需独立 ADR。
+- 停用商品只能显式启用；同键停用商品仍阻止导入。永久删除成功后可重新导入同键商品。正常同键商品按 ADR-0020 允许固定模板重新导入更新。
 
 ## Next Step
 维护真实模板中所需的有效 Supplier Master，并补齐空供应商；随后从 Product Import 页面重新预览并 Confirm。不得绕过供应商解析或新增独立报价库。
@@ -71,4 +72,4 @@ Last Updated：2026-09-16
 
 ## Current Gate
 
-`IMPLEMENTED / PRODUCT_IMPORT_PARTIAL_CONFIRM`：固定模板 Staging、有效商城三级类目绑定、Supplier Matching、供应商 + SKU 防重预览、权限和通过行原子 Confirm 已实现；导入批次保存每行是否已导入，失败行不入库并可在同一批次继续供应商解析。依据 ADR-0018，类目无匹配、停用或不唯一均阻止 Confirm，正式 Product 只写入受控 Category 的 ID 与路径。空或不合格供应商仍不得绕过导入校验。工业品类目匹配、覆盖式导入更新及独立成本价维护仍属后续范围。
+`IMPLEMENTED / PRODUCT_IMPORT_REIMPORT_UPDATE`：固定模板 Staging、有效商城三级类目绑定、Supplier Matching、供应商 + SKU 防重预览、正常同键重新导入更新和新增/更新原子 Confirm 已实现；暂存行保存新增/更新类型与变更字段，失败行不入库并可在同一批次继续供应商解析。依据 ADR-0018，类目无匹配、停用或不唯一均阻止 Confirm，正式 Product 只写入受控 Category 的 ID 与路径。空或不合格供应商仍不得绕过导入校验。工业品类目匹配及独立成本价维护仍属后续范围。

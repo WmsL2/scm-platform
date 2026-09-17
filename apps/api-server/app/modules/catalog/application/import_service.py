@@ -6,6 +6,7 @@ import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
+from typing import Literal, cast
 
 from openpyxl import load_workbook
 from sqlalchemy.exc import IntegrityError
@@ -99,6 +100,37 @@ _DIRECT_DECIMAL_HEADERS = (
     "价格虚高比例（30%)",
 )
 
+_IMPORT_UPDATE_FIELD_LABELS = {
+    "listed_at": "上架日期",
+    "brand": "品牌",
+    "image_reference": "图片",
+    "model": "型号",
+    "product_name": "商品名称",
+    "category_id": "类目",
+    "item_number": "货号",
+    "jd_same_product_url": "链接",
+    "cost_price": "成本价",
+    "market_price": "市场价",
+    "jd_price": "京东价",
+    "agreement_price": "协议价",
+    "agreement_purchase_price": "协议价采购价",
+    "profit": "利润",
+    "jd_margin": "京东价毛利",
+    "deduction_review": "毛利复核",
+    "gross_margin": "众诚毛利",
+    "purchasing_agent": "采销员",
+    "barcode_text": "69码",
+    "product_specification": "产品规格",
+    "selling_points": "卖点",
+    "restricted_regions": "限售区域",
+    "jd_self_operated_price": "京东自营前台价",
+    "reference_url": "参考链接",
+    "storefront_type": "自营旗舰店/官方旗舰店",
+    "discount_rate": "折扣率",
+    "price_inflation_rate": "价格虚高比例",
+    "remark": "备注",
+}
+
 
 class ProductImportService:
     def __init__(self, session: AsyncSession, storage: ObjectStorage | None = None) -> None:
@@ -122,6 +154,7 @@ class ProductImportService:
             status="VALIDATED",
             total_rows=len(rows),
             valid_rows=0,
+            update_rows=0,
             invalid_rows=0,
             imported_rows=0,
             created_by=actor_id,
@@ -214,8 +247,8 @@ class ProductImportService:
                 self._assert_editable_task(task, actor_id)
                 assert task is not None
                 await self._refresh_validation(task)
-                rows_to_import = [row for row in task.rows if row.is_valid and not row.is_imported]
-                if not rows_to_import:
+                rows_to_write = [row for row in task.rows if row.is_valid and not row.is_imported]
+                if not rows_to_write:
                     raise AppError(
                         "PRODUCT_IMPORT_NO_VALID_ROWS",
                         "There are no validated rows available to import",
@@ -225,7 +258,7 @@ class ProductImportService:
                 try:
                     async with self.session.begin_nested():
                         row_supplier_sku_keys: dict[int, tuple[uuid.UUID, str]] = {}
-                        for row in rows_to_import:
+                        for row in rows_to_write:
                             match = (
                                 matches.get(row.supplier_match_id)
                                 if row.supplier_match_id
@@ -245,7 +278,7 @@ class ProductImportService:
                         existing_products = await self.repository.products_by_supplier_sku(
                             set(row_supplier_sku_keys.values()), for_update=True
                         )
-                        category_ids = {row.category_id for row in rows_to_import}
+                        category_ids = {row.category_id for row in rows_to_write}
                         if None in category_ids:
                             raise RuntimeError(
                                 "A ready Product Import row is missing a resolved category"
@@ -257,7 +290,7 @@ class ProductImportService:
                             resolved_category_ids, for_update=True
                         )
                         resolved_rows: list[tuple[ProductImportRow, uuid.UUID, Category]] = []
-                        for row in rows_to_import:
+                        for row in rows_to_write:
                             match = (
                                 matches.get(row.supplier_match_id)
                                 if row.supplier_match_id
@@ -279,19 +312,27 @@ class ProductImportService:
                                 )
                             supplier_sku_key = row_supplier_sku_keys[row.source_row_number]
                             existing_product = existing_products.get(supplier_sku_key)
-                            if existing_product is not None:
+                            if (
+                                existing_product is not None
+                                and existing_product.status == ProductStatus.DISABLED
+                            ):
                                 raise AppError(
-                                    "PRODUCT_IMPORT_DISABLED_PRODUCT"
-                                    if existing_product.status == ProductStatus.DISABLED
-                                    else "PRODUCT_IMPORT_DUPLICATE_PRODUCT",
+                                    "PRODUCT_IMPORT_DISABLED_PRODUCT",
                                     "A disabled product with the same source supplier and SKU "
-                                    "must be "
-                                    "enabled or permanently deleted before importing"
-                                    if existing_product.status == ProductStatus.DISABLED
-                                    else (
-                                        "A product with the same source supplier "
-                                        "and SKU already exists"
-                                    ),
+                                    "must be enabled or permanently deleted before importing",
+                                    409,
+                                )
+                            if existing_product is None and row.write_action == "UPDATE":
+                                raise AppError(
+                                    "PRODUCT_IMPORT_REFERENCE_CHANGED",
+                                    "A product changed after preview; preview the batch again",
+                                    409,
+                                )
+                            if existing_product is not None and row.write_action != "UPDATE":
+                                raise AppError(
+                                    "PRODUCT_IMPORT_DUPLICATE_PRODUCT",
+                                    "A product with the same source supplier and SKU "
+                                    "already exists",
                                     409,
                                 )
                             if row.category_id is None:
@@ -307,13 +348,26 @@ class ProductImportService:
                                 )
                             resolved_rows.append((row, match.matched_supplier_id, category))
                         staged_image_keys = await self._stage_confirmed_row_images(
-                            task, rows_to_import
+                            task, rows_to_write
                         )
+                        created_count = 0
+                        updated_count = 0
                         for row, source_supplier_id, category in resolved_rows:
-                            self.session.add(
-                                self._product_from_row(row, source_supplier_id, category, actor_id)
-                            )
-                        imported_count = len(resolved_rows)
+                            supplier_sku_key = row_supplier_sku_keys[row.source_row_number]
+                            existing_product = existing_products.get(supplier_sku_key)
+                            if existing_product is None:
+                                self.session.add(
+                                    self._product_from_row(
+                                        row, source_supplier_id, category, actor_id
+                                    )
+                                )
+                                created_count += 1
+                            else:
+                                self._update_product_from_row(
+                                    existing_product, row, source_supplier_id, category, actor_id
+                                )
+                                updated_count += 1
+                        imported_count = created_count + updated_count
                         await self.session.flush()
                 except IntegrityError as exc:
                     if "uq_scm_product_source_supplier_sku" in str(exc.orig).lower():
@@ -325,7 +379,7 @@ class ProductImportService:
                     raise
                 task.confirmed_by = actor_id
                 task.confirmed_at = datetime.now()
-                for row in rows_to_import:
+                for row in rows_to_write:
                     row.is_imported = True
                     row.imported_by = actor_id
                     row.imported_at = task.confirmed_at
@@ -336,8 +390,11 @@ class ProductImportService:
                     id=task.id,
                     status=task.status,
                     imported_count=imported_count,
+                    created_count=created_count,
+                    updated_count=updated_count,
                     imported_rows=task.imported_rows,
                     valid_rows=task.valid_rows,
+                    update_rows=task.update_rows,
                     invalid_rows=task.invalid_rows,
                 )
         except Exception:
@@ -472,6 +529,7 @@ class ProductImportService:
             set(row_supplier_sku_keys.values())
         )
         valid_rows = 0
+        update_rows = 0
         imported_rows = 0
         unresolved_match = False
         first_excel_row_for_key: dict[tuple[uuid.UUID, str], int] = {}
@@ -495,7 +553,11 @@ class ProductImportService:
             row.error_message = "；".join(errors) or None
             row.warning_message = "；".join(warnings) or None
             row.is_valid = not errors
-            valid_rows += int(row.is_valid)
+            if row.is_valid:
+                if row.write_action == "UPDATE":
+                    update_rows += 1
+                else:
+                    valid_rows += 1
             match = (
                 matches.get(row.supplier_match_id) if row.supplier_match_id is not None else None
             )
@@ -504,13 +566,14 @@ class ProductImportService:
             if supplier_sku_key is not None and first_excel_row is None:
                 first_excel_row_for_key[supplier_sku_key] = row.source_row_number
         task.valid_rows = valid_rows
+        task.update_rows = update_rows
         task.imported_rows = imported_rows
-        task.invalid_rows = task.total_rows - imported_rows - valid_rows
+        task.invalid_rows = task.total_rows - imported_rows - valid_rows - update_rows
         if imported_rows == task.total_rows:
             task.status = "CONFIRMED"
         elif imported_rows:
             task.status = "PARTIALLY_CONFIRMED"
-        elif valid_rows == task.total_rows:
+        elif valid_rows + update_rows == task.total_rows:
             task.status = "READY_TO_CONFIRM"
         elif unresolved_match:
             task.status = "NEEDS_RESOLUTION"
@@ -553,6 +616,8 @@ class ProductImportService:
         values = row.source_data
         errors: list[str] = []
         warnings: list[str] = []
+        row.write_action = "CREATE"
+        row.changed_fields = None
         self._required_decimal(row, "*成本价", errors)
         if category_error is not None:
             errors.append(category_error)
@@ -575,10 +640,13 @@ class ProductImportService:
             existing_product = existing_products.get(supplier_sku_key)
             if existing_product is not None and existing_product.status == ProductStatus.DISABLED:
                 errors.append("该来源供应商与SKU组合的商品已停用，请启用或永久删除后再导入")
-            elif existing_product is not None:
-                errors.append("该来源供应商与SKU组合已存在")
             elif first_excel_row is not None:
                 errors.append(f"与Excel第{first_excel_row}行的来源供应商与SKU重复")
+            elif existing_product is not None:
+                row.write_action = "UPDATE"
+                row.changed_fields = self._changed_import_fields(
+                    existing_product, row, match.matched_supplier_id
+                )
         if values["上架日期"] and self._optional_date(values["上架日期"]) is None:
             warnings.append("上架日期无法确定年份，正式商品将暂不写入上架日期")
         return errors, warnings
@@ -590,6 +658,43 @@ class ProductImportService:
         category: Category,
         actor_id: uuid.UUID,
     ) -> Product:
+        return Product(
+            **self._product_values_from_row(row, source_supplier_id, category),
+            created_by=actor_id,
+            updated_by=actor_id,
+        )
+
+    def _update_product_from_row(
+        self,
+        product: Product,
+        row: ProductImportRow,
+        source_supplier_id: uuid.UUID,
+        category: Category,
+        actor_id: uuid.UUID,
+    ) -> None:
+        product_values = self._product_values_from_row(row, source_supplier_id, category)
+        for field, value in product_values.items():
+            if field not in {"source_supplier_id", "sku"}:
+                setattr(product, field, value)
+        product.updated_by = actor_id
+        product.updated_at = datetime.now()
+
+    def _changed_import_fields(
+        self, product: Product, row: ProductImportRow, source_supplier_id: uuid.UUID
+    ) -> list[str]:
+        planned_values = self._product_values_from_row(row, source_supplier_id, None)
+        return [
+            label
+            for field, label in _IMPORT_UPDATE_FIELD_LABELS.items()
+            if getattr(product, field) != planned_values[field]
+        ]
+
+    def _product_values_from_row(
+        self,
+        row: ProductImportRow,
+        source_supplier_id: uuid.UUID,
+        category: Category | None,
+    ) -> dict[str, object]:
         values = row.source_data
         cost_price = self._decimal_or_none(self._import_value(row, "*成本价"))
         if cost_price is None:
@@ -598,50 +703,54 @@ class ProductImportService:
         if sku is None:
             raise RuntimeError("A ready Product Import row is missing an SKU")
         image_reference = self._image_reference(row)
-        return Product(
-            listed_at=self._optional_date(values["上架日期"]),
-            brand=self._optional(values["品牌"]),
-            image_reference=self._optional(image_reference),
-            model=self._optional(values["型号"]),
-            sku=sku,
-            product_name=self._optional(values["商品名称"]),
-            category_id=category.id,
-            category_level1_name=category.level1_name,
-            category_level2_name=category.level2_name,
-            category_level3_name=category.level3_name,
-            item_number=self._optional(values["货号"]),
-            jd_same_product_url=self._optional(values["链接"]),
-            cost_price=cost_price,
-            market_price=self._decimal_or_none(self._import_value(row, "市场价")),
-            jd_price=self._decimal_or_none(self._import_value(row, "京东价")),
-            agreement_price=self._decimal_or_none(self._import_value(row, "协议价")),
-            agreement_purchase_price=self._decimal_or_none(
+        return {
+            "listed_at": self._optional_date(values["上架日期"]),
+            "brand": self._optional(values["品牌"]),
+            "image_reference": self._optional(image_reference),
+            "model": self._optional(values["型号"]),
+            "sku": sku,
+            "product_name": self._optional(values["商品名称"]),
+            "category_id": category.id if category is not None else row.category_id,
+            "category_level1_name": (
+                category.level1_name if category is not None else self._optional(values["一级类目"])
+            ),
+            "category_level2_name": (
+                category.level2_name if category is not None else self._optional(values["二级类目"])
+            ),
+            "category_level3_name": (
+                category.level3_name if category is not None else self._optional(values["三级类目"])
+            ),
+            "item_number": self._optional(values["货号"]),
+            "jd_same_product_url": self._optional(values["链接"]),
+            "cost_price": cost_price,
+            "market_price": self._decimal_or_none(self._import_value(row, "市场价")),
+            "jd_price": self._decimal_or_none(self._import_value(row, "京东价")),
+            "agreement_price": self._decimal_or_none(self._import_value(row, "协议价")),
+            "agreement_purchase_price": self._decimal_or_none(
                 self._import_value(row, "协议价采购价")
             ),
-            profit=self._decimal_or_none(self._import_value(row, "利润")),
-            jd_margin=self._decimal_or_none(self._import_value(row, "京东价毛利（30-50）")),
-            purchasing_agent=self._optional(values["采销员"]),
-            source_supplier_id=source_supplier_id,
-            barcode_text=self._optional(values["69码"]),
-            deduction_review=self._decimal_or_none(self._import_value(row, "毛利复核")),
-            product_specification=self._optional(values["产品规格"]),
-            selling_points=self._optional(values["卖点"]),
-            gross_margin=self._decimal_or_none(self._import_value(row, "众诚毛利")),
-            remark=self._optional(values["备注"]),
-            discount_rate=self._decimal_or_none(self._import_value(row, "折扣率")),
-            restricted_regions=self._optional(values["限售区域"]),
-            jd_self_operated_price=self._decimal_or_none(
+            "profit": self._decimal_or_none(self._import_value(row, "利润")),
+            "jd_margin": self._decimal_or_none(self._import_value(row, "京东价毛利（30-50）")),
+            "purchasing_agent": self._optional(values["采销员"]),
+            "source_supplier_id": source_supplier_id,
+            "barcode_text": self._optional(values["69码"]),
+            "deduction_review": self._decimal_or_none(self._import_value(row, "毛利复核")),
+            "product_specification": self._optional(values["产品规格"]),
+            "selling_points": self._optional(values["卖点"]),
+            "gross_margin": self._decimal_or_none(self._import_value(row, "众诚毛利")),
+            "remark": self._optional(values["备注"]),
+            "discount_rate": self._decimal_or_none(self._import_value(row, "折扣率")),
+            "restricted_regions": self._optional(values["限售区域"]),
+            "jd_self_operated_price": self._decimal_or_none(
                 self._import_value(row, "京东自营前台价")
             ),
-            reference_url=self._optional(values["参考链接"]),
-            storefront_type=self._optional(values["自营旗舰店/官方旗舰店"]),
-            price_inflation_rate=self._decimal_or_none(
+            "reference_url": self._optional(values["参考链接"]),
+            "storefront_type": self._optional(values["自营旗舰店/官方旗舰店"]),
+            "price_inflation_rate": self._decimal_or_none(
                 self._import_value(row, "价格虚高比例（30%)")
             ),
-            deduction_rate=None,
-            created_by=actor_id,
-            updated_by=actor_id,
-        )
+            "deduction_rate": None,
+        }
 
     async def _stage_confirmed_row_images(
         self, task: ProductImportTask, rows: list[ProductImportRow]
@@ -803,6 +912,7 @@ class ProductImportService:
             status=task.status,
             total_rows=task.total_rows,
             valid_rows=task.valid_rows,
+            update_rows=task.update_rows,
             invalid_rows=task.invalid_rows,
             imported_rows=task.imported_rows,
             rows=[
@@ -822,6 +932,8 @@ class ProductImportService:
                     category_id=row.category_id,
                     supplier_match_id=row.supplier_match_id,
                     is_valid=row.is_valid,
+                    write_action=cast(Literal["CREATE", "UPDATE"], row.write_action),
+                    changed_fields=row.changed_fields,
                     is_imported=row.is_imported,
                     error_message=row.error_message,
                     warning_message=row.warning_message,

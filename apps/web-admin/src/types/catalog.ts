@@ -110,6 +110,8 @@ export interface ProductImportRow {
   category_id: string | null
   supplier_match_id: string | null
   is_valid: boolean
+  write_action: "CREATE" | "UPDATE"
+  changed_fields: string[] | null
   is_imported: boolean
   error_message: string | null
   warning_message: string | null
@@ -121,6 +123,7 @@ export interface ProductImportPreview {
   status: "VALIDATED" | "NEEDS_RESOLUTION" | "READY_TO_CONFIRM" | "PARTIALLY_CONFIRMED" | "CONFIRMED"
   total_rows: number
   valid_rows: number
+  update_rows: number
   invalid_rows: number
   imported_rows: number
   rows: ProductImportRow[]
@@ -165,7 +168,10 @@ export interface ProductImportConfirmResult {
   id: string
   status: "PARTIALLY_CONFIRMED" | "CONFIRMED"
   imported_count: number
+  created_count: number
+  updated_count: number
   imported_rows: number
   valid_rows: number
+  update_rows: number
   invalid_rows: number
 }
