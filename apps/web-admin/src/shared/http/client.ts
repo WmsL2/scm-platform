@@ -33,6 +33,15 @@ export interface RequestOptions {
   timeoutMs?: number
 }
 
+function createRequestId(): string {
+  const requestId = globalThis.crypto?.randomUUID?.()
+  if (requestId) return requestId
+
+  // `crypto.randomUUID()` is unavailable in some HTTP LAN browser contexts.
+  // This ID is for request tracing, not a security credential.
+  return `request-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+}
+
 export class HttpClient {
   constructor(private readonly options: HttpClientOptions = {}) {}
 
@@ -63,7 +72,7 @@ export class HttpClient {
           Accept: "application/json",
           ...(body === undefined || isFormData ? {} : { "Content-Type": "application/json" }),
           ...(authorization ? { Authorization: authorization } : {}),
-          "X-Request-ID": requestOptions.requestId ?? crypto.randomUUID(),
+          "X-Request-ID": requestOptions.requestId ?? createRequestId(),
           ...requestOptions.headers,
         },
         body: body === undefined ? undefined : isFormData ? body : JSON.stringify(body),
@@ -130,7 +139,7 @@ export class HttpClient {
         headers: {
           Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
           ...(authorization ? { Authorization: authorization } : {}),
-          "X-Request-ID": requestOptions.requestId ?? crypto.randomUUID(),
+          "X-Request-ID": requestOptions.requestId ?? createRequestId(),
           ...requestOptions.headers,
         },
         signal: controller.signal,

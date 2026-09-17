@@ -66,6 +66,22 @@ describe("HttpClient", () => {
     expect(requestInit.headers).not.toHaveProperty("Authorization")
   })
 
+  it("falls back to a trace ID when crypto.randomUUID is unavailable over LAN HTTP", async () => {
+    vi.stubGlobal("crypto", undefined)
+    const fetchMock = vi.fn().mockResolvedValue(response(200, {
+      code: "OK",
+      message: "success",
+      data: { status: "ok" },
+    }))
+    vi.stubGlobal("fetch", fetchMock)
+    const client = new HttpClient({ baseUrl: "http://lan-server.test" })
+
+    await client.post("/api/v1/auth/login", {}, { authenticated: false })
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(requestInit.headers).toHaveProperty("X-Request-ID", expect.stringMatching(/^request-/))
+  })
+
   it("notifies the application and throws a typed error on 401", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(401, {
       code: "AUTH_UNAUTHORIZED",
