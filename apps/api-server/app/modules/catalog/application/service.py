@@ -1,5 +1,7 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
+from pathlib import Path
 from typing import List
 
 from sqlalchemy.exc import IntegrityError
@@ -7,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError, PageParams, PageResult
 from app.core.transaction import transaction_scope
+from app.infrastructure.adapters import ObjectStorage, get_object_storage
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.domain.pricing import PricingCalculationError, calculate_product_pricing
 from app.modules.catalog.infrastructure.models import Category, Product, ProductPurgeAudit
@@ -28,8 +31,9 @@ from app.modules.system.repository import UserRepository
 
 
 class ProductService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, storage: ObjectStorage | None = None) -> None:
         self.session = session
+        self.storage = storage or get_object_storage()
         self.repository = ProductRepository(session)
         self.supplier_repository = SupplierRepository(session)
         self.user_repository = UserRepository(session)
@@ -39,15 +43,47 @@ class ProductService:
         page_params: PageParams,
         *,
         keyword: str | None,
-        category_id: uuid.UUID | None,
+        company_name: str | None,
+        purchasing_agent: str | None,
+        brand: str | None,
+        supplier_name: str | None,
         source_supplier_id: uuid.UUID | None,
+        category_level1_name: str | None,
+        category_level2_name: str | None,
+        category_id: uuid.UUID | None,
+        cost_price_min: Decimal | None,
+        cost_price_max: Decimal | None,
+        agreement_price_min: Decimal | None,
+        agreement_price_max: Decimal | None,
+        discount_rate_min: Decimal | None,
+        discount_rate_max: Decimal | None,
+        sales_volume_min: int | None,
+        sales_volume_max: int | None,
         status: ProductStatus,
     ) -> PageResult[ProductListItem]:
+        self._validate_range("cost_price", cost_price_min, cost_price_max)
+        self._validate_range("agreement_price", agreement_price_min, agreement_price_max)
+        self._validate_range("discount_rate", discount_rate_min, discount_rate_max)
+        self._validate_range("sales_volume", sales_volume_min, sales_volume_max)
         products, total = await self.repository.list(
             page_params,
             keyword=keyword.strip() if keyword else None,
-            category_id=category_id,
+            company_name=company_name.strip() if company_name else None,
+            purchasing_agent=purchasing_agent.strip() if purchasing_agent else None,
+            brand=brand.strip() if brand else None,
+            supplier_name=supplier_name.strip() if supplier_name else None,
             source_supplier_id=source_supplier_id,
+            category_level1_name=category_level1_name,
+            category_level2_name=category_level2_name,
+            category_id=category_id,
+            cost_price_min=cost_price_min,
+            cost_price_max=cost_price_max,
+            agreement_price_min=agreement_price_min,
+            agreement_price_max=agreement_price_max,
+            discount_rate_min=discount_rate_min,
+            discount_rate_max=discount_rate_max,
+            sales_volume_min=sales_volume_min,
+            sales_volume_max=sales_volume_max,
             status=status,
         )
         usernames = await self.user_repository.usernames_by_ids(
@@ -91,32 +127,24 @@ class ProductService:
                 raise AppError("PRODUCT_NOT_FOUND", "Product not found", 404)
 
             update_values = payload.model_dump(exclude_unset=True)
-            source_supplier_id = update_values.get("source_supplier_id", product.source_supplier_id)
-            if source_supplier_id is None:
-                raise AppError(
-                    "PRODUCT_SOURCE_SUPPLIER_REQUIRED", "Source supplier is required", 422
-                )
-            if source_supplier_id != product.source_supplier_id:
-                supplier = await self.supplier_repository.active_by_id(source_supplier_id)
-                if supplier is None or not self._source_supplier_is_eligible(supplier):
+            if "cost_price" in update_values and update_values["cost_price"] is None:
+                raise AppError("PRODUCT_COST_PRICE_REQUIRED", "Cost price is required", 422)
+            if "category_id" in update_values:
+                category_id = update_values.pop("category_id")
+                if category_id is None:
+                    raise AppError("PRODUCT_CATEGORY_REQUIRED", "Product category is required", 422)
+                category = await self.repository.active_category_by_id(category_id)
+                if category is None or category.source_type != "MALL_LEVEL3":
                     raise AppError(
-                        "PRODUCT_SOURCE_SUPPLIER_INELIGIBLE",
-                        "Only archived, normal and non-deleted suppliers may be selected",
+                        "PRODUCT_CATEGORY_INELIGIBLE",
+                        "Only an active mall level-3 category may be selected",
                         409,
                     )
-
-            sku = update_values.get("sku", product.sku)
-            if sku is None:
-                raise AppError("PRODUCT_SKU_REQUIRED", "SKU is required", 422)
-            duplicate = await self.repository.other_product_with_supplier_sku(
-                product_id=product.id, supplier_id=source_supplier_id, sku=sku
-            )
-            if duplicate is not None:
-                raise AppError(
-                    "PRODUCT_SUPPLIER_SKU_EXISTS",
-                    "A product with this source supplier and SKU already exists",
-                    409,
-                )
+                product.category_id = category.id
+                product.category_level1_name = category.level1_name
+                product.category_level2_name = category.level2_name
+                product.category_level3_name = category.level3_name
+                product.deduction_rate = category.deduction_rate
             for field, value in update_values.items():
                 setattr(product, field, value)
             product.updated_by = actor_id
@@ -169,6 +197,73 @@ class ProductService:
             product.updated_by = actor_id
             await self.session.flush()
             return await self._detail(product, category=category)
+
+    async def update_image(
+        self,
+        product_id: uuid.UUID,
+        filename: str,
+        content_type: str | None,
+        content: bytes,
+        actor_id: uuid.UUID,
+    ) -> ProductDetailResponse:
+        allowed_types = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+            "image/gif": ".gif",
+        }
+        suffix = allowed_types.get(content_type or "")
+        allowed_extensions = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+        if suffix is None or Path(filename).suffix.lower() not in allowed_extensions:
+            raise AppError(
+                "PRODUCT_IMAGE_TYPE_INVALID",
+                "Only JPG, PNG, WEBP or GIF is supported",
+                422,
+            )
+        if not content:
+            raise AppError("PRODUCT_IMAGE_EMPTY", "The image file is empty", 422)
+        if len(content) > 10 * 1024 * 1024:
+            raise AppError("PRODUCT_IMAGE_TOO_LARGE", "The image file exceeds 10 MB", 422)
+        new_key = await self.storage.save(f"product-images/manual/{product_id}{suffix}", content)
+        old_key: str | None = None
+        try:
+            async with transaction_scope(self.session):
+                product = await self.repository.by_id_for_update(product_id)
+                if product is None:
+                    raise AppError("PRODUCT_NOT_FOUND", "Product not found", 404)
+                old_key = self._local_media_key(product.image_reference)
+                product.image_reference = f"local-media/{new_key}"
+                product.updated_by = actor_id
+                await self.session.flush()
+                response = await self._detail(product)
+        except Exception:
+            await self.storage.delete(new_key)
+            raise
+        if old_key is not None and old_key != new_key:
+            try:
+                await self.storage.delete(old_key)
+            except Exception:
+                pass
+        return response
+
+    async def clear_image(
+        self, product_id: uuid.UUID, actor_id: uuid.UUID
+    ) -> ProductDetailResponse:
+        async with transaction_scope(self.session):
+            product = await self.repository.by_id_for_update(product_id)
+            if product is None:
+                raise AppError("PRODUCT_NOT_FOUND", "Product not found", 404)
+            old_key = self._local_media_key(product.image_reference)
+            product.image_reference = None
+            product.updated_by = actor_id
+            await self.session.flush()
+            response = await self._detail(product)
+        if old_key is not None:
+            try:
+                await self.storage.delete(old_key)
+            except Exception:
+                pass
+        return response
 
     async def disable(
         self, product_id: uuid.UUID, actor_id: uuid.UUID
@@ -245,6 +340,7 @@ class ProductService:
         supplier = await self.supplier_repository.active_by_id(product.source_supplier_id)
         return ProductListItem(
             id=product.id,
+            company_name=product.company_name,
             listed_at=product.listed_at,
             brand=product.brand,
             image_reference=product.image_reference,
@@ -252,6 +348,7 @@ class ProductService:
             sku=product.sku,
             product_name=product.product_name,
             item_number=product.item_number,
+            jd_same_product_url=product.jd_same_product_url,
             category_id=product.category_id,
             category_path=self._category_path(product, category),
             source_supplier_id=product.source_supplier_id,
@@ -259,6 +356,33 @@ class ProductService:
             cost_price=product.cost_price,
             agreement_price=product.agreement_price,
             jd_price=product.jd_price,
+            market_price=product.market_price,
+            agreement_purchase_price=product.agreement_purchase_price,
+            profit=product.profit,
+            jd_margin=product.jd_margin,
+            deduction_review=product.deduction_review,
+            gross_margin=product.gross_margin,
+            purchasing_agent=product.purchasing_agent,
+            barcode_text=product.barcode_text,
+            certification_3c_code=product.certification_3c_code,
+            product_specification=product.product_specification,
+            selling_points=product.selling_points,
+            packaging_list=product.packaging_list,
+            warranty_period=product.warranty_period,
+            restricted_regions=product.restricted_regions,
+            jd_self_operated_price=product.jd_self_operated_price,
+            storefront_type=product.storefront_type,
+            reference_url=product.reference_url,
+            sales_volume=product.sales_volume,
+            positive_rating=product.positive_rating,
+            discount_rate=product.discount_rate,
+            price_inflation_rate=product.price_inflation_rate,
+            tax_code=product.tax_code,
+            invoice_name=product.invoice_name,
+            tax_category=product.tax_category,
+            shipping_courier=product.shipping_courier,
+            after_sales_policy=product.after_sales_policy,
+            remark=product.remark,
             status=product.status,
             created_by=product.created_by,
             created_by_username=usernames.get(product.created_by)
@@ -279,6 +403,7 @@ class ProductService:
         supplier = await self.supplier_repository.active_by_id(product.source_supplier_id)
         return ProductDetailResponse(
             id=product.id,
+            company_name=product.company_name,
             listed_at=product.listed_at,
             brand=product.brand,
             image_reference=product.image_reference,
@@ -302,9 +427,12 @@ class ProductService:
             source_supplier_id=product.source_supplier_id,
             source_supplier_name=supplier.supplier_name if supplier else None,
             barcode_text=product.barcode_text,
+            certification_3c_code=product.certification_3c_code,
             deduction_review=product.deduction_review,
             product_specification=product.product_specification,
             selling_points=product.selling_points,
+            packaging_list=product.packaging_list,
+            warranty_period=product.warranty_period,
             gross_margin=product.gross_margin,
             remark=product.remark,
             discount_rate=product.discount_rate,
@@ -312,8 +440,16 @@ class ProductService:
             jd_self_operated_price=product.jd_self_operated_price,
             reference_url=product.reference_url,
             storefront_type=product.storefront_type,
+            sales_volume=product.sales_volume,
+            positive_rating=product.positive_rating,
             price_inflation_rate=product.price_inflation_rate,
             deduction_rate=product.deduction_rate,
+            tax_code=product.tax_code,
+            invoice_name=product.invoice_name,
+            tax_category=product.tax_category,
+            shipping_courier=product.shipping_courier,
+            after_sales_policy=product.after_sales_policy,
+            status=product.status,
             created_at=product.created_at,
             updated_at=product.updated_at,
         )
@@ -345,3 +481,21 @@ class ProductService:
             )
             if value
         )
+
+    @staticmethod
+    def _validate_range(
+        name: str, minimum: Decimal | int | None, maximum: Decimal | int | None
+    ) -> None:
+        if minimum is not None and maximum is not None and minimum > maximum:
+            raise AppError(
+                "PRODUCT_FILTER_RANGE_INVALID",
+                f"{name} minimum must be less than or equal to maximum",
+                422,
+            )
+
+    @staticmethod
+    def _local_media_key(image_reference: str | None) -> str | None:
+        prefix = "local-media/"
+        if image_reference and image_reference.startswith(prefix):
+            return image_reference[len(prefix) :]
+        return None

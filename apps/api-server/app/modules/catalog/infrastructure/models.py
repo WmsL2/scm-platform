@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     Date,
@@ -87,9 +88,22 @@ class Product(Base):
         Index("ix_scm_product_barcode_text", "barcode_text"),
         Index("ix_scm_product_updated_at", "updated_at"),
         Index("ix_scm_product_status", "status"),
+        Index("ix_scm_product_cost_price", "cost_price"),
+        Index("ix_scm_product_agreement_price", "agreement_price"),
+        Index("ix_scm_product_discount_rate", "discount_rate"),
+        Index("ix_scm_product_sales_volume", "sales_volume"),
+        CheckConstraint(
+            "sales_volume IS NULL OR sales_volume >= 0",
+            name="ck_scm_product_sales_volume_nonnegative",
+        ),
+        CheckConstraint(
+            "positive_rating IS NULL OR (positive_rating >= 0 AND positive_rating <= 1)",
+            name="ck_scm_product_positive_rating_range",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
+    company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     listed_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     brand: Mapped[str | None] = mapped_column(String(128), nullable=True)
     image_reference: Mapped[str | None] = mapped_column(String(2048), nullable=True)
@@ -116,9 +130,12 @@ class Product(Base):
         UUIDChar36(), ForeignKey("scm_supplier.id", ondelete="RESTRICT"), nullable=False
     )
     barcode_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    certification_3c_code: Mapped[str | None] = mapped_column(String(255), nullable=True)
     deduction_review: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
     product_specification: Mapped[str | None] = mapped_column(Text, nullable=True)
     selling_points: Mapped[str | None] = mapped_column(Text, nullable=True)
+    packaging_list: Mapped[str | None] = mapped_column(Text, nullable=True)
+    warranty_period: Mapped[str | None] = mapped_column(String(255), nullable=True)
     gross_margin: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
     remark: Mapped[str | None] = mapped_column(Text, nullable=True)
     discount_rate: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
@@ -126,8 +143,15 @@ class Product(Base):
     jd_self_operated_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
     reference_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     storefront_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sales_volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    positive_rating: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
     price_inflation_rate: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
     deduction_rate: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
+    tax_code: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    invoice_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    tax_category: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    shipping_courier: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    after_sales_policy: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[ProductStatus] = mapped_column(
         String(16), nullable=False, server_default=ProductStatus.ACTIVE.value
     )

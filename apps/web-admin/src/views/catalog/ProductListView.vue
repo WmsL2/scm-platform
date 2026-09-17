@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { Delete, Download, EditPen, Refresh, Search, Upload } from "@element-plus/icons-vue"
+import { Delete, Download, EditPen, Refresh, Search, Setting, Upload } from "@element-plus/icons-vue"
 import { computed, onMounted, reactive, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { useRoute, useRouter } from "vue-router"
 
 import { productApi } from "../../api/catalog"
+import { categoryApi } from "../../api/category"
 import { HttpError } from "../../shared/http"
 import { useAuthStore } from "../../stores/auth"
 import type {
@@ -12,6 +13,7 @@ import type {
   ProductImportSupplierCandidate,
   ProductListItem,
 } from "../../types/catalog"
+import type { Category } from "../../types/category"
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -21,11 +23,49 @@ const products = ref<ProductListItem[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = 20
+const advancedVisible = ref(false)
+const categories = ref<Category[]>([])
+const categoryLevel1 = ref("")
+const categoryLevel2 = ref("")
+const categoryLevel3Id = ref("")
 const filters = reactive({
   keyword: "",
   source_supplier_id: typeof route.query.source_supplier_id === "string" ? route.query.source_supplier_id : "",
+  company_name: "",
+  purchasing_agent: "",
+  brand: "",
+  supplier_name: "",
+  cost_price_min: "",
+  cost_price_max: "",
+  agreement_price_min: "",
+  agreement_price_max: "",
+  discount_rate_min: "",
+  discount_rate_max: "",
+  sales_volume_min: "",
+  sales_volume_max: "",
   status: "ACTIVE" as "ACTIVE" | "DISABLED",
 })
+const columnStorageKey = "scm.product-list.visible-columns.v1"
+const defaultColumns = ["image", "sku", "product_name", "brand", "company_name", "purchasing_agent", "category", "supplier", "cost_price", "agreement_price", "discount_rate", "sales_volume", "status", "updated_at"]
+const columnOptions = [
+  ["image", "商品图片"], ["sku", "SKU"], ["product_name", "商品名称"], ["brand", "品牌"],
+  ["company_name", "所属公司"], ["purchasing_agent", "采销员"], ["model", "型号"], ["category", "三级类目"],
+  ["supplier", "供应商"], ["cost_price", "成本价"], ["market_price", "市场价"], ["jd_price", "京东价"],
+  ["agreement_price", "协议价"], ["discount_rate", "折扣率"], ["sales_volume", "销量"], ["positive_rating", "好评率"],
+  ["status", "状态"], ["updated_at", "最后更新时间"],
+] as const
+const storedColumns = localStorage.getItem(columnStorageKey)
+const visibleColumns = ref<string[]>(storedColumns ? JSON.parse(storedColumns) : defaultColumns)
+const level1Options = computed(() => uniqueNames(categories.value.map((item) => item.level1_name)))
+const level2Options = computed(() => uniqueNames(
+  categories.value
+    .filter((item) => item.level1_name === categoryLevel1.value)
+    .map((item) => item.level2_name),
+))
+const level3Options = computed(() => categories.value.filter(
+  (item) => item.level1_name === categoryLevel1.value && item.level2_name === categoryLevel2.value,
+))
+const selectedCategory = computed(() => categories.value.find((item) => item.id === categoryLevel3Id.value))
 const importInput = ref<HTMLInputElement>()
 const importing = ref(false)
 const importDialogVisible = ref(false)
@@ -50,7 +90,22 @@ async function loadProducts(targetPage = page.value): Promise<void> {
   try {
     const result = await productApi.list({
       keyword: filters.keyword,
+      company_name: filters.company_name,
+      purchasing_agent: filters.purchasing_agent,
+      brand: filters.brand,
+      supplier_name: filters.supplier_name,
+      category_level1_name: categoryLevel1.value || undefined,
+      category_level2_name: categoryLevel2.value || undefined,
+      category_id: selectedCategory.value?.id,
       source_supplier_id: filters.source_supplier_id || undefined,
+      cost_price_min: filters.cost_price_min,
+      cost_price_max: filters.cost_price_max,
+      agreement_price_min: filters.agreement_price_min,
+      agreement_price_max: filters.agreement_price_max,
+      discount_rate_min: percentQuery(filters.discount_rate_min),
+      discount_rate_max: percentQuery(filters.discount_rate_max),
+      sales_volume_min: filters.sales_volume_min,
+      sales_volume_max: filters.sales_volume_max,
       status: filters.status,
       page: targetPage,
       page_size: pageSize,
@@ -66,12 +121,41 @@ async function loadProducts(targetPage = page.value): Promise<void> {
 }
 
 function reset(): void {
-  filters.keyword = ""
-  filters.source_supplier_id = ""
-  filters.status = "ACTIVE"
+  Object.assign(filters, {
+    keyword: "", source_supplier_id: "", company_name: "", purchasing_agent: "", brand: "",
+    supplier_name: "", cost_price_min: "", cost_price_max: "", agreement_price_min: "",
+    agreement_price_max: "", discount_rate_min: "", discount_rate_max: "", sales_volume_min: "",
+    sales_volume_max: "", status: "ACTIVE",
+  })
+  clearCategoryLevel1()
   void router.replace({ name: "product-list" })
   void loadProducts(1)
 }
+
+function uniqueNames(values: string[]): string[] { return Array.from(new Set(values)).sort() }
+function clearCategoryLevel1(): void {
+  categoryLevel1.value = ""
+  categoryLevel2.value = ""
+  categoryLevel3Id.value = ""
+}
+function changeCategoryLevel1(): void {
+  categoryLevel2.value = ""
+  categoryLevel3Id.value = ""
+}
+function changeCategoryLevel2(): void { categoryLevel3Id.value = "" }
+
+function percentQuery(value: string): string | undefined {
+  if (!value.trim()) return undefined
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? String(parsed / 100) : value
+}
+
+function percent(value: string | null): string {
+  return value === null ? "—" : `${(Number(value) * 100).toFixed(2).replace(/\.00$/, "")}%`
+}
+
+function isVisible(key: string): boolean { return visibleColumns.value.includes(key) }
+function saveVisibleColumns(): void { localStorage.setItem(columnStorageKey, JSON.stringify(visibleColumns.value)) }
 
 function money(value: string | null): string {
   return value === null ? "—" : `¥ ${value}`
@@ -213,7 +297,10 @@ async function purgeProduct(product: ProductListItem): Promise<void> {
   }
 }
 
-onMounted(() => void loadProducts())
+onMounted(async () => {
+  try { categories.value = await categoryApi.selection() } catch { categories.value = [] }
+  await loadProducts()
+})
 </script>
 
 <template>
@@ -262,11 +349,12 @@ onMounted(() => void loadProducts())
         class="supplier-filter-notice"
       />
       <el-form :inline="true" label-position="top" @submit.prevent="loadProducts(1)">
-        <el-form-item label="关键字">
+        <el-form-item label="自定义搜索">
           <el-input
             v-model="filters.keyword"
             clearable
-            placeholder="品牌、型号、SKU、名称、货号或69码"
+            placeholder="相机、数码、品牌、SKU、类目等"
+            style="width: 240px"
             @keyup.enter="loadProducts(1)"
           />
         </el-form-item>
@@ -281,14 +369,50 @@ onMounted(() => void loadProducts())
             查询
           </el-button>
           <el-button :icon="Refresh" @click="reset">{{ filters.source_supplier_id ? "查看全部商品" : "重置" }}</el-button>
+          <el-button @click="advancedVisible = !advancedVisible">{{ advancedVisible ? "收起" : "更多筛选" }}</el-button>
         </el-form-item>
+        <div v-show="advancedVisible" class="advanced-filters">
+          <el-form-item label="所属公司"><el-input v-model="filters.company_name" clearable placeholder="输入所属公司" /></el-form-item>
+          <el-form-item label="采销员"><el-input v-model="filters.purchasing_agent" clearable placeholder="输入采销员" /></el-form-item>
+          <el-form-item label="品牌"><el-input v-model="filters.brand" clearable placeholder="输入品牌" /></el-form-item>
+          <el-form-item label="供应商"><el-input v-model="filters.supplier_name" clearable placeholder="输入供应商名称" /></el-form-item>
+          <el-form-item label="一级类目">
+            <el-select v-model="categoryLevel1" filterable clearable placeholder="输入一级类目" style="width: 190px" @change="changeCategoryLevel1">
+              <el-option v-for="name in level1Options" :key="name" :label="name" :value="name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="二级类目">
+            <el-select v-model="categoryLevel2" filterable clearable placeholder="先选择一级类目" :disabled="!categoryLevel1" style="width: 190px" @change="changeCategoryLevel2">
+              <el-option v-for="name in level2Options" :key="name" :label="name" :value="name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="三级类目">
+            <el-select v-model="categoryLevel3Id" filterable clearable placeholder="先选择二级类目" :disabled="!categoryLevel2" style="width: 190px">
+              <el-option v-for="item in level3Options" :key="item.id" :label="item.level3_name" :value="item.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="成本价区间"><div class="range-input"><el-input v-model="filters.cost_price_min" inputmode="decimal" placeholder="大于等于" /><span>—</span><el-input v-model="filters.cost_price_max" inputmode="decimal" placeholder="小于等于" /></div></el-form-item>
+          <el-form-item label="协议价区间"><div class="range-input"><el-input v-model="filters.agreement_price_min" inputmode="decimal" placeholder="大于等于" /><span>—</span><el-input v-model="filters.agreement_price_max" inputmode="decimal" placeholder="小于等于" /></div></el-form-item>
+          <el-form-item label="折扣率区间（%）"><div class="range-input"><el-input v-model="filters.discount_rate_min" inputmode="decimal" placeholder="例如 80" /><span>—</span><el-input v-model="filters.discount_rate_max" inputmode="decimal" placeholder="例如 95" /></div></el-form-item>
+          <el-form-item label="销量区间"><div class="range-input"><el-input v-model="filters.sales_volume_min" inputmode="numeric" placeholder="大于等于" /><span>—</span><el-input v-model="filters.sales_volume_max" inputmode="numeric" placeholder="小于等于" /></div></el-form-item>
+        </div>
       </el-form>
     </el-card>
 
     <el-card class="page-card table-card">
-      <template #header><strong>{{ activeTab === "products" ? "商品列表" : "商品操作记录" }}</strong></template>
+      <template #header>
+        <div class="table-heading">
+          <strong>{{ activeTab === "products" ? "商品列表" : "商品操作记录" }}</strong>
+          <el-popover v-if="activeTab === 'products'" placement="bottom-end" :width="260" trigger="click">
+            <template #reference><el-button :icon="Setting">自定义显示列</el-button></template>
+            <el-checkbox-group v-model="visibleColumns" class="column-picker" @change="saveVisibleColumns">
+              <el-checkbox v-for="option in columnOptions" :key="option[0]" :label="option[0]">{{ option[1] }}</el-checkbox>
+            </el-checkbox-group>
+          </el-popover>
+        </div>
+      </template>
       <el-table v-if="activeTab === 'products'" v-loading="loading" :data="products" empty-text="暂无正式商品数据">
-        <el-table-column label="商品图片" width="108" fixed="left">
+        <el-table-column v-if="isVisible('image')" label="商品图片" width="108" fixed="left">
           <template #default="{ row }">
             <el-image
               v-if="productImageUrl(row.image_reference)"
@@ -303,21 +427,29 @@ onMounted(() => void loadProducts())
             <div v-else class="image-placeholder">暂无图片</div>
           </template>
         </el-table-column>
-        <el-table-column prop="product_name" label="商品名称" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="brand" label="品牌" min-width="120" />
-        <el-table-column prop="model" label="型号" min-width="150" />
-        <el-table-column prop="sku" label="SKU" min-width="130" />
-        <el-table-column prop="category_path" label="三级类目" min-width="220" show-overflow-tooltip />
-        <el-table-column label="当前成本价" min-width="125">
+        <el-table-column v-if="isVisible('sku')" prop="sku" label="SKU" min-width="130" />
+        <el-table-column v-if="isVisible('product_name')" prop="product_name" label="商品名称" min-width="200" show-overflow-tooltip />
+        <el-table-column v-if="isVisible('brand')" prop="brand" label="品牌" min-width="120" />
+        <el-table-column v-if="isVisible('company_name')" prop="company_name" label="所属公司" min-width="150" />
+        <el-table-column v-if="isVisible('purchasing_agent')" prop="purchasing_agent" label="采销员" min-width="120" />
+        <el-table-column v-if="isVisible('model')" prop="model" label="型号" min-width="150" />
+        <el-table-column v-if="isVisible('category')" prop="category_path" label="三级类目" min-width="220" show-overflow-tooltip />
+        <el-table-column v-if="isVisible('supplier')" prop="source_supplier_name" label="供应商" min-width="160" />
+        <el-table-column v-if="isVisible('cost_price')" label="成本价" min-width="125">
           <template #default="{ row }">{{ money(row.cost_price) }}</template>
         </el-table-column>
-        <el-table-column label="协议价" min-width="125">
+        <el-table-column v-if="isVisible('market_price')" label="市场价" min-width="125"><template #default="{ row }">{{ money(row.market_price) }}</template></el-table-column>
+        <el-table-column v-if="isVisible('jd_price')" label="京东价" min-width="125"><template #default="{ row }">{{ money(row.jd_price) }}</template></el-table-column>
+        <el-table-column v-if="isVisible('agreement_price')" label="协议价" min-width="125">
           <template #default="{ row }">{{ money(row.agreement_price) }}</template>
         </el-table-column>
-        <el-table-column prop="source_supplier_name" label="来源供应商" min-width="160" />
-        <el-table-column label="状态" width="100">
+        <el-table-column v-if="isVisible('discount_rate')" label="折扣率" min-width="105"><template #default="{ row }">{{ percent(row.discount_rate) }}</template></el-table-column>
+        <el-table-column v-if="isVisible('sales_volume')" prop="sales_volume" label="销量" min-width="100" />
+        <el-table-column v-if="isVisible('positive_rating')" label="好评率" min-width="105"><template #default="{ row }">{{ percent(row.positive_rating) }}</template></el-table-column>
+        <el-table-column v-if="isVisible('status')" label="状态" width="100">
           <template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status === 'ACTIVE' ? '正常' : '已停用' }}</el-tag></template>
         </el-table-column>
+        <el-table-column v-if="isVisible('updated_at')" label="最后更新时间" min-width="180"><template #default="{ row }">{{ formatDateTime(row.updated_at) }}</template></el-table-column>
         <el-table-column label="操作" width="270" fixed="right">
           <template #default="{ row }">
             <RouterLink v-if="row.status === 'ACTIVE'" :to="`/products/${row.id}`"><el-button link type="primary">详情</el-button></RouterLink>
@@ -463,6 +595,10 @@ onMounted(() => void loadProducts())
 .filter-card :deep(.el-card__body) { padding-bottom: 4px; }
 .supplier-filter-notice { margin-bottom: 16px; }
 .filter-action { align-self: end; }
+.advanced-filters { display: flex; flex-wrap: wrap; gap: 0 12px; width: 100%; padding-top: 8px; border-top: 1px solid var(--border); }
+.range-input { display: flex; align-items: center; gap: 8px; width: 310px; }
+.table-heading { display: flex; align-items: center; justify-content: space-between; }
+.column-picker { display: grid; grid-template-columns: 1fr 1fr; }
 .table-card strong { color: #344054; }
 .pagination { display: flex; justify-content: flex-end; margin-top: 16px; }
 .header-actions { display: flex; align-items: flex-start; }

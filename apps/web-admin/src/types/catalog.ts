@@ -12,6 +12,7 @@ export type ProductStatus = "ACTIVE" | "DISABLED"
 
 export interface ProductListItem {
   id: string
+  company_name: string | null
   listed_at: string | null
   brand: string | null
   image_reference: string | null
@@ -19,6 +20,7 @@ export interface ProductListItem {
   sku: string | null
   product_name: string | null
   item_number: string | null
+  jd_same_product_url: string | null
   category_id: string | null
   category_path: string
   source_supplier_id: string
@@ -26,6 +28,33 @@ export interface ProductListItem {
   cost_price: string
   agreement_price: string | null
   jd_price: string | null
+  market_price: string | null
+  agreement_purchase_price: string | null
+  profit: string | null
+  jd_margin: string | null
+  deduction_review: string | null
+  gross_margin: string | null
+  purchasing_agent: string | null
+  barcode_text: string | null
+  certification_3c_code: string | null
+  product_specification: string | null
+  selling_points: string | null
+  packaging_list: string | null
+  warranty_period: string | null
+  restricted_regions: string | null
+  jd_self_operated_price: string | null
+  storefront_type: string | null
+  reference_url: string | null
+  sales_volume: number | null
+  positive_rating: string | null
+  discount_rate: string | null
+  price_inflation_rate: string | null
+  tax_code: string | null
+  invoice_name: string | null
+  tax_category: string | null
+  shipping_courier: string | null
+  after_sales_policy: string | null
+  remark: string | null
   status: ProductStatus
   created_by: string | null
   created_by_username: string | null
@@ -43,24 +72,6 @@ export interface ProductDetail extends Omit<
   category_level1_name: string | null
   category_level2_name: string | null
   category_level3_name: string | null
-  jd_same_product_url: string | null
-  market_price: string | null
-  agreement_purchase_price: string | null
-  profit: string | null
-  jd_margin: string | null
-  purchasing_agent: string | null
-  barcode_text: string | null
-  deduction_review: string | null
-  product_specification: string | null
-  selling_points: string | null
-  gross_margin: string | null
-  remark: string | null
-  discount_rate: string | null
-  restricted_regions: string | null
-  jd_self_operated_price: string | null
-  reference_url: string | null
-  storefront_type: string | null
-  price_inflation_rate: string | null
   deduction_rate: string | null
 }
 
@@ -68,8 +79,22 @@ export interface ProductListParams {
   page?: number
   page_size?: number
   keyword?: string
+  company_name?: string
+  purchasing_agent?: string
+  brand?: string
+  supplier_name?: string
+  category_level1_name?: string
+  category_level2_name?: string
   category_id?: string
   source_supplier_id?: string
+  cost_price_min?: string
+  cost_price_max?: string
+  agreement_price_min?: string
+  agreement_price_max?: string
+  discount_rate_min?: string
+  discount_rate_max?: string
+  sales_volume_min?: string
+  sales_volume_max?: string
   status?: ProductStatus
 }
 
@@ -145,23 +170,44 @@ export interface ProductSourceSupplierCandidate {
 }
 
 export interface ProductUpdatePayload {
+  company_name: string | null
   listed_at: string | null
   brand: string | null
-  image_reference: string | null
   model: string | null
-  sku: string
   product_name: string | null
+  category_id: string
   item_number: string | null
   jd_same_product_url: string | null
+  cost_price: string
+  market_price: string | null
+  jd_price: string | null
+  agreement_price: string | null
+  agreement_purchase_price: string | null
+  profit: string | null
+  jd_margin: string | null
+  deduction_review: string | null
+  gross_margin: string | null
   purchasing_agent: string | null
-  source_supplier_id: string
   barcode_text: string | null
+  certification_3c_code: string | null
   product_specification: string | null
   selling_points: string | null
+  packaging_list: string | null
+  warranty_period: string | null
   remark: string | null
   restricted_regions: string | null
   reference_url: string | null
   storefront_type: string | null
+  sales_volume: number | null
+  positive_rating: string | null
+  discount_rate: string | null
+  price_inflation_rate: string | null
+  jd_self_operated_price: string | null
+  tax_code: string | null
+  invoice_name: string | null
+  tax_category: string | null
+  shipping_courier: string | null
+  after_sales_policy: string | null
 }
 
 export interface ProductImportConfirmResult {

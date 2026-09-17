@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from io import BytesIO
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 from openpyxl import Workbook
 from sqlalchemy import delete, select
@@ -23,6 +24,22 @@ from app.modules.supplier.infrastructure.models import Supplier
 from app.modules.system.models import Permission, Role, RolePermission, User, UserRole
 
 IMPORT_PERMISSIONS = ("product:import", "product:import:resolve")
+
+
+class _RecordingStorage:
+    def __init__(self) -> None:
+        self.deleted: list[str] = []
+
+    async def save(self, name: str, content: bytes) -> str:
+        del content
+        return name
+
+    async def read(self, key: str) -> bytes:
+        del key
+        raise FileNotFoundError
+
+    async def delete(self, key: str) -> None:
+        self.deleted.append(key)
 
 
 async def _create_import_user() -> tuple[uuid.UUID, dict[str, str]]:
@@ -126,16 +143,23 @@ def _workbook_bytes(
     assert worksheet is not None
     worksheet.append(PRODUCT_IMPORT_HEADERS)
     for index, supplier_name in enumerate(supplier_names, start=1):
-        worksheet.append(
-            [
-                "2026-09-10", "测试品牌", image_value, "型号",
-                sku_override or f"SKU-{index}", product_name,
-                *category_path, "货号", "https://example.test/item", cost_price,
-                "999", "201", "199.9", "155.55", "55.55", "0.1234", "0.1111", "0.2778", "采销员",
-                supplier_name, "6900000000000", "规格", "卖点", "限售区域", "180", "https://example.test/ref",
-                "官方旗舰店", "0.8888", "-0.1111", "备注",
-            ]
-        )
+        values = {
+            "所属公司": "测试公司", "上架日期": "2026-09-10", "品牌": "测试品牌",
+            "图片": image_value, "型号": "型号", "sku": sku_override or f"SKU-{index}",
+            "商品名称": product_name, "一级类目": category_path[0], "二级类目": category_path[1],
+            "三级类目": category_path[2], "货号": "货号", "链接": "https://example.test/item",
+            "成本价": cost_price, "市场价": "999", "京东价": "201", "协议价": "199.9",
+            "协议价采购价": "155.55", "利润": "55.55", "京东价毛利（30-50）": "12.34%",
+            "扣点复核": "11.11%", "毛利率": "27.78%", "采销员": "采销员",
+            "供应商": supplier_name, "69码": "6900000000000", "3c编码": "3C-TEST",
+            "产品规格": "规格", "卖点": "卖点", "包装清单": "包装", "质保期": "一年",
+            "限售区域": "限售区域", "京东自营前台价": "180", "自营旗舰店/官方旗舰店": "官方旗舰店",
+            "参考链接": "https://example.test/ref", "销量": "10", "好评率": "95%",
+            "折扣率": "88.88%", "价格虚高比例": "-11.11%", "税收编码": "TAX-1",
+            "开票名称": "测试商品", "税收分类": "测试分类", "发货快递": "京东物流",
+            "售后政策": "七天无理由", "备注": "备注",
+        }
+        worksheet.append([values[header] for header in PRODUCT_IMPORT_HEADERS])
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
@@ -172,7 +196,13 @@ async def _cleanup_import_data(
         await session.commit()
 
 
-async def test_product_import_binds_unique_active_mall_category() -> None:
+async def test_product_import_binds_unique_active_mall_category(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _RecordingStorage()
+    monkeypatch.setattr(
+        "app.modules.catalog.application.import_service.get_object_storage", lambda: storage
+    )
     user_id, headers = await _create_import_user()
     supplier_id, category_id = await _create_references()
     try:
@@ -214,6 +244,14 @@ async def test_product_import_binds_unique_active_mall_category() -> None:
             assert confirmed.status_code == 200
             assert confirmed.json()["data"]["imported_count"] == 1
 
+            async with SessionLocal() as session:
+                imported = await session.scalar(
+                    select(Product).where(Product.created_by == user_id)
+                )
+                assert imported is not None
+                imported.image_reference = "local-media/product-images/old.png"
+                await session.commit()
+
             duplicate_preview = await client.post(
                 "/api/v1/products/imports/preview",
                 headers=headers,
@@ -241,6 +279,7 @@ async def test_product_import_binds_unique_active_mall_category() -> None:
             assert updated.status_code == 200
             assert updated.json()["data"]["created_count"] == 0
             assert updated.json()["data"]["updated_count"] == 1
+            assert "product-images/old.png" in storage.deleted
             updated_preview = await client.get(
                 f"/api/v1/products/imports/{duplicate_data['id']}", headers=headers
             )
@@ -323,6 +362,9 @@ async def test_product_import_binds_unique_active_mall_category() -> None:
             assert str(product.market_price) == "999.0000"
             assert str(product.agreement_price) == "199.9000"
             assert str(product.jd_margin) == "0.1234"
+            assert product.company_name == "测试公司"
+            assert product.sales_volume == 10
+            assert product.positive_rating == Decimal("0.9500")
     finally:
         await _cleanup_import_data(supplier_id, user_id, (category_id,))
         await _cleanup_import_user(user_id)

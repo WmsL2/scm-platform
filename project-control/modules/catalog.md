@@ -1,7 +1,7 @@
 # 商品主数据 / Catalog
 
-状态：IMPLEMENTED / PRODUCT_IMPORT_PARTIAL_CONFIRM / CATEGORY_MANAGEMENT_IMPLEMENTED
-Owner：feat/product-import-partial-confirm-template-download
+状态：IMPLEMENTED / PRODUCT_MASTER_2026_TEMPLATE_AND_FILTERS
+Owner：feat/product-master-2026-template-filters
 Last Updated：2026-09-17
 
 ## Database
@@ -14,24 +14,26 @@ Last Updated：2026-09-17
 - [x] `20260916_0028` 新增类目列表、详情、新增、编辑、删除五项独立权限，并默认授予现有 `boss` 角色
 - [x] `20260917_0028` 支持同来源供应商 + SKU 命中正常 Product 的重新导入更新，记录暂存行新增/更新类型与变更字段
 - [x] `20260917_0029` 合并类目权限与商品重新导入更新的 Alembic Heads，不改业务 Schema 或数据
+- [x] `20260917_0030` 增加 2026 商品大表的 11 个业务字段、销量/好评率约束及价格/折扣/销量筛选索引
 - [x] 未创建独立 Supplier Product Quote 表或报价历史表
 
 ## Backend
 - [x] Pricing Service（定价服务）已实现
-- [x] Product 查询、详情、基础资料编辑与成本价更新 API
+- [x] Product 综合搜索、文本/类目/数值区间查询、全字段详情、业务键只读编辑、受控图片上传/清除与成本价更新 API
 - [x] Product 列表支持按 `source_supplier_id` 精确过滤，作为供应商详情页“相关商品”的唯一数据入口
 - [x] 成本价更新在同一事务中调用 Pricing Service 并保存全部派生值
-- [x] 固定 32 列商品大表导入、有效商城三级类目精确绑定、直接保存价格正式值、保存 WPS/Excel 内嵌图片、严格供应商精确匹配、SKU 防重预览和通过行原子 Confirm
+- [x] 固定 43 列 2026 商品大表导入、有效商城三级类目精确绑定、直接保存价格正式值、保存 WPS/Excel 内嵌图片、严格供应商精确匹配、SKU 防重预览和通过行原子 Confirm
 - [x] Supplier 为 `STOPPED` / `BLACKLIST` / 逻辑删除时，关联 Product 不能列表、详情、编辑或更新成本价；恢复 `NORMAL` 后自动恢复可见
 - [x] Product 可显式停用/启用；停用商品不能正常列表、详情、编辑或更新成本价，但保留业务键和商品字段
 - [x] 类目维表管理：三级路径列表、详情、新增、编辑、受 Product `RESTRICT` 引用保护的删除、轻量启用选择接口与 Excel 原子导入；真实身份为 `source_type + level3_external_id`，路径仅为属性
 - [x] 类目管理列表为服务端分页（默认每页 20）；商城导入使用公司 9 列中文模板，后端固定 `MALL_LEVEL3`，由批次 `deduction_rate_percent` 写入正式扣点，Excel 颜色不参与判断且不隐式更新既有类目
 - [x] 仅已停用 Product 可永久删除；删除前写入最小审计并依赖事务及外键保护，永久删除后同键可重新导入为新商品
 - [x] Product Import 对同来源供应商 + SKU 的正常商品标记为更新候选并在 Confirm 原子覆盖固定模板字段；停用商品仍报错并阻止 Confirm
+- [x] 同键更新保留供应商与 SKU，其他 41 列按 Excel 覆盖且空值清空；成功提交后清理被替换的旧本地图片
 
 ## Frontend
-- [x] 商品列表、详情（含本地图片预览）、按权限显示的基础资料编辑/成本价更新及导入预览/供应商解析页面；商品列表首列显示本地图片缩略图及无图/加载失败占位，供应商详情可跳转至其相关商品的筛选列表
-- [x] 导入预览显示已导入、已更新、通过、新增更新候选和不通过行，支持“更新”筛选并展示更新字段；商品页可下载批准的原始 32 列模板
+- [x] 商品列表和编辑页均使用一级、二级、三级三个独立、可搜索的联动下拉框；列表提供常用/高级可输入筛选和浏览器本地自定义列，详情和编辑覆盖 43 列业务字段，供应商/SKU 只读，图片通过文件上传维护
+- [x] 导入预览显示已导入、已更新、通过、新增更新候选和不通过行，支持“更新”筛选并展示更新字段；商品页可下载批准的原始 43 列模板
 - [x] 商品列表支持正常/已停用状态筛选、停用/启用和 SKU/名称二次确认的永久删除；页面保留普通纵向滚动，左侧导航固定于视口左侧
 - [x] 统一 API 请求禁用浏览器缓存，商品导入 Confirm 后重新加载列表可立即读取最新商品数据
 - [x] 商品主数据增加“商品列表 / 操作记录”可切换页签；操作记录按商品展示图片、导入人、导入时间、最后更新人和最后更新时间，用户名从既有 `created_by` / `updated_by` 解析，未新增审计表
@@ -72,9 +74,9 @@ Last Updated：2026-09-17
 - `cost_price` 是商品当前成本价，也是当前供应商报价；供应商新报价不进入独立报价库，而是在后续 Product Backend 直接更新目标 Product 的 `cost_price`；
 - 成本价更新必须在同一事务内重算并保存派生价格与毛利，使用既有 `updated_by`、`updated_at` 审计；不保存 Quote 历史、有效期、作废或多供应商比价；
 - 派生价格与毛利字段需要正式保存；一期建议当前价格及派生值直接承载于 `scm_product`；
-- 32 列最新大表字段映射、Category 三级维度建议、Product ↔ Category FK 与 Decimal 类型建议见 `docs/schema/product-category-pricing-schema-review.md`；
+- 43 列 2026 大表字段映射及筛选/编辑规则见 `docs/data-gates/product-master-field-dictionary.md`；
 - Pricing Service 已实现：使用 Decimal，正式派生值统一 4 位小数；普通字段使用 `ROUND_HALF_UP`，唯一例外 `deduction_review` 使用 `ROUND_DOWN`；该 Service 仅产生 System Calculated Values。Excel Derived Values 的逐字段对账属于后续 Product Import；Excel 值不得静默覆盖系统公式。
 
 ## Current Gate
 
-`IMPLEMENTED / PRODUCT_IMPORT_REIMPORT_UPDATE`：固定模板 Staging、有效商城三级类目绑定、Supplier Matching、供应商 + SKU 防重预览、正常同键重新导入更新和新增/更新原子 Confirm 已实现；暂存行保存新增/更新类型与变更字段，失败行不入库并可在同一批次继续供应商解析。依据 ADR-0018，类目无匹配、停用或不唯一均阻止 Confirm，正式 Product 只写入受控 Category 的 ID 与路径。空或不合格供应商仍不得绕过导入校验。工业品类目匹配及独立成本价维护仍属后续范围。
+`IMPLEMENTED / PRODUCT_MASTER_2026_TEMPLATE_AND_FILTERS`：批准模板已升级为 43 列；新增字段、覆盖式重新导入、旧图片回收、组合筛选、三级联动、自定义列及全字段详情/编辑已实现。空或不合格供应商、无效类目和停用同键商品仍不得绕过导入校验。

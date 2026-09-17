@@ -21,6 +21,25 @@ PRODUCT_PERMISSIONS = (
 )
 
 
+class RecordingStorage:
+    def __init__(self) -> None:
+        self.saved: list[str] = []
+        self.deleted: list[str] = []
+
+    async def save(self, name: str, content: bytes) -> str:
+        assert content
+        key = f"{name}.stored"
+        self.saved.append(key)
+        return key
+
+    async def read(self, key: str) -> bytes:
+        del key
+        return b""
+
+    async def delete(self, key: str) -> None:
+        self.deleted.append(key)
+
+
 async def create_product_user(
     permission_codes: tuple[str, ...],
 ) -> tuple[uuid.UUID, dict[str, str]]:
@@ -99,13 +118,22 @@ async def create_product_fixture(
             Product(
                 id=product_id,
                 product_name="商品成本价测试",
+                company_name="众诚测试公司",
                 brand="测试品牌",
                 image_reference="local-media/product-images/test-product.png",
                 model="MODEL-1",
                 sku="SKU-1",
                 category_id=category_id,
+                category_level1_name="一级",
+                category_level2_name="二级",
+                category_level3_name="三级",
                 source_supplier_id=supplier_id,
                 cost_price=Decimal("100.0000"),
+                agreement_price=Decimal("160.0000"),
+                discount_rate=Decimal("0.8000"),
+                sales_volume=88,
+                positive_rating=Decimal("0.9500"),
+                purchasing_agent="张三",
                 jd_price=Decimal("200.0000"),
                 jd_self_operated_price=Decimal("180.0000"),
                 created_by=created_by,
@@ -152,6 +180,24 @@ async def test_product_api_lists_details_and_recalculates_cost_atomically() -> N
             assert listed_product["updated_by"] == str(importer_id)
             assert listed_product["updated_by_username"] == f"product-test-{importer_id}"
             assert listed_product["updated_at"]
+            assert listed_product["company_name"] == "众诚测试公司"
+            assert listed_product["sales_volume"] == 88
+
+            filtered = await client.get(
+                "/api/v1/products?company_name=众诚&supplier_name=商品测试"
+                "&cost_price_min=99&cost_price_max=101&agreement_price_min=160"
+                "&discount_rate_min=0.8&discount_rate_max=0.8"
+                "&sales_volume_min=88&sales_volume_max=88",
+                headers=headers,
+            )
+            assert filtered.status_code == 200
+            assert str(product_id) in {item["id"] for item in filtered.json()["data"]["items"]}
+
+            invalid_range = await client.get(
+                "/api/v1/products?cost_price_min=200&cost_price_max=100", headers=headers
+            )
+            assert invalid_range.status_code == 422
+            assert invalid_range.json()["code"] == "PRODUCT_FILTER_RANGE_INVALID"
 
             supplier_products = await client.get(
                 f"/api/v1/products?source_supplier_id={supplier_id}", headers=headers
@@ -215,6 +261,36 @@ async def test_product_api_enforces_permissions_and_validates_paths() -> None:
             )
             assert invalid_path.status_code == 422
     finally:
+        await cleanup_user(user_id)
+
+
+async def test_product_image_upload_and_clear_use_controlled_storage(monkeypatch) -> None:
+    storage = RecordingStorage()
+    monkeypatch.setattr(
+        "app.modules.catalog.application.service.get_object_storage", lambda: storage
+    )
+    user_id, headers = await create_product_user(("product:update", "product:detail"))
+    supplier_id, category_id, product_id = await create_product_fixture()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            uploaded = await client.post(
+                f"/api/v1/products/{product_id}/image",
+                headers=headers,
+                files={"file": ("product.png", b"png-content", "image/png")},
+            )
+            assert uploaded.status_code == 200
+            reference = uploaded.json()["data"]["image_reference"]
+            assert reference.startswith("local-media/product-images/manual/")
+            assert "product-images/test-product.png" in storage.deleted
+
+            cleared = await client.delete(
+                f"/api/v1/products/{product_id}/image", headers=headers
+            )
+            assert cleared.status_code == 200
+            assert cleared.json()["data"]["image_reference"] is None
+            assert reference.removeprefix("local-media/") in storage.deleted
+    finally:
+        await cleanup_fixture(supplier_id, category_id, product_id)
         await cleanup_user(user_id)
 
 
@@ -307,22 +383,20 @@ async def test_product_editing_and_supplier_lifecycle_visibility() -> None:
                 headers=headers,
                 json={
                     "product_name": "已编辑商品",
-                    "sku": "SKU-EDITED",
-                    "source_supplier_id": str(supplier_id),
                     "selling_points": "编辑后的卖点",
                 },
             )
             assert edited.status_code == 200
             assert edited.json()["data"]["product_name"] == "已编辑商品"
+            assert edited.json()["data"]["sku"] == "SKU-1"
             assert edited.json()["data"]["cost_price"] == "100.0000"
 
-            duplicate = await client.patch(
+            immutable_key_edit = await client.patch(
                 f"/api/v1/products/{product_id}",
                 headers=headers,
-                json={"sku": "SKU-DUPLICATE"},
+                json={"sku": "SKU-DUPLICATE", "source_supplier_id": str(supplier_id)},
             )
-            assert duplicate.status_code == 409
-            assert duplicate.json()["code"] == "PRODUCT_SUPPLIER_SKU_EXISTS"
+            assert immutable_key_edit.status_code == 422
 
         async with SessionLocal() as session:
             supplier = await session.get(Supplier, supplier_id)

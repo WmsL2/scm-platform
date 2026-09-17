@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated
 
@@ -41,8 +42,22 @@ async def list_products(
     session: SessionDep,
     page_params: Annotated[PageParams, Depends()],
     keyword: Annotated[str | None, Query(max_length=255)] = None,
+    company_name: Annotated[str | None, Query(max_length=255)] = None,
+    purchasing_agent: Annotated[str | None, Query(max_length=128)] = None,
+    brand: Annotated[str | None, Query(max_length=128)] = None,
+    supplier_name: Annotated[str | None, Query(max_length=255)] = None,
+    category_level1_name: Annotated[str | None, Query(max_length=255)] = None,
+    category_level2_name: Annotated[str | None, Query(max_length=255)] = None,
     category_id: uuid.UUID | None = None,
     source_supplier_id: uuid.UUID | None = None,
+    cost_price_min: Annotated[Decimal | None, Query(ge=0)] = None,
+    cost_price_max: Annotated[Decimal | None, Query(ge=0)] = None,
+    agreement_price_min: Annotated[Decimal | None, Query(ge=0)] = None,
+    agreement_price_max: Annotated[Decimal | None, Query(ge=0)] = None,
+    discount_rate_min: Annotated[Decimal | None, Query(ge=0, le=1)] = None,
+    discount_rate_max: Annotated[Decimal | None, Query(ge=0, le=1)] = None,
+    sales_volume_min: Annotated[int | None, Query(ge=0)] = None,
+    sales_volume_max: Annotated[int | None, Query(ge=0)] = None,
     status: ProductStatus = ProductStatus.ACTIVE,
 ) -> ApiResponse[PageResult[ProductListItem]]:
     if status == ProductStatus.DISABLED and "product:disable" not in current.permissions:
@@ -51,8 +66,22 @@ async def list_products(
         await ProductService(session).list(
             page_params,
             keyword=keyword,
+            company_name=company_name,
+            purchasing_agent=purchasing_agent,
+            brand=brand,
+            supplier_name=supplier_name,
+            category_level1_name=category_level1_name,
+            category_level2_name=category_level2_name,
             category_id=category_id,
             source_supplier_id=source_supplier_id,
+            cost_price_min=cost_price_min,
+            cost_price_max=cost_price_max,
+            agreement_price_min=agreement_price_min,
+            agreement_price_max=agreement_price_max,
+            discount_rate_min=discount_rate_min,
+            discount_rate_max=discount_rate_max,
+            sales_volume_min=sales_volume_min,
+            sales_volume_max=sales_volume_max,
             status=status,
         )
     )
@@ -140,6 +169,33 @@ async def source_supplier_candidates(
     session: SessionDep,
 ) -> ApiResponse[list[ProductSourceSupplierCandidateResponse]]:
     return success(await ProductService(session).source_supplier_candidates())
+
+
+@router.post("/{product_id}/image", response_model=ApiResponse[ProductDetailResponse])
+async def update_product_image(
+    product_id: uuid.UUID,
+    file: Annotated[UploadFile, File(...)],
+    current: Annotated[CurrentUser, Depends(require_permission("product:update"))],
+    session: SessionDep,
+) -> ApiResponse[ProductDetailResponse]:
+    return success(
+        await ProductService(session).update_image(
+            product_id,
+            file.filename or "product-image",
+            file.content_type,
+            await file.read(),
+            current.user_id,
+        )
+    )
+
+
+@router.delete("/{product_id}/image", response_model=ApiResponse[ProductDetailResponse])
+async def clear_product_image(
+    product_id: uuid.UUID,
+    current: Annotated[CurrentUser, Depends(require_permission("product:update"))],
+    session: SessionDep,
+) -> ApiResponse[ProductDetailResponse]:
+    return success(await ProductService(session).clear_image(product_id, current.user_id))
 
 
 @router.get("/{product_id}", response_model=ApiResponse[ProductDetailResponse])

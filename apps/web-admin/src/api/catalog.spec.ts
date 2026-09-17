@@ -69,4 +69,20 @@ describe("product import api", () => {
     expect(http.post).toHaveBeenNthCalledWith(2, "/api/v1/products/product-1/commands/enable")
     expect(http.delete).toHaveBeenCalledWith("/api/v1/products/product-1", { confirm: true })
   })
+
+  it("uses controlled product image routes", async () => {
+    http.post.mockResolvedValue({ id: "product-1" })
+    http.delete.mockResolvedValue({ id: "product-1", image_reference: null })
+    const { productApi } = await import("./catalog")
+    const image = new File(["image"], "product.png", { type: "image/png" })
+
+    await productApi.updateImage("product-1", image)
+    await productApi.clearImage("product-1")
+
+    expect(http.post).toHaveBeenCalledWith(
+      "/api/v1/products/product-1/image",
+      expect.any(FormData),
+    )
+    expect(http.delete).toHaveBeenCalledWith("/api/v1/products/product-1/image")
+  })
 })

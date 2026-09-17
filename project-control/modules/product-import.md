@@ -1,7 +1,7 @@
 # 商品大表导入
 
-状态：IMPLEMENTED / PARTIAL_CONFIRM_AND_TEMPLATE_DOWNLOAD
-Owner：feat/product-import-partial-confirm-template-download
+状态：IMPLEMENTED / PRODUCT_MASTER_2026_43_COLUMNS
+Owner：feat/product-master-2026-template-filters
 Last Updated：2026-09-17
 
 ## Database
@@ -10,15 +10,16 @@ Last Updated：2026-09-17
 - [x] 原始 Excel 行和 `supplier_name_raw` 仅保留在 Staging；正式 `scm_product` 不增加供应商名称字段
 
 ## Backend
-- [x] 严格校验批准的 32 列模板；一级、二级、三级类目必须唯一匹配有效商城三级类目，正式 Product 写入受控 `category_id` 与类目路径；价格仍直接按 Excel 正式值保存，不重算价格
+- [x] 严格校验批准的 43 列 2026 模板；一级、二级、三级类目必须唯一匹配有效商城三级类目，正式 Product 写入受控 `category_id` 与类目路径；价格仍直接按 Excel 正式值保存，不重算价格
 - [x] 预览仅检测 WPS/Excel `DISPIMG` 图片并受控保留临时源 Excel；只有 Confirm 的通过行才提取媒体至相对本地目录，正式 Product 仅保存站内相对图片引用
 - [x] 含 `DISPIMG` 的预览在写入临时源文件后显式异步加载暂存行和供应商匹配，避免延迟加载触发 `MissingGreenlet` 并造成预览 500
 - [x] 供应商仅按冻结的标准化精确匹配；支持从当前有效 Supplier Master 手动解析
 - [x] `POST /api/v1/products/imports/preview`、`GET /api/v1/products/imports/{task_id}`、`GET /api/v1/products/imports/supplier-candidates`、`POST /api/v1/products/imports/{task_id}/supplier-matches/{match_id}/resolve`、`POST /api/v1/products/imports/{task_id}/confirm`
 - [x] Confirm 锁定任务并重新校验有效来源供应商；当前通过且尚未导入的行作为一次单事务写入 `scm_product`
-- [x] `GET /api/v1/products/imports/template` 下载批准的原始 32 列模板
+- [x] `GET /api/v1/products/imports/template` 下载批准的原始 43 列模板
 - [x] 同来源供应商 + SKU 命中停用 Product 时按行报错并阻止 Confirm；不隐式恢复或覆盖，永久删除后才可作为新商品导入
 - [x] 同来源供应商 + SKU 命中正常 Product 时按行标识为更新，并在 Confirm 保留 ID/创建审计/状态的前提下原子覆盖固定模板字段；记录变更字段供预览和确认后查看
+- [x] 供应商与 SKU 在同键更新中不可修改；其余 41 列全部覆盖，空单元格清空旧值，成功提交后删除被替换的旧本地图片
 
 ## Frontend
 - [x] 商品主数据页提供模板下载、Excel 上传、通过/更新/不通过/已处理行预览筛选、供应商解析和“确认新增/更新”入口

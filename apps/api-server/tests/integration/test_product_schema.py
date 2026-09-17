@@ -5,14 +5,18 @@ from app.core.database import SessionLocal
 
 async def test_product_schema_and_permission_directory() -> None:
     expected_product_columns = {
-            "id", "listed_at", "brand", "image_reference", "model", "sku", "product_name",
+            "id", "company_name", "listed_at", "brand", "image_reference", "model", "sku",
+            "product_name",
             "category_id", "category_level1_name", "category_level2_name", "category_level3_name",
             "item_number", "jd_same_product_url", "cost_price", "market_price",
         "jd_price", "agreement_price", "agreement_purchase_price", "profit", "jd_margin",
-        "purchasing_agent", "source_supplier_id", "barcode_text", "deduction_review",
-        "product_specification", "selling_points", "gross_margin", "remark", "discount_rate",
-        "restricted_regions", "jd_self_operated_price", "reference_url", "storefront_type",
-        "price_inflation_rate", "deduction_rate", "created_by", "updated_by", "created_at",
+            "purchasing_agent", "source_supplier_id", "barcode_text", "deduction_review",
+            "certification_3c_code", "product_specification", "selling_points", "packaging_list",
+            "warranty_period", "gross_margin", "remark", "discount_rate",
+            "restricted_regions", "jd_self_operated_price", "reference_url", "storefront_type",
+            "sales_volume", "positive_rating", "price_inflation_rate", "deduction_rate",
+            "tax_code", "invoice_name", "tax_category", "shipping_courier", "after_sales_policy",
+            "created_by", "updated_by", "created_at",
         "updated_at", "status", "disabled_by", "disabled_at",
     }
     async with SessionLocal() as session:
