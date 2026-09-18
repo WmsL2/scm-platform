@@ -5,7 +5,7 @@ from typing import List, Literal, cast
 
 from sqlalchemy import Select, and_, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.contracts import PageParams
@@ -17,6 +17,8 @@ from app.modules.catalog.infrastructure.models import (
 )
 from app.modules.supplier.domain.rules import CooperationStatus
 from app.modules.supplier.infrastructure.models import Supplier
+
+PRODUCT_IMPORT_PRODUCT_LOOKUP_BATCH_SIZE = 500
 
 
 class ProductRepository:
@@ -140,6 +142,60 @@ class ProductRepository:
         )
         return cast(ProductImportTask | None, await self.session.scalar(statement))
 
+    async def import_task_summary_by_id(self, task_id: uuid.UUID) -> ProductImportTask | None:
+        statement = (
+            select(ProductImportTask)
+            .options(
+                noload(ProductImportTask.rows),
+                selectinload(ProductImportTask.supplier_matches),
+            )
+            .where(ProductImportTask.id == task_id)
+        )
+        return cast(ProductImportTask | None, await self.session.scalar(statement))
+
+    async def import_rows_page(
+        self,
+        task_id: uuid.UUID,
+        page_params: PageParams,
+        *,
+        row_status: str,
+    ) -> tuple[list[ProductImportRow], int]:
+        criteria = [ProductImportRow.import_task_id == task_id]
+        if row_status == "PASSED":
+            criteria.extend(
+                (
+                    ProductImportRow.is_valid.is_(True),
+                    ProductImportRow.is_imported.is_(False),
+                    ProductImportRow.write_action == "CREATE",
+                )
+            )
+        elif row_status == "UPDATE":
+            criteria.extend(
+                (
+                    ProductImportRow.is_valid.is_(True),
+                    ProductImportRow.is_imported.is_(False),
+                    ProductImportRow.write_action == "UPDATE",
+                )
+            )
+        elif row_status == "FAILED":
+            criteria.extend(
+                (
+                    ProductImportRow.is_valid.is_(False),
+                    ProductImportRow.is_imported.is_(False),
+                )
+            )
+        statement = (
+            select(ProductImportRow)
+            .where(*criteria)
+            .order_by(ProductImportRow.source_row_number, ProductImportRow.id)
+            .offset((page_params.page - 1) * page_params.page_size)
+            .limit(page_params.page_size)
+        )
+        count_statement = select(func.count()).select_from(ProductImportRow).where(*criteria)
+        rows = list((await self.session.scalars(statement)).all())
+        total = cast(int, await self.session.scalar(count_statement))
+        return rows, total
+
     async def import_task_by_id_for_update(self, task_id: uuid.UUID) -> ProductImportTask | None:
         statement = (
             select(ProductImportTask)
@@ -198,15 +254,29 @@ class ProductRepository:
     ) -> dict[tuple[uuid.UUID, str], Product]:
         if not keys:
             return {}
-        statement = select(Product).where(tuple_(Product.source_supplier_id, Product.sku).in_(keys))
-        if for_update:
-            statement = statement.with_for_update()
-        products = list((await self.session.scalars(statement)).all())
-        return {
-            (product.source_supplier_id, product.sku): product
-            for product in products
-            if product.sku is not None
-        }
+        ordered_keys = sorted(keys, key=lambda item: (str(item[0]), item[1]))
+        products_by_key: dict[tuple[uuid.UUID, str], Product] = {}
+        # A giant tuple IN (...) makes MySQL's range optimizer exceed its default 8MB
+        # budget on real workbooks. Keep the key batches sorted so concurrent confirms
+        # acquire matching product locks in a stable order.
+        for offset in range(0, len(ordered_keys), PRODUCT_IMPORT_PRODUCT_LOOKUP_BATCH_SIZE):
+            key_batch = ordered_keys[offset : offset + PRODUCT_IMPORT_PRODUCT_LOOKUP_BATCH_SIZE]
+            statement = (
+                select(Product)
+                .where(tuple_(Product.source_supplier_id, Product.sku).in_(key_batch))
+                .order_by(Product.source_supplier_id, Product.sku, Product.id)
+            )
+            if for_update:
+                statement = statement.with_for_update()
+            products = list((await self.session.scalars(statement)).all())
+            products_by_key.update(
+                {
+                    (product.source_supplier_id, product.sku): product
+                    for product in products
+                    if product.sku is not None
+                }
+            )
+        return products_by_key
 
     async def other_product_with_supplier_sku(
         self, *, product_id: uuid.UUID, supplier_id: uuid.UUID, sku: str

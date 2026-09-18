@@ -8,6 +8,7 @@ from app.core.database import SessionLocal
 from app.main import app
 from app.modules.auth.security import create_token, hash_password
 from app.modules.catalog.infrastructure.models import Category, Product, ProductPurgeAudit
+from app.modules.catalog.schemas import _serialize_product_price
 from app.modules.supplier.infrastructure.models import Supplier
 from app.modules.system.models import Permission, Role, RolePermission, User, UserRole
 
@@ -19,6 +20,16 @@ PRODUCT_PERMISSIONS = (
     "product:disable",
     "product:purge",
 )
+
+
+def test_product_price_json_keeps_significant_digits_and_legacy_minimum() -> None:
+    assert _serialize_product_price(Decimal("160.000000000000000000000000000000")) == "160.0000"
+    assert _serialize_product_price(Decimal("100.123450000000000000000000000000")) == "100.12345"
+    assert (
+        _serialize_product_price(Decimal("100.123456789012345678901234567891"))
+        == "100.123456789012345678901234567891"
+    )
+    assert _serialize_product_price(None) is None
 
 
 class RecordingStorage:

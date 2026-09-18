@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 from app.modules.catalog.domain.lifecycle import ProductStatus
 
@@ -101,7 +101,36 @@ class CategoryImportResponse(BaseModel):
     errors: list[CategoryImportError]
 
 
-class ProductListItem(BaseModel):
+_PRODUCT_PRICE_FIELDS = (
+    "cost_price",
+    "market_price",
+    "jd_price",
+    "agreement_price",
+    "agreement_purchase_price",
+    "jd_self_operated_price",
+)
+
+
+def _serialize_product_price(value: Decimal | None) -> str | None:
+    """Keep all significant price digits while retaining the legacy 4-place minimum."""
+    if value is None:
+        return None
+    integer, _, fraction = format(value, "f").partition(".")
+    fraction = fraction.rstrip("0")
+    return f"{integer}.{fraction.ljust(4, '0')}"
+
+
+class _ProductPriceResponseMixin(BaseModel):
+    @field_serializer(
+        *_PRODUCT_PRICE_FIELDS,
+        when_used="json",
+        check_fields=False,
+    )
+    def serialize_product_price(self, value: Decimal | None) -> str | None:
+        return _serialize_product_price(value)
+
+
+class ProductListItem(_ProductPriceResponseMixin):
     id: uuid.UUID
     company_name: str | None
     listed_at: date | None
@@ -154,7 +183,7 @@ class ProductListItem(BaseModel):
     updated_at: datetime
 
 
-class ProductDetailResponse(BaseModel):
+class ProductDetailResponse(_ProductPriceResponseMixin):
     id: uuid.UUID
     company_name: str | None
     listed_at: date | None
@@ -224,7 +253,7 @@ class ProductPurgeResponse(BaseModel):
 
 class ProductCostUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    cost_price: Decimal = Field(gt=0, max_digits=18, decimal_places=4)
+    cost_price: Decimal = Field(gt=0, max_digits=65, decimal_places=30)
 
 
 class ProductUpdateRequest(BaseModel):
@@ -242,12 +271,12 @@ class ProductUpdateRequest(BaseModel):
     category_level3_name: str = Field(min_length=1, max_length=255)
     item_number: str | None = Field(default=None, max_length=255)
     jd_same_product_url: str | None = Field(default=None, max_length=2048)
-    cost_price: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=4)
-    market_price: Decimal | None = Field(default=None, max_digits=18, decimal_places=4)
-    jd_price: Decimal | None = Field(default=None, max_digits=18, decimal_places=4)
-    agreement_price: Decimal | None = Field(default=None, max_digits=18, decimal_places=4)
+    cost_price: Decimal | None = Field(default=None, gt=0, max_digits=65, decimal_places=30)
+    market_price: Decimal | None = Field(default=None, max_digits=65, decimal_places=30)
+    jd_price: Decimal | None = Field(default=None, max_digits=65, decimal_places=30)
+    agreement_price: Decimal | None = Field(default=None, max_digits=65, decimal_places=30)
     agreement_purchase_price: Decimal | None = Field(
-        default=None, max_digits=18, decimal_places=4
+        default=None, max_digits=65, decimal_places=30
     )
     profit: Decimal | None = Field(default=None, max_digits=18, decimal_places=4)
     jd_margin: Decimal | None = Field(default=None, max_digits=9, decimal_places=4)
@@ -263,7 +292,9 @@ class ProductUpdateRequest(BaseModel):
     remark: str | None = None
     discount_rate: Decimal | None = Field(default=None, ge=0, le=1, max_digits=9, decimal_places=4)
     restricted_regions: str | None = None
-    jd_self_operated_price: Decimal | None = Field(default=None, max_digits=18, decimal_places=4)
+    jd_self_operated_price: Decimal | None = Field(
+        default=None, max_digits=65, decimal_places=30
+    )
     reference_url: str | None = Field(default=None, max_length=2048)
     storefront_type: str | None = Field(default=None, max_length=64)
     sales_volume: int | None = Field(default=None, ge=0)
@@ -349,6 +380,9 @@ class ProductImportPreviewResponse(BaseModel):
     update_rows: int
     invalid_rows: int
     imported_rows: int
+    row_total: int
+    page: int
+    page_size: int
     rows: list[ProductImportRowResponse]
     supplier_matches: list[ProductImportSupplierMatchResponse]
 

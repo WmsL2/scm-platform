@@ -75,6 +75,39 @@ class SupplierRepository:
         )
         return list((await self.session.scalars(statement)).all())
 
+    async def eligible_source_suppliers_by_ids_for_update(
+        self, supplier_ids: set[uuid.UUID]
+    ) -> dict[uuid.UUID, Supplier]:
+        if not supplier_ids:
+            return {}
+        statement = (
+            select(Supplier)
+            .where(
+                Supplier.id.in_(sorted(supplier_ids, key=str)),
+                Supplier.is_deleted.is_(False),
+                Supplier.archive_status == ArchiveStatus.ARCHIVED,
+                Supplier.cooperation_status == CooperationStatus.NORMAL,
+            )
+            .order_by(Supplier.id)
+            .with_for_update()
+        )
+        suppliers = list((await self.session.scalars(statement)).all())
+        return {supplier.id: supplier for supplier in suppliers}
+
+    async def active_by_ids(self, supplier_ids: set[uuid.UUID]) -> dict[uuid.UUID, Supplier]:
+        if not supplier_ids:
+            return {}
+        statement = (
+            select(Supplier)
+            .where(
+                Supplier.id.in_(sorted(supplier_ids, key=str)),
+                Supplier.is_deleted.is_(False),
+            )
+            .order_by(Supplier.id)
+        )
+        suppliers = list((await self.session.scalars(statement)).all())
+        return {supplier.id: supplier for supplier in suppliers}
+
     async def list_active(
         self,
         page_params: PageParams,

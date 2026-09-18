@@ -124,11 +124,13 @@ class Product(Base):
     category_level3_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     item_number: Mapped[str | None] = mapped_column(String(255), nullable=True)
     jd_same_product_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
-    cost_price: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
-    market_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
-    jd_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
-    agreement_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
-    agreement_purchase_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    cost_price: Mapped[Decimal] = mapped_column(Numeric(65, 30), nullable=False)
+    market_price: Mapped[Decimal | None] = mapped_column(Numeric(65, 30), nullable=True)
+    jd_price: Mapped[Decimal | None] = mapped_column(Numeric(65, 30), nullable=True)
+    agreement_price: Mapped[Decimal | None] = mapped_column(Numeric(65, 30), nullable=True)
+    agreement_purchase_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(65, 30), nullable=True
+    )
     profit: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
     jd_margin: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
     purchasing_agent: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -146,7 +148,9 @@ class Product(Base):
     remark: Mapped[str | None] = mapped_column(Text, nullable=True)
     discount_rate: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
     restricted_regions: Mapped[str | None] = mapped_column(Text, nullable=True)
-    jd_self_operated_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    jd_self_operated_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(65, 30), nullable=True
+    )
     reference_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     storefront_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sales_volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -268,6 +272,7 @@ class ProductImportRow(Base):
         ),
         Index("ix_scm_product_import_row_task_id", "import_task_id"),
         Index("ix_scm_product_import_row_supplier_match_id", "supplier_match_id"),
+        Index("ix_scm_product_import_row_target_product_id", "target_product_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
@@ -277,6 +282,7 @@ class ProductImportRow(Base):
     source_row_number: Mapped[int] = mapped_column(nullable=False)
     source_data: Mapped[dict[str, str | None]] = mapped_column(JSON, nullable=False)
     calculated_data: Mapped[dict[str, str | None]] = mapped_column(JSON, nullable=False)
+    normalized_data: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     supplier_name_raw: Mapped[str | None] = mapped_column(String(255), nullable=True)
     image_storage_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     supplier_match_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -287,6 +293,8 @@ class ProductImportRow(Base):
     is_valid: Mapped[bool] = mapped_column(Boolean, nullable=False)
     write_action: Mapped[str] = mapped_column(String(16), nullable=False, default="CREATE")
     changed_fields: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    target_product_id: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+    target_product_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     is_imported: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     imported_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
     imported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
