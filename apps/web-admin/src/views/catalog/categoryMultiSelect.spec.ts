@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import type { CategoryFilterOption } from "../../types/category"
+import type { ProductCategoryFilterOption } from "../../types/catalog"
 import {
   derivedLevel1Keys,
   derivedLevel2Keys,
@@ -8,12 +8,12 @@ import {
   visibleSelection,
 } from "./categoryMultiSelect"
 
-const camera: CategoryFilterOption = {
+const camera: ProductCategoryFilterOption = {
   selection_key: "LEVEL3:camera", label: "数码 / 摄影 / 相机", level: "LEVEL3",
   level1_selection_key: "LEVEL1:camera", level2_selection_key: "LEVEL2:camera",
   level1_label: "数码", level2_label: "数码 / 摄影",
 }
-const printer: CategoryFilterOption = {
+const printer: ProductCategoryFilterOption = {
   selection_key: "LEVEL3:printer", label: "办公 / 办公设备 / 打印机", level: "LEVEL3",
   level1_selection_key: "LEVEL1:printer", level2_selection_key: "LEVEL2:printer",
   level1_label: "办公", level2_label: "办公 / 办公设备",

@@ -1,13 +1,3 @@
-export interface CategorySummary {
-  id: string
-  source_type: string
-  level1_name: string
-  level2_name: string
-  level3_name: string
-  deduction_rate: string
-  is_active: boolean
-}
-
 export type ProductStatus = "ACTIVE" | "DISABLED"
 
 export interface ProductListItem {
@@ -21,7 +11,6 @@ export interface ProductListItem {
   product_name: string | null
   item_number: string | null
   jd_same_product_url: string | null
-  category_id: string | null
   category_path: string
   source_supplier_id: string
   source_supplier_name: string | null
@@ -68,7 +57,6 @@ export interface ProductDetail extends Omit<
   ProductListItem,
   "category_path" | "created_by" | "created_by_username" | "updated_by" | "updated_by_username"
 > {
-  category: CategorySummary | null
   category_level1_name: string | null
   category_level2_name: string | null
   category_level3_name: string | null
@@ -85,8 +73,6 @@ export interface ProductListParams {
   supplier_name?: string
   category_level1_name?: string
   category_level2_name?: string
-  category_id?: string
-  category_ids?: string[]
   category_selections?: string[]
   source_supplier_id?: string
   cost_price_min?: string
@@ -98,6 +84,21 @@ export interface ProductListParams {
   sales_volume_min?: string
   sales_volume_max?: string
   status?: ProductStatus
+}
+
+export interface ProductCategoryFilterOption {
+  selection_key: string
+  label: string
+  level: "LEVEL1" | "LEVEL2" | "LEVEL3"
+  level1_selection_key: string
+  level2_selection_key: string
+  level1_label: string
+  level2_label: string
+}
+
+export interface ProductCategoryFilterOptionPage {
+  items: ProductCategoryFilterOption[]
+  has_more: boolean
 }
 
 export interface ProductPage {
@@ -134,7 +135,6 @@ export interface ProductImportRow {
   image_saved: boolean
   image_pending_save: boolean
   category_path: string
-  category_id: string | null
   supplier_match_id: string | null
   is_valid: boolean
   write_action: "CREATE" | "UPDATE"
@@ -180,7 +180,9 @@ export interface ProductUpdatePayload {
   brand: string | null
   model: string | null
   product_name: string | null
-  category_id: string
+  category_level1_name: string
+  category_level2_name: string
+  category_level3_name: string
   item_number: string | null
   jd_same_product_url: string | null
   cost_price: string

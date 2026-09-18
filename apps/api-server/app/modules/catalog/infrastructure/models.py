@@ -73,11 +73,8 @@ class Category(Base):
 class Product(Base):
     __tablename__ = "scm_product"
     __table_args__ = (
-        Index("ix_scm_product_category_id", "category_id"),
         Index("ix_scm_product_source_supplier_id", "source_supplier_id"),
-        UniqueConstraint(
-            "source_supplier_id", "sku", name="uq_scm_product_source_supplier_sku"
-        ),
+        UniqueConstraint("source_supplier_id", "sku", name="uq_scm_product_source_supplier_sku"),
         CheckConstraint("status IN ('ACTIVE', 'DISABLED')", name="ck_scm_product_status"),
         Index("ix_scm_product_listed_at", "listed_at"),
         Index("ix_scm_product_brand", "brand"),
@@ -92,6 +89,18 @@ class Product(Base):
         Index("ix_scm_product_agreement_price", "agreement_price"),
         Index("ix_scm_product_discount_rate", "discount_rate"),
         Index("ix_scm_product_sales_volume", "sales_volume"),
+        Index(
+            "ix_scm_product_status_category_path",
+            "status",
+            "category_level1_name",
+            "category_level2_name",
+            "category_level3_name",
+            mysql_length={
+                "category_level1_name": 128,
+                "category_level2_name": 128,
+                "category_level3_name": 128,
+            },
+        ),
         CheckConstraint(
             "sales_volume IS NULL OR sales_volume >= 0",
             name="ck_scm_product_sales_volume_nonnegative",
@@ -110,9 +119,6 @@ class Product(Base):
     model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     sku: Mapped[str | None] = mapped_column(String(255), nullable=True)
     product_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    category_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUIDChar36(), ForeignKey("scm_category.id", ondelete="RESTRICT"), nullable=True
-    )
     category_level1_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     category_level2_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     category_level3_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -261,7 +267,6 @@ class ProductImportRow(Base):
             "import_task_id", "source_row_number", name="uq_scm_product_import_row_task_source_row"
         ),
         Index("ix_scm_product_import_row_task_id", "import_task_id"),
-        Index("ix_scm_product_import_row_category_id", "category_id"),
         Index("ix_scm_product_import_row_supplier_match_id", "supplier_match_id"),
         Index("ix_scm_product_import_row_target_product_id", "target_product_id"),
     )
@@ -276,9 +281,6 @@ class ProductImportRow(Base):
     normalized_data: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     supplier_name_raw: Mapped[str | None] = mapped_column(String(255), nullable=True)
     image_storage_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
-    category_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUIDChar36(), ForeignKey("scm_category.id", ondelete="RESTRICT"), nullable=True
-    )
     supplier_match_id: Mapped[uuid.UUID | None] = mapped_column(
         UUIDChar36(),
         ForeignKey("scm_product_import_supplier_match.id", ondelete="RESTRICT"),

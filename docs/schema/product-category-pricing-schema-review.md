@@ -1,9 +1,9 @@
 # Product / Category / Pricing Schema Review
 
-状态：HISTORICAL / SUPERSEDED BY ADR-0010、ADR-0018、ADR-0021
+状态：HISTORICAL / SUPERSEDED BY ADR-0010、ADR-0018、ADR-0021、ADR-0024、ADR-0026
 范围：一期商品、三级类目与当前价格快照的数据库结构评审稿；不包含 Migration、ORM、API、UI 或 Pricing Service。
 
-> ADR-0018 替代 ADR-0010 中固定商品大表不解析 `category_id` 的结论：导入必须唯一匹配有效商城三级 Category，正式 Product 写入该 `category_id` 及 Category-owned 路径。ADR-0010 关于 Excel 价格直接保存的结论保持有效；Pricing Service 仍用于单独成本价更新。2026-09-11 的已确认补丁进一步冻结 `source_supplier_id + sku` 为 Product 防重业务键，见 `20260911_0018`。
+> 本文关于 Product → Category、类目扣点和自动价格计算的结论已经由 ADR-0024、ADR-0026 取代：Product 不再有 `category_id`，三级类目直接保存，价格独立维护。保留本文仅作设计演进记录。
 
 > 本文的 32 列 Matrix 是历史设计记录，不再作为当前实现依据。2026 正式 43 列字段、类型、覆盖、查询和编辑规则以 `docs/data-gates/product-master-field-dictionary.md` 与 ADR-0021 为准；Revision `20260917_0030` 已实施新增 Schema。
 

@@ -1,5 +1,7 @@
 import { http } from "../shared/http/runtime"
 import type {
+  ProductCategoryFilterOption,
+  ProductCategoryFilterOptionPage,
   ProductDetail,
   ProductImportConfirmResult,
   ProductImportPreview,
@@ -30,6 +32,19 @@ function listQuery(params: ProductListParams): string {
 export const productApi = {
   list(params: ProductListParams = {}): Promise<ProductPage> {
     return http.get<ProductPage>(path(listQuery(params)))
+  },
+
+  categoryFilterOptions(
+    level: ProductCategoryFilterOption["level"],
+    keyword = "",
+    offset = 0,
+    categorySelections: string[] = [],
+    status: ProductListParams["status"] = "ACTIVE",
+  ): Promise<ProductCategoryFilterOptionPage> {
+    const query = new URLSearchParams({ level, limit: "50", offset: String(offset), status })
+    if (keyword.trim()) query.set("keyword", keyword.trim())
+    for (const selection of categorySelections) query.append("category_selections", selection)
+    return http.get<ProductCategoryFilterOptionPage>(path(`/category-filter-options?${query}`))
   },
 
   get(id: string): Promise<ProductDetail> {

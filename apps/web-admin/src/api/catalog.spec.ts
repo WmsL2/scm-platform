@@ -67,10 +67,10 @@ describe("product import api", () => {
     http.get.mockResolvedValue({ items: [] })
     const { productApi } = await import("./catalog")
 
-    await productApi.list({ category_ids: ["category-1", "category-2"] })
+    await productApi.list({ category_selections: ["LEVEL1:test-a", "LEVEL2:test-b"] })
 
     expect(http.get).toHaveBeenCalledWith(
-      "/api/v1/products?category_ids=category-1&category_ids=category-2",
+      "/api/v1/products?category_selections=LEVEL1%3Atest-a&category_selections=LEVEL2%3Atest-b",
     )
   })
 
@@ -84,6 +84,23 @@ describe("product import api", () => {
 
     expect(http.get).toHaveBeenCalledWith(
       "/api/v1/products?category_selections=LEVEL1%3Acategory-1&category_selections=LEVEL3%3Acategory-2",
+    )
+  })
+
+  it("loads Product Master category filter options with the active filter context", async () => {
+    http.get.mockResolvedValue({ items: [], has_more: false })
+    const { productApi } = await import("./catalog")
+
+    await productApi.categoryFilterOptions(
+      "LEVEL3",
+      "相机",
+      50,
+      ["LEVEL1:token"],
+      "DISABLED",
+    )
+
+    expect(http.get).toHaveBeenCalledWith(
+      "/api/v1/products/category-filter-options?level=LEVEL3&limit=50&offset=50&status=DISABLED&keyword=%E7%9B%B8%E6%9C%BA&category_selections=LEVEL1%3Atoken",
     )
   })
 

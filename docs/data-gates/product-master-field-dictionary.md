@@ -8,7 +8,7 @@ Last Updated：2026-09-17
 - 整理后的商品大表一行等于 `scm_product` 一条正式商品；系统 UUID `id` 是主键。
 - `source_supplier_id + sku` 是数据库防重业务键，也是重新导入定位键；供应商和 SKU 必填且创建后不可修改。
 - 供应商名称只在 Staging 中用于匹配现有 `ARCHIVED + NORMAL + not deleted` Supplier；导入不创建供应商。
-- 一级、二级、三级类目必须唯一匹配有效 `MALL_LEVEL3` Category；正式 Product 保存 `category_id` 及类目路径快照。
+- 一级、二级、三级类目是正式 Product 的必填文本；不关联、创建或校验 `MALL_LEVEL3` Category。
 - `cost_price` 必填且大于 0。模板中的金额、毛利和比例均作为正式值直接保存，导入不调用 Pricing Service。
 - 同键重新导入覆盖其余 41 个模板字段；空单元格清空旧值。若图片替换或清空，数据库事务成功后删除旧本地图片。
 - 单独的“修改成本价”操作仅更新成本价；价格、利润和比例均是独立正式值，不自动重算。
@@ -26,9 +26,9 @@ Last Updated：2026-09-17
 | 5 | 型号 | `model` | `VARCHAR(255)` | 非唯一 |
 | 6 | sku | `sku` | `VARCHAR(255)` | 必填；与供应商组成 UNIQUE；不可修改 |
 | 7 | 商品名称 | `product_name` | `VARCHAR(512)` | 非唯一 |
-| 8 | 一级类目 | Category 匹配输入 / `category_level1_name` | `VARCHAR(255)` | 三级路径受控匹配 |
-| 9 | 二级类目 | Category 匹配输入 / `category_level2_name` | `VARCHAR(255)` | 三级路径受控匹配 |
-| 10 | 三级类目 | `category_id` / `category_level3_name` | `CHAR(36)` / `VARCHAR(255)` | 必须唯一匹配有效商城三级类目 |
+| 8 | 一级类目 | `category_level1_name` | `VARCHAR(255)` | 必填文本 |
+| 9 | 二级类目 | `category_level2_name` | `VARCHAR(255)` | 必填文本 |
+| 10 | 三级类目 | `category_level3_name` | `VARCHAR(255)` | 必填文本 |
 | 11 | 货号 | `item_number` | `VARCHAR(255)` | 非唯一 |
 | 12 | 链接 | `jd_same_product_url` | `VARCHAR(2048)` | 普通链接文本 |
 | 13 | 成本价 | `cost_price` | `DECIMAL(18,4)` | 必填且大于 0 |
@@ -69,7 +69,7 @@ Last Updated：2026-09-17
 ## 查询与页面规则
 
 - 所属公司、采销员、品牌和供应商名称使用包含匹配。
-- 类目使用三个独立、可搜索且可多选的下拉框：一级、二级、三级均可直接选择。首次进入商品页不加载完整类目表；用户聚焦或搜索时，`GET /api/v1/categories/filter-options` 按层级每批最多返回 50 条受控的有效商城三级路径选项，并以 `offset` 与 `has_more` 支持下拉滚动续载。更换搜索词会重置结果集。直接选择三级时，所属一级和二级自动回显；直接选择二级时，所属一级自动回显。前端仅提交用户的直接选择；后端按一级名称、一级/二级路径或三级 `category_id` 组成 OR 条件，自动回显的父级不重复收窄结果。
+- 类目使用三个独立、可搜索且可多选的下拉框：一级、二级、三级均可直接选择。首次进入商品页不加载完整类目表；用户聚焦或搜索时，`GET /api/v1/products/category-filter-options` 按层级每批最多返回 50 条从当前 Product Master 路径去重的选项，并以 `offset` 与 `has_more` 支持下拉滚动续载。更换搜索词会重置结果集。直接选择三级时，所属一级和二级自动回显；直接选择二级时，所属一级自动回显。前端仅提交用户的直接选择；后端按一级名称、一级/二级路径或完整三级路径组成 OR 条件，自动回显的父级不重复收窄结果。
 - 成本价、协议价、折扣率和销量使用包含边界的最小值/最大值筛选；页面折扣率输入 `80` 表示 `0.8`。
 - 综合搜索覆盖商品名、品牌、型号、SKU、货号、69码、规格、卖点、三级类目路径、所属公司、采销员和供应商名称；所有筛选条件按 AND 组合。
 - 列表默认显示核心列，并允许用户自定义显示列；设置保存在浏览器本地。详情与编辑展示全部业务字段。

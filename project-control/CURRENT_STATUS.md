@@ -21,7 +21,7 @@ Sprint 1 — Auth/RBAC + Supplier
 状态：IN_PROGRESS
 进度：Auth Kernel DONE；Web Admin Auth DONE / REAL API VERIFIED；Business Sequence DONE / IMPLEMENTED（Revision `20260907_0003`）；Supplier Master Backend DONE / MERGED via PR #13（Revision `20260907_0004`）；Supplier Delete & Import Patch MERGED / IMPLEMENTED（Revision `20260908_0005`）；Supplier Name Uniqueness / Deleted-Record Recovery IMPLEMENTED（Revision `20260910_0016`）；Account / Registration / Profile IMPLEMENTED / VERIFIED（Revision `20260908_0006`）；Custom Role Create / Safe Delete IMPLEMENTED（Revision `20260908_0007`、`20260911_0018`）；Auth Session Refresh IMPLEMENTED（Revision `20260911_0021`）；Post-Merge P1 Transaction / Validation Hardening VERIFIED（无 Migration）；Product Master、Import、防重、基础资料编辑、停用/启用、永久删除、通过行分批导入、模板下载、确认时图片落盘及供应商合作状态联动 IMPLEMENTED（Revision `20260909_0008` → `20260914_0023`）。当前 Alembic 迁移链为单 Head：`20260907_0004` → `20260908_0005` → `20260908_0006` → `20260908_0007` → `20260909_0008` → `20260909_0009` → `20260910_0010`（用户逻辑删除）→ `20260910_0013` → `20260910_0014` → `20260910_0015` → `20260910_0016`（供应商名称唯一）→ `20260910_0017`（合作状态恢复）→ `20260911_0018`（商品防重、编辑与角色删除权限）→ `20260911_0019`（商品逻辑删除）→ `20260911_0020`（商品停用与永久删除）→ `20260911_0021`（Auth 服务端会话刷新）→ `20260911_0022`（通过行分批导入）→ `20260914_0023`（确认时图片落盘与过期临时媒体清理）。分支与合入状态以 GitHub / `main` 历史为准。
 
-商品主数据 2026 模板与组合筛选已在分支 `feat/product-master-2026-template-filters` 实现；最新单 Head 为 `20260917_0030`（基于合并 Head `20260917_0029`）。
+商品主数据 2026 模板、组合筛选、Product Master 直接类目候选及商品与类目维表脱钩已在分支 `feat/product-master-category-filter-options` 实现；最新单 Head 为 `20260918_0032`（基于 `20260918_0031`）。
 
 商品导入数值安全、4,000+ 行分页与并发确认保护已在分支 `feat/product-import-safety-concurrency` 实现；Revision `20260918_0031` 为暂存行增加标准化值和 Product 版本快照。Confirm 以供应商 + SKU 锁及版本冲突返回 409，重型工作簿操作默认每 API 进程并发 1。
 
@@ -51,7 +51,7 @@ Sprint 1 — Auth/RBAC + Supplier
 
 ## 下一步
 
-- 主任务：Product Master 已升级为 2026 固定 43 列模板；新增 11 个正式字段、覆盖式同键重新导入、成功提交后的旧图片回收、组合筛选、可搜索三级类目联动、自定义列表列和全字段详情/编辑均已实现。商品导入已改为分块上传与磁盘只读解析，默认支持 1GB / 100,000 行，浏览器预览超时为 15 分钟（无 Alembic Revision，ADR-0022）。供应商 + SKU 仍为不可修改业务键，停用同键商品仍阻止入库（Revision `20260917_0030`，ADR-0021）。
+- 主任务：Product Master 已升级为 2026 固定 43 列模板；新增 11 个正式字段、覆盖式同键重新导入、成功提交后的旧图片回收、组合筛选、可搜索三级类目联动、自定义列表列和全字段详情/编辑均已实现。商品列表与编辑候选直接从当前可见 Product Master 三级路径去重取得；`scm_product` 与导入暂存行已移除 `category_id`，三级类目作为三个必填商品文本直接保存，类目维表保留为独立管理模块（Revision `20260918_0032`，ADR-0026）。商品导入已改为分块上传与磁盘只读解析，默认支持 1GB / 100,000 行，浏览器预览超时为 15 分钟（无 Alembic Revision，ADR-0022）。供应商 + SKU 仍为不可修改业务键，停用同键商品仍阻止入库。
 - 后续任务：准备真实商品大表需要的有效 Supplier Master，并处理 Excel 的空供应商；供应商 Excel 导入目前仅要求供应商名称，其余模板字段可后补；类目 Source Loader 不再是商品 Confirm 前置条件。
 - 业务冻结：Supplier Product Quote 已取消；后续供应商新报价直接更新正式 Product 的 `cost_price`，成本价仍大于零但不自动重算其他价格；不创建报价历史、有效期或比价模块（ADR-0024）。
 - Auth 会话：Refresh Token、服务端 Session、令牌轮换、三天无活动过期、三十天绝对过期和全设备失效已实现；管理员设备会话管理页与 Role disable policy 仍待后续冻结。
@@ -61,7 +61,7 @@ Sprint 1 — Auth/RBAC + Supplier
 
 - Repository：无代码合并 Blocker。
 - Supplier：名称唯一与重复数据清理已实现：同名只保留最早历史记录，后建重复记录已物理删除；创建/导入遇到已逻辑删除的同名记录会恢复并覆盖。合作状态已冻结为 NORMAL ↔ STOPPED / BLACKLIST，恢复均保留原因和历史；Import Confirm 已按原子持久化加固：锁定实际导入行、flush 成功和数量一致后才确认批次，异常整批回滚。未确认的企业、税务、地址、银行、资质等字段仍不得自行添加。资质业务字段及其 API 继续冻结。
-- Product / Catalog：Product Master 与 Product Import 已实现；实际 Confirm 写入当前通过新增行与正常同键更新行，空/无效来源供应商、同 Excel 重复或停用同键商品等失败行保留在 Staging，不会入库。Product 已冻结为 `ACTIVE` / `DISABLED`：停用保留业务键并阻止导入；仅已停用商品可由 `product:purge` 永久删除，删除后可新建同键商品。无受控类目关联 Product 的独立成本价维护仍待后续范围。
+- Product / Catalog：Product Master 与 Product Import 已实现；实际 Confirm 写入当前通过新增行与正常同键更新行，空/无效来源供应商、三级类目为空、同 Excel 重复或停用同键商品等失败行保留在 Staging，不会入库。Product 已冻结为 `ACTIVE` / `DISABLED`：停用保留业务键并阻止导入；仅已停用商品可由 `product:purge` 永久删除，删除后可新建同键商品。Product 已不再关联 Category Master。
 
 ## Workstreams / Implementation Context
 
@@ -73,7 +73,7 @@ Sprint 1 — Auth/RBAC + Supplier
   注册审批、`/login` 与 `/register` 兼容入口保持不变。
 - Role Management：自定义角色创建 IMPLEMENTED（Revision `20260908_0007`）；安全删除 IMPLEMENTED（Revision `20260911_0018`）。仅未分配给有效用户的自定义角色可逻辑删除；内置角色、仍关联有效用户的角色一律拒绝删除。权限配置页按权限码前缀动态分组，支持模块折叠、模块全选/半选和单项勾选。角色编辑与停用仍属未来范围。
 - Post-Merge Hardening：Request transaction ownership、Service caller-owned transaction participation、Account association ID 幂等去重与 Supplier UUID Router validation 已验证；ADR-0007 冻结事务规则，无 Migration 变化。
-- Catalog：`IMPLEMENTED / PRODUCT_MASTER_2026_TEMPLATE_AND_FILTERS`；固定商品大表以一级、二级、三级文本唯一匹配有效商城 Category，正式 Product 写入 `category_id` 与路径，Excel 价格直接保存。正常同键商品可覆盖更新，停用同键商品仍阻止；空 Excel 单元格清空旧值。Product 列表提供综合搜索、文本包含、类目和价格/比例/销量闭区间筛选及本地自定义列；详情/编辑覆盖全部业务字段，供应商与 SKU 只读，图片仅通过受控上传/清除维护。
+- Catalog：`IMPLEMENTED / PRODUCT_MASTER_CATEGORY_DECOUPLED`；固定商品大表直接保存三级必填文本，不再匹配或写入 Category ID，Excel 价格直接保存。正常同键商品可覆盖更新，停用同键商品仍阻止；空 Excel 单元格清空旧值。Product 列表提供综合搜索、文本包含、类目和价格/比例/销量闭区间筛选及本地自定义列；详情/编辑覆盖全部业务字段，供应商与 SKU 只读，图片仅通过受控上传/清除维护。
 - Product Price Maintenance：`cost_price` 是当前成本价和当前供应商报价，不建设 `scm_supplier_product_quote`；成本价更新仍受 `product:cost:update` 保护，但仅保存成本价，所有价格、利润和比例独立维护（ADR-0024）。
 <<<<<<< HEAD
 - Bid Matching / Task 2-3：PR #46 已提供投标共享 Schema 后，匹配任务、候选持久化、Top 20 可解释候选、人工选品不可变快照、无报价与四个受权限保护的 API 已完成。Task 3 已实现 Web 项目列表、创建、详情、文件版本和服务端分页匹配工作台；候选按需加载且历史展示不可变快照。项目业务开始时间 `start_at` 与审计 `created_at` 已分离。基础信息可由 `bid:update` 在允许状态编辑；删除采用 `bid:void` 业务作废，`VOIDED` 为历史保留终态（Revisions `20260916_0025`、`20260916_0026`、`20260916_0027`）。真实 API 浏览器验收仍等待已识别 BidTemplate，Template Management 仍为后续任务。
@@ -82,4 +82,4 @@ Sprint 1 — Auth/RBAC + Supplier
 - Bid Matching / Task 2：PR #46 已提供投标共享 Schema 后，2 号任务已接入匹配任务、候选持久化、Top 20 可解释候选、人工选品不可变快照、无报价与四个受权限保护的 API。MySQL 持久化测试、全量后端测试、Ruff 和 mypy 已通过；3 号前端联调及未来 ARQ Worker 验收尚未完成。
 >>>>>>> origin/main
 - Web Admin Data Refresh：统一 API 客户端已设置 `cache: no-store`；新增、编辑、删除和导入确认后的页面重新加载不会复用浏览器中的旧 GET 响应，前端测试、类型检查和生产构建已验证。
-- Category Management：基于既有 `scm_category` 三级维表补齐列表、详情、新增、编辑、Product 引用保护删除、启用选择和 Excel 导入；未新增 Schema/Migration/专属权限，复用 Catalog 既有权限。
+- Category Management：基于既有 `scm_category` 三级维表补齐列表、详情、新增、编辑、删除、启用选择和 Excel 导入；商品不再引用该表，删除不再因 Product 被阻止。
