@@ -130,6 +130,44 @@ async def test_category_list_server_side_filters_pagination_and_selection() -> N
             selection = (await c.get("/api/v1/categories/selection", headers=h)).json()["data"]
             selected_ids = {item["id"] for item in selection}
             assert str(categories[0].id) in selected_ids and str(categories[1].id) not in selected_ids
+
+            level3_options = await c.get(
+                "/api/v1/categories/filter-options",
+                headers=h,
+                params={"level": "LEVEL3", "keyword": "筛测配件"},
+            )
+            assert level3_options.status_code == 200
+            assert level3_options.json()["data"]["has_more"] is False
+            assert len(level3_options.json()["data"]["items"]) == 1
+            option = level3_options.json()["data"]["items"][0]
+            assert option["selection_key"] == f"LEVEL3:{categories[0].id}"
+            assert option["level1_selection_key"] == f"LEVEL1:{categories[0].id}"
+            assert option["label"] == "筛测个人护理 / 筛测假发 / 筛测配件甲"
+
+            level1_options = await c.get(
+                "/api/v1/categories/filter-options",
+                headers=h,
+                params={"level": "LEVEL1", "keyword": "筛测个人"},
+            )
+            assert level1_options.status_code == 200
+            assert [item["label"] for item in level1_options.json()["data"]["items"]] == ["筛测个人护理"]
+
+            first_page = await c.get(
+                "/api/v1/categories/filter-options",
+                headers=h,
+                params={"level": "LEVEL3", "keyword": "分页测试", "limit": 10},
+            )
+            second_page = await c.get(
+                "/api/v1/categories/filter-options",
+                headers=h,
+                params={"level": "LEVEL3", "keyword": "分页测试", "offset": 10, "limit": 10},
+            )
+            first_data, second_data = first_page.json()["data"], second_page.json()["data"]
+            assert first_data["has_more"] is True and second_data["has_more"] is True
+            assert len(first_data["items"]) == len(second_data["items"]) == 10
+            assert {item["selection_key"] for item in first_data["items"]}.isdisjoint(
+                {item["selection_key"] for item in second_data["items"]}
+            )
     finally:
         await clean(uid)
 
@@ -168,6 +206,7 @@ async def test_category_crud_permissions_are_independent() -> None:
             product_headers = actors["product:list"][1]
             assert (await client.get("/api/v1/categories", headers=product_headers)).status_code == 403
             assert (await client.get("/api/v1/categories/selection", headers=product_headers)).status_code == 200
+            assert (await client.get("/api/v1/categories/filter-options?level=LEVEL1", headers=product_headers)).status_code == 200
 
             detail_headers = actors["category:detail"][1]
             assert (await client.get(f"/api/v1/categories/{category_id}", headers=detail_headers)).status_code == 200

@@ -1,11 +1,12 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import cast
+from typing import List, cast
 
 from sqlalchemy import Select, and_, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.contracts import PageParams
 from app.modules.catalog.domain.lifecycle import ProductStatus
@@ -192,6 +193,9 @@ class ProductRepository:
         category_level1_name: str | None,
         category_level2_name: str | None,
         category_id: uuid.UUID | None,
+        category_ids: set[uuid.UUID],
+        category_level1_names: set[str],
+        category_level2_paths: set[tuple[str, str]],
         cost_price_min: Decimal | None,
         cost_price_max: Decimal | None,
         agreement_price_min: Decimal | None,
@@ -241,6 +245,22 @@ class ProductRepository:
         if category_id:
             statement = statement.where(Product.category_id == category_id)
             count_statement = count_statement.where(Product.category_id == category_id)
+        category_selection_criteria: List[ColumnElement[bool]] = []
+        if category_ids:
+            category_selection_criteria.append(Product.category_id.in_(category_ids))
+        if category_level1_names:
+            category_selection_criteria.append(
+                Product.category_level1_name.in_(category_level1_names)
+            )
+        if category_level2_paths:
+            category_selection_criteria.append(or_(*[
+                and_(Product.category_level1_name == level1, Product.category_level2_name == level2)
+                for level1, level2 in category_level2_paths
+            ]))
+        if category_selection_criteria:
+            category_criterion = or_(*category_selection_criteria)
+            statement = statement.where(category_criterion)
+            count_statement = count_statement.where(category_criterion)
         if source_supplier_id:
             statement = statement.where(Product.source_supplier_id == source_supplier_id)
             count_statement = count_statement.where(

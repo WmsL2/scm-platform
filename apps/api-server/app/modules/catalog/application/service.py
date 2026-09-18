@@ -51,6 +51,8 @@ class ProductService:
         category_level1_name: str | None,
         category_level2_name: str | None,
         category_id: uuid.UUID | None,
+        category_ids: list[uuid.UUID],
+        category_selections: List[str],
         cost_price_min: Decimal | None,
         cost_price_max: Decimal | None,
         agreement_price_min: Decimal | None,
@@ -65,6 +67,9 @@ class ProductService:
         self._validate_range("agreement_price", agreement_price_min, agreement_price_max)
         self._validate_range("discount_rate", discount_rate_min, discount_rate_max)
         self._validate_range("sales_volume", sales_volume_min, sales_volume_max)
+        level1_names, level2_paths, selected_category_ids = await self._resolve_category_selections(
+            category_selections
+        )
         products, total = await self.repository.list(
             page_params,
             keyword=keyword.strip() if keyword else None,
@@ -76,6 +81,9 @@ class ProductService:
             category_level1_name=category_level1_name,
             category_level2_name=category_level2_name,
             category_id=category_id,
+            category_ids=set(category_ids) | selected_category_ids,
+            category_level1_names=level1_names,
+            category_level2_paths=level2_paths,
             cost_price_min=cost_price_min,
             cost_price_max=cost_price_max,
             agreement_price_min=agreement_price_min,
@@ -100,6 +108,46 @@ class ProductService:
             page=page_params.page,
             page_size=page_params.page_size,
         )
+
+    async def _resolve_category_selections(
+        self, selections: List[str]
+    ) -> tuple[set[str], set[tuple[str, str]], set[uuid.UUID]]:
+        parsed: List[tuple[str, uuid.UUID]] = []
+        for selection in selections:
+            level, separator, raw_id = selection.partition(":")
+            if level not in {"LEVEL1", "LEVEL2", "LEVEL3"} or not separator:
+                raise AppError(
+                    "PRODUCT_CATEGORY_SELECTION_INVALID", "Invalid category selection", 422
+                )
+            try:
+                parsed.append((level, uuid.UUID(raw_id)))
+            except ValueError as exc:
+                raise AppError(
+                    "PRODUCT_CATEGORY_SELECTION_INVALID", "Invalid category selection", 422
+                ) from exc
+        if not parsed:
+            return set(), set(), set()
+        categories = await self.repository.active_mall_categories_by_ids(
+            {category_id for _, category_id in parsed}
+        )
+        if len(categories) != len({category_id for _, category_id in parsed}):
+            raise AppError(
+                "PRODUCT_CATEGORY_SELECTION_INELIGIBLE",
+                "A selected category is no longer active",
+                422,
+            )
+        level1_names: set[str] = set()
+        level2_paths: set[tuple[str, str]] = set()
+        level3_ids: set[uuid.UUID] = set()
+        for level, category_id in parsed:
+            category = categories[category_id]
+            if level == "LEVEL1":
+                level1_names.add(category.level1_name)
+            elif level == "LEVEL2":
+                level2_paths.add((category.level1_name, category.level2_name))
+            else:
+                level3_ids.add(category.id)
+        return level1_names, level2_paths, level3_ids
 
     async def get(self, product_id: uuid.UUID) -> ProductDetailResponse:
         product = await self.repository.by_id(product_id)

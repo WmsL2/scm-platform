@@ -25,6 +25,21 @@ class CategoryResponse(BaseModel):
     business_unit: str | None
 
 
+class CategoryFilterOptionResponse(BaseModel):
+    selection_key: str
+    label: str
+    level: Literal["LEVEL1", "LEVEL2", "LEVEL3"]
+    level1_selection_key: str
+    level2_selection_key: str
+    level1_label: str
+    level2_label: str
+
+
+class CategoryFilterOptionPageResponse(BaseModel):
+    items: list[CategoryFilterOptionResponse]
+    has_more: bool
+
+
 class CategoryWriteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_type: Literal["MALL_LEVEL3", "INDUSTRIAL_LINE"]

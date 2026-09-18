@@ -247,6 +247,94 @@ async def test_product_api_lists_details_and_recalculates_cost_atomically() -> N
         await cleanup_user(updater_id)
 
 
+async def test_product_api_filters_multiple_category_ids_as_a_union() -> None:
+    user_id, headers = await create_product_user(PRODUCT_PERMISSIONS)
+    supplier_id, first_category_id, first_product_id = await create_product_fixture()
+    second_category_id, second_product_id = uuid.uuid4(), uuid.uuid4()
+    try:
+        async with SessionLocal() as session:
+            session.add_all(
+                [
+                    Category(
+                        id=second_category_id,
+                        source_type="MALL_LEVEL3",
+                        level1_name="另一一级",
+                        level2_name="另一二级",
+                        level3_name="另一三级",
+                        level3_external_id=f"test-{second_category_id}",
+                        deduction_rate=Decimal("0.0800"),
+                    ),
+                    Product(
+                        id=second_product_id,
+                        product_name="第二个类目商品",
+                        sku="SKU-CATEGORY-SECOND",
+                        source_supplier_id=supplier_id,
+                        category_id=second_category_id,
+                        category_level1_name="另一一级",
+                        category_level2_name="另一二级",
+                        category_level3_name="另一三级",
+                        cost_price=Decimal("200.0000"),
+                    ),
+                ]
+            )
+            await session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            selected = await client.get(
+                "/api/v1/products",
+                headers=headers,
+                params=[
+                    ("category_ids", str(first_category_id)),
+                    ("category_ids", str(second_category_id)),
+                ],
+            )
+            assert selected.status_code == 200
+            assert {str(first_product_id), str(second_product_id)}.issubset(
+                {item["id"] for item in selected.json()["data"]["items"]}
+            )
+
+            one_category = await client.get(
+                "/api/v1/products",
+                headers=headers,
+                params=[("category_ids", str(second_category_id))],
+            )
+            assert one_category.status_code == 200
+            assert str(second_product_id) in {
+                item["id"] for item in one_category.json()["data"]["items"]
+            }
+            assert str(first_product_id) not in {
+                item["id"] for item in one_category.json()["data"]["items"]
+            }
+
+            direct_selection = await client.get(
+                "/api/v1/products",
+                headers=headers,
+                params=[
+                    ("category_selections", f"LEVEL1:{first_category_id}"),
+                    ("category_selections", f"LEVEL3:{second_category_id}"),
+                ],
+            )
+            assert direct_selection.status_code == 200
+            assert {str(first_product_id), str(second_product_id)}.issubset(
+                {item["id"] for item in direct_selection.json()["data"]["items"]}
+            )
+
+            invalid_selection = await client.get(
+                "/api/v1/products",
+                headers=headers,
+                params={"category_selections": "LEVEL3:not-a-uuid"},
+            )
+            assert invalid_selection.status_code == 422
+            assert invalid_selection.json()["code"] == "PRODUCT_CATEGORY_SELECTION_INVALID"
+    finally:
+        async with SessionLocal() as session:
+            await session.execute(delete(Product).where(Product.id == second_product_id))
+            await session.execute(delete(Category).where(Category.id == second_category_id))
+            await session.commit()
+        await cleanup_fixture(supplier_id, first_category_id, first_product_id)
+        await cleanup_user(user_id)
+
+
 async def test_product_api_enforces_permissions_and_validates_paths() -> None:
     user_id, headers = await create_product_user(("product:cost:update",))
     try:

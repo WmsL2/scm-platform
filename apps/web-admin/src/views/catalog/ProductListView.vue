@@ -8,12 +8,26 @@ import { productApi } from "../../api/catalog"
 import { categoryApi } from "../../api/category"
 import { HttpError } from "../../shared/http"
 import { useAuthStore } from "../../stores/auth"
+import {
+  derivedLevel1Keys,
+  derivedLevel2Keys,
+  updateExplicitSelection,
+  visibleSelection,
+} from "./categoryMultiSelect"
 import type {
   ProductImportPreview,
   ProductImportSupplierCandidate,
   ProductListItem,
 } from "../../types/catalog"
-import type { Category } from "../../types/category"
+import type { CategoryFilterOption } from "../../types/category"
+
+type CategorySelectInstance = {
+  scrollbarRef?: {
+    wrapRef?: HTMLElement
+  }
+}
+
+type CategoryPopupPosition = { scrollTop: number; scrollLeft: number }
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -24,10 +38,29 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = 20
 const advancedVisible = ref(false)
-const categories = ref<Category[]>([])
-const categoryLevel1 = ref("")
-const categoryLevel2 = ref("")
-const categoryLevel3Id = ref("")
+const directCategoryLevel1Names = ref<string[]>([])
+const directCategoryLevel2Keys = ref<string[]>([])
+const directCategoryLevel3Ids = ref<string[]>([])
+const categoryOptionsByKey = ref(new Map<string, CategoryFilterOption>())
+const categoryOptionResults = reactive<Record<CategoryFilterOption["level"], CategoryFilterOption[]>>({
+  LEVEL1: [], LEVEL2: [], LEVEL3: [],
+})
+const categoryOptionLoading = reactive<Record<CategoryFilterOption["level"], boolean>>({
+  LEVEL1: false, LEVEL2: false, LEVEL3: false,
+})
+const categoryOptionNextOffset = reactive<Record<CategoryFilterOption["level"], number>>({
+  LEVEL1: 0, LEVEL2: 0, LEVEL3: 0,
+})
+const categoryOptionHasMore = reactive<Record<CategoryFilterOption["level"], boolean>>({
+  LEVEL1: true, LEVEL2: true, LEVEL3: true,
+})
+const categoryOptionKeyword = reactive<Record<CategoryFilterOption["level"], string>>({
+  LEVEL1: "", LEVEL2: "", LEVEL3: "",
+})
+const categoryLevel1SelectRef = ref<CategorySelectInstance>()
+const categoryLevel2SelectRef = ref<CategorySelectInstance>()
+const categoryLevel3SelectRef = ref<CategorySelectInstance>()
+const categorySearchSequence = { LEVEL1: 0, LEVEL2: 0, LEVEL3: 0 }
 const filters = reactive({
   keyword: "",
   source_supplier_id: typeof route.query.source_supplier_id === "string" ? route.query.source_supplier_id : "",
@@ -56,16 +89,31 @@ const columnOptions = [
 ] as const
 const storedColumns = localStorage.getItem(columnStorageKey)
 const visibleColumns = ref<string[]>(storedColumns ? JSON.parse(storedColumns) : defaultColumns)
-const level1Options = computed(() => uniqueNames(categories.value.map((item) => item.level1_name)))
-const level2Options = computed(() => uniqueNames(
-  categories.value
-    .filter((item) => item.level1_name === categoryLevel1.value)
-    .map((item) => item.level2_name),
+const level1Options = computed(() => optionsFor("LEVEL1", selectedCategoryLevel1Names.value))
+const level2Options = computed(() => optionsFor("LEVEL2", selectedCategoryLevel2Keys.value))
+const level3Options = computed(() => optionsFor("LEVEL3", directCategoryLevel3Ids.value))
+const derivedCategoryLevel2Keys = computed(() => derivedLevel2Keys(
+  categoryOptionsByKey.value,
+  directCategoryLevel3Ids.value,
 ))
-const level3Options = computed(() => categories.value.filter(
-  (item) => item.level1_name === categoryLevel1.value && item.level2_name === categoryLevel2.value,
+const derivedCategoryLevel1Names = computed(() => derivedLevel1Keys(
+  categoryOptionsByKey.value,
+  directCategoryLevel2Keys.value,
+  directCategoryLevel3Ids.value,
 ))
-const selectedCategory = computed(() => categories.value.find((item) => item.id === categoryLevel3Id.value))
+const selectedCategoryLevel1Names = computed(() => visibleSelection(
+  directCategoryLevel1Names.value,
+  derivedCategoryLevel1Names.value,
+))
+const selectedCategoryLevel2Keys = computed(() => visibleSelection(
+  directCategoryLevel2Keys.value,
+  derivedCategoryLevel2Keys.value,
+))
+const categorySelections = computed(() => [
+  ...directCategoryLevel1Names.value,
+  ...directCategoryLevel2Keys.value,
+  ...directCategoryLevel3Ids.value,
+])
 const importInput = ref<HTMLInputElement>()
 const importing = ref(false)
 const importDialogVisible = ref(false)
@@ -94,9 +142,7 @@ async function loadProducts(targetPage = page.value): Promise<void> {
       purchasing_agent: filters.purchasing_agent,
       brand: filters.brand,
       supplier_name: filters.supplier_name,
-      category_level1_name: categoryLevel1.value || undefined,
-      category_level2_name: categoryLevel2.value || undefined,
-      category_id: selectedCategory.value?.id,
+      category_selections: categorySelections.value,
       source_supplier_id: filters.source_supplier_id || undefined,
       cost_price_min: filters.cost_price_min,
       cost_price_max: filters.cost_price_max,
@@ -127,22 +173,130 @@ function reset(): void {
     agreement_price_max: "", discount_rate_min: "", discount_rate_max: "", sales_volume_min: "",
     sales_volume_max: "", status: "ACTIVE",
   })
-  clearCategoryLevel1()
+  clearCategoryFilters()
   void router.replace({ name: "product-list" })
   void loadProducts(1)
 }
 
-function uniqueNames(values: string[]): string[] { return Array.from(new Set(values)).sort() }
-function clearCategoryLevel1(): void {
-  categoryLevel1.value = ""
-  categoryLevel2.value = ""
-  categoryLevel3Id.value = ""
+function clearCategoryFilters(): void {
+  directCategoryLevel1Names.value = []
+  directCategoryLevel2Keys.value = []
+  directCategoryLevel3Ids.value = []
 }
-function changeCategoryLevel1(): void {
-  categoryLevel2.value = ""
-  categoryLevel3Id.value = ""
+
+function updateCategoryLevel1(nextValues: string[]): void {
+  directCategoryLevel1Names.value = updateExplicitSelection(
+    directCategoryLevel1Names.value,
+    selectedCategoryLevel1Names.value,
+    nextValues,
+    derivedCategoryLevel1Names.value,
+  )
 }
-function changeCategoryLevel2(): void { categoryLevel3Id.value = "" }
+
+function updateCategoryLevel2(nextValues: string[]): void {
+  directCategoryLevel2Keys.value = updateExplicitSelection(
+    directCategoryLevel2Keys.value,
+    selectedCategoryLevel2Keys.value,
+    nextValues,
+    derivedCategoryLevel2Keys.value,
+  )
+}
+
+function optionsFor(
+  level: CategoryFilterOption["level"], selectedKeys: string[],
+): CategoryFilterOption[] {
+  const options = new Map(categoryOptionResults[level].map((item) => [item.selection_key, item]))
+  for (const key of selectedKeys) {
+    const option = categoryOptionsByKey.value.get(key)
+    if (option) options.set(key, option)
+  }
+  return Array.from(options.values())
+}
+
+async function searchCategoryOptions(
+  level: CategoryFilterOption["level"], keyword = "",
+): Promise<void> {
+  const sequence = ++categorySearchSequence[level]
+  const normalizedKeyword = keyword.trim()
+  categoryOptionKeyword[level] = normalizedKeyword
+  categoryOptionNextOffset[level] = 0
+  categoryOptionHasMore[level] = true
+  await loadCategoryOptions(level, sequence, false)
+}
+
+async function loadNextCategoryOptions(
+  level: CategoryFilterOption["level"],
+): Promise<void> {
+  if (categoryOptionLoading[level] || !categoryOptionHasMore[level]) return
+  await loadCategoryOptions(level, categorySearchSequence[level], true)
+}
+
+async function loadCategoryOptions(
+  level: CategoryFilterOption["level"], sequence: number, append: boolean,
+): Promise<void> {
+  categoryOptionLoading[level] = true
+  try {
+    const offset = append ? categoryOptionNextOffset[level] : 0
+    const result = await categoryApi.filterOptions(level, categoryOptionKeyword[level], offset)
+    if (sequence !== categorySearchSequence[level]) return
+    categoryOptionResults[level] = append
+      ? mergeCategoryOptions(categoryOptionResults[level], result.items)
+      : result.items
+    categoryOptionNextOffset[level] = offset + result.items.length
+    categoryOptionHasMore[level] = result.has_more
+    const cache = new Map(categoryOptionsByKey.value)
+    for (const option of result.items) {
+      cache.set(option.selection_key, option)
+      cache.set(option.level1_selection_key, {
+        ...option, selection_key: option.level1_selection_key, label: option.level1_label, level: "LEVEL1",
+      })
+      cache.set(option.level2_selection_key, {
+        ...option, selection_key: option.level2_selection_key, label: option.level2_label, level: "LEVEL2",
+      })
+    }
+    categoryOptionsByKey.value = cache
+  } catch (error) {
+    if (sequence === categorySearchSequence[level]) {
+      ElMessage.error(error instanceof HttpError ? error.response.message : "加载类目选项失败")
+    }
+  } finally {
+    if (sequence === categorySearchSequence[level]) categoryOptionLoading[level] = false
+  }
+}
+
+function mergeCategoryOptions(
+  existing: CategoryFilterOption[], incoming: CategoryFilterOption[],
+): CategoryFilterOption[] {
+  const options = new Map(existing.map((item) => [item.selection_key, item]))
+  for (const item of incoming) options.set(item.selection_key, item)
+  return Array.from(options.values())
+}
+
+function onCategoryEndReached(
+  level: CategoryFilterOption["level"], direction: "top" | "bottom" | "left" | "right",
+): void {
+  if (direction !== "bottom") return
+  void loadNextCategoryOptions(level)
+}
+
+function categorySelectScrollWrap(level: CategoryFilterOption["level"]): HTMLElement | undefined {
+  const select = level === "LEVEL1"
+    ? categoryLevel1SelectRef.value
+    : level === "LEVEL2"
+      ? categoryLevel2SelectRef.value
+      : categoryLevel3SelectRef.value
+  return select?.scrollbarRef?.wrapRef
+}
+
+function onCategoryPopupScroll(
+  level: CategoryFilterOption["level"], position: CategoryPopupPosition,
+): void {
+  const wrap = categorySelectScrollWrap(level)
+  // Element Plus may not emit end-reached until the scrollbar reaches its exact last pixel.
+  // Start the next request slightly earlier, while keeping the loading/has-more guards in one place.
+  if (!wrap || position.scrollTop + wrap.clientHeight < wrap.scrollHeight - 24) return
+  void loadNextCategoryOptions(level)
+}
 
 function percentQuery(value: string): string | undefined {
   if (!value.trim()) return undefined
@@ -297,10 +451,7 @@ async function purgeProduct(product: ProductListItem): Promise<void> {
   }
 }
 
-onMounted(async () => {
-  try { categories.value = await categoryApi.selection() } catch { categories.value = [] }
-  await loadProducts()
-})
+onMounted(() => { void loadProducts() })
 </script>
 
 <template>
@@ -377,18 +528,18 @@ onMounted(async () => {
           <el-form-item label="品牌"><el-input v-model="filters.brand" clearable placeholder="输入品牌" /></el-form-item>
           <el-form-item label="供应商"><el-input v-model="filters.supplier_name" clearable placeholder="输入供应商名称" /></el-form-item>
           <el-form-item label="一级类目">
-            <el-select v-model="categoryLevel1" filterable clearable placeholder="输入一级类目" style="width: 190px" @change="changeCategoryLevel1">
-              <el-option v-for="name in level1Options" :key="name" :label="name" :value="name" />
+            <el-select ref="categoryLevel1SelectRef" :model-value="selectedCategoryLevel1Names" multiple filterable remote reserve-keyword clearable collapse-tags collapse-tags-tooltip :loading="categoryOptionLoading.LEVEL1" placeholder="搜索一级类目" style="width: 240px" :remote-method="(keyword: string) => searchCategoryOptions('LEVEL1', keyword)" @focus="searchCategoryOptions('LEVEL1')" @popup-scroll="(position: CategoryPopupPosition) => onCategoryPopupScroll('LEVEL1', position)" @end-reached="(direction: 'top' | 'bottom' | 'left' | 'right') => onCategoryEndReached('LEVEL1', direction)" @update:model-value="updateCategoryLevel1">
+              <el-option v-for="item in level1Options" :key="item.selection_key" :label="item.label" :value="item.selection_key" />
             </el-select>
           </el-form-item>
           <el-form-item label="二级类目">
-            <el-select v-model="categoryLevel2" filterable clearable placeholder="先选择一级类目" :disabled="!categoryLevel1" style="width: 190px" @change="changeCategoryLevel2">
-              <el-option v-for="name in level2Options" :key="name" :label="name" :value="name" />
+            <el-select ref="categoryLevel2SelectRef" :model-value="selectedCategoryLevel2Keys" multiple filterable remote reserve-keyword clearable collapse-tags collapse-tags-tooltip :loading="categoryOptionLoading.LEVEL2" placeholder="直接搜索二级类目" style="width: 240px" :remote-method="(keyword: string) => searchCategoryOptions('LEVEL2', keyword)" @focus="searchCategoryOptions('LEVEL2')" @popup-scroll="(position: CategoryPopupPosition) => onCategoryPopupScroll('LEVEL2', position)" @end-reached="(direction: 'top' | 'bottom' | 'left' | 'right') => onCategoryEndReached('LEVEL2', direction)" @update:model-value="updateCategoryLevel2">
+              <el-option v-for="item in level2Options" :key="item.selection_key" :label="item.label" :value="item.selection_key" />
             </el-select>
           </el-form-item>
           <el-form-item label="三级类目">
-            <el-select v-model="categoryLevel3Id" filterable clearable placeholder="先选择二级类目" :disabled="!categoryLevel2" style="width: 190px">
-              <el-option v-for="item in level3Options" :key="item.id" :label="item.level3_name" :value="item.id" />
+            <el-select ref="categoryLevel3SelectRef" v-model="directCategoryLevel3Ids" multiple filterable remote reserve-keyword clearable collapse-tags collapse-tags-tooltip :loading="categoryOptionLoading.LEVEL3" placeholder="直接搜索三级类目" style="width: 280px" :remote-method="(keyword: string) => searchCategoryOptions('LEVEL3', keyword)" @focus="searchCategoryOptions('LEVEL3')" @popup-scroll="(position: CategoryPopupPosition) => onCategoryPopupScroll('LEVEL3', position)" @end-reached="(direction: 'top' | 'bottom' | 'left' | 'right') => onCategoryEndReached('LEVEL3', direction)">
+              <el-option v-for="item in level3Options" :key="item.selection_key" :label="item.label" :value="item.selection_key" />
             </el-select>
           </el-form-item>
           <el-form-item label="成本价区间"><div class="range-input"><el-input v-model="filters.cost_price_min" inputmode="decimal" placeholder="大于等于" /><span>—</span><el-input v-model="filters.cost_price_max" inputmode="decimal" placeholder="小于等于" /></div></el-form-item>
