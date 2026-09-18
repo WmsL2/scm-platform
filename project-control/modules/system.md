@@ -10,6 +10,8 @@ Last Updated：2026-09-07（Business Sequence）
 - [x] Migration 初始化 `SUPPLIER` 序列，首个编号为 `SUP00000001`
 
 ## Backend
+
+- [x] 首次部署可由 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` 创建已启用的内置 `boss` 管理员；自动补齐当前全部权限，不复活已删除同名账号
 - [x] FastAPI、健康检查、统一响应、异常、请求 ID、日志、基础抽象
 - [x] 版本化 `/api/v1` Router 基础与前端统一 HTTP Client
 - [x] BusinessSequence Repository + Service：同一事务内使用 `SELECT FOR UPDATE` 分配不可复用的业务编号

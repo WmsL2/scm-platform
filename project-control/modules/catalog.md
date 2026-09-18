@@ -1,7 +1,7 @@
 # 商品主数据 / Catalog
 
-状态：IMPLEMENTED / PRODUCT_MASTER_2026_TEMPLATE_AND_FILTERS
-Owner：feat/product-master-2026-template-filters
+状态：IMPLEMENTED / PRODUCT_IMPORT_LARGE_FILE_SUPPORT
+Owner：feat/product-import-large-file-support
 Last Updated：2026-09-18
 
 ## Database
@@ -18,10 +18,10 @@ Last Updated：2026-09-18
 - [x] 未创建独立 Supplier Product Quote 表或报价历史表
 
 ## Backend
-- [x] Pricing Service（定价服务）已实现
+- [x] 价格字段作为独立正式商品主数据保存；成本价快捷更新不自动重算其他价格或比例（ADR-0024）
 - [x] Product 综合搜索、文本/类目/数值区间查询、全字段详情、业务键只读编辑、受控图片上传/清除与成本价更新 API
 - [x] Product 列表支持按 `source_supplier_id` 精确过滤，作为供应商详情页“相关商品”的唯一数据入口
-- [x] 成本价更新在同一事务中调用 Pricing Service 并保存全部派生值
+- [x] 成本价更新仅修改 `cost_price` 与审计字段；完整编辑和 Excel 导入/重新导入均逐字段保存正式价格值
 - [x] 固定 43 列 2026 商品大表导入、有效商城三级类目精确绑定、直接保存价格正式值、保存 WPS/Excel 内嵌图片、严格供应商精确匹配、SKU 防重预览和通过行原子 Confirm
 - [x] Supplier 为 `STOPPED` / `BLACKLIST` / 逻辑删除时，关联 Product 不能列表、详情、编辑或更新成本价；恢复 `NORMAL` 后自动恢复可见
 - [x] Product 可显式停用/启用；停用商品不能正常列表、详情、编辑或更新成本价，但保留业务键和商品字段
@@ -30,6 +30,8 @@ Last Updated：2026-09-18
 - [x] 仅已停用 Product 可永久删除；删除前写入最小审计并依赖事务及外键保护，永久删除后同键可重新导入为新商品
 - [x] Product Import 对同来源供应商 + SKU 的正常商品标记为更新候选并在 Confirm 原子覆盖固定模板字段；停用商品仍报错并阻止 Confirm
 - [x] 同键更新保留供应商与 SKU，其他 41 列按 Excel 覆盖且空值清空；成功提交后清理被替换的旧本地图片
+- [x] 商品大表使用分块上传、临时文件和只读路径解析，默认允许 1GB / 100,000 行；`DISPIMG` 临时源文件保存与 Confirm 图片提取均避免整份工作簿读入内存
+- [x] 商品导入表头校验兼容 Excel/WPS 末尾空白格式列；只允许批准的 43 个非空表头
 
 ## Frontend
 - [x] 商品列表筛选支持一级、二级、三级类目直接搜索和多选；选择三级时自动回显对应一级、二级，选择二级时自动回显一级。页面首次进入不加载完整类目表，聚焦或搜索时远程获取每层最多 50 个选项；下拉滚动接近底部即自动继续读取下一批，并保留到底事件作为后备，更换关键词会重置结果。直接选择项按层级组成 OR 查询。商品编辑页继续使用单个三级类目作为正式 `category_id`。列表提供常用/高级可输入筛选和浏览器本地自定义列，详情和编辑覆盖 43 列业务字段，供应商/SKU 只读，图片通过文件上传维护
@@ -70,12 +72,12 @@ Last Updated：2026-09-18
 - `model`、`product_name`、`brand + model`、货号、69码均不设业务 UNIQUE；
 - 69码按源文本原样保存，不拆分；
 - 类目来源规则已冻结为“商城三级品类维表”和“工业品产品线”两类；后续本模板仅以有效商城三级路径精确匹配，零个或多个有效候选均阻止导入。商城 `UNIQUE(source_type, level3_external_id)` 通过，商城同名称路径不同 external ID 不得被全局路径 UNIQUE 约束。蓝色三级类目扣点 5%，其余当前规则 8%；
-- Pricing Rule 已冻结：Decimal、4 位小数；前端可计算并提交，后端必须按正式类目规则重算校验；
+- 价格字段使用 Decimal、最多 4 位小数；成本价必须大于零，其他价格和比例按人工或 Excel 正式值独立保存；
 - `cost_price` 是商品当前成本价，也是当前供应商报价；供应商新报价不进入独立报价库，而是在后续 Product Backend 直接更新目标 Product 的 `cost_price`；
-- 成本价更新必须在同一事务内重算并保存派生价格与毛利，使用既有 `updated_by`、`updated_at` 审计；不保存 Quote 历史、有效期、作废或多供应商比价；
+- 成本价更新使用既有 `updated_by`、`updated_at` 审计，但不联动重算派生价格与毛利；不保存 Quote 历史、有效期、作废或多供应商比价；
 - 派生价格与毛利字段需要正式保存；一期建议当前价格及派生值直接承载于 `scm_product`；
 - 43 列 2026 大表字段映射及筛选/编辑规则见 `docs/data-gates/product-master-field-dictionary.md`；
-- Pricing Service 已实现：使用 Decimal，正式派生值统一 4 位小数；普通字段使用 `ROUND_HALF_UP`，唯一例外 `deduction_review` 使用 `ROUND_DOWN`；该 Service 仅产生 System Calculated Values。Excel Derived Values 的逐字段对账属于后续 Product Import；Excel 值不得静默覆盖系统公式。
+- Excel 与手工维护的价格、利润和比例均为正式独立值；系统不以公式覆盖或校验其相互关系（ADR-0024）。
 
 ## Current Gate
 

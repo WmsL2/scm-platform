@@ -67,10 +67,10 @@ scm_supplier
 scm_product.cost_price
     |
     +--> 当前成本价（业务确认的当前供应商报价）
-    +--> Pricing Service 重算派生价格与毛利
+    +--> 独立正式价格字段，不触发自动重算
 ```
 
-一期不创建 `scm_supplier_product_quote`，也不建设报价历史、有效期、作废或多供应商比价。供应商新报价由后续 Product Backend 直接更新目标 Product 的 `cost_price`；更新必须原子重算并保存派生价格，使用 Product 的既有审计字段记录操作者和时间。
+一期不创建 `scm_supplier_product_quote`，也不建设报价历史、有效期、作废或多供应商比价。供应商新报价由 Product Backend 直接更新目标 Product 的 `cost_price`；成本价必须大于零，但不触发派生价格重算，使用 Product 的既有审计字段记录操作者和时间。
 
 ## 4. Backend 分层
 
@@ -88,6 +88,11 @@ scm_product.cost_price
 - AI Provider
 
 ## 5. Local-First
+
+商品大表导入采用分块上传到操作系统临时文件、`openpyxl` 只读解析和本地 ObjectStorage
+文件复制，不将完整 `.xlsx` 长期保留在 Python 内存。默认单文件上限为 1GB、数据行上限为
+100,000，均通过环境变量配置；含 `DISPIMG` 的工作簿仅在预览后受控保留临时源文件，Confirm
+时再从文件路径提取实际需要的图片。
 
 Docker 非必需。
 

@@ -15,6 +15,7 @@
 Supplier Excel -> Supplier Import -> scm_supplier
 
 商品大表 Excel
+ -> 分块上传至临时文件（不整文件读入内存）
  -> 模板、字段、数值、供应商校验
  -> Import Staging（保留 `supplier_name_raw`）
  -> Supplier Matching（按批次及标准化供应商名称）
@@ -71,9 +72,9 @@ Revision `20260911_0020` 将 Product 生命周期冻结为 `ACTIVE` / `DISABLED`
 
 `scm_product.cost_price` 是具体正式商品的当前成本价，也是业务确认的当前供应商报价。一期不建设 `scm_supplier_product_quote`，不保存独立报价历史、有效期、作废记录或多供应商比价结果。
 
-商品大表导入的成本价进入正式 Product。供应商给出新报价时，后续 Product Backend 直接更新目标 Product 的 `cost_price`，并在同一事务内按 Pricing Service 重新计算和保存派生价格与毛利；既有 `updated_by`、`updated_at` 记录更新审计。
+商品大表导入的成本价进入正式 Product。供应商给出新报价时，Product Backend 直接更新目标 Product 的 `cost_price`；成本价必须大于零，但不自动计算或覆盖其他价格、利润和比例，既有 `updated_by`、`updated_at` 记录更新审计。
 
-依据 ADR-0010，**固定商品大表导入本身不调用 Pricing Service**：Excel 的市场价、京东价、协议价、协议价采购价、利润、毛利、折扣率和价格虚高比例均作为已确认正式值直接保存。仅单独“更新当前成本价”操作仍须重算，因为该操作不同时提供整行完整价格数据。
+依据 ADR-0024，**固定商品大表导入和手工维护均不调用 Pricing Service**：Excel 的市场价、京东价、协议价、协议价采购价、利润、毛利、折扣率和价格虚高比例均作为已确认正式值直接保存；单独“修改当前成本价”也只改成本价。
 
 ## 受控类目绑定
 
@@ -84,6 +85,14 @@ Revision `20260911_0020` 将 Product 生命周期冻结为 `ACTIVE` / `DISABLED`
 预览只检测固定大表的 WPS/Excel `DISPIMG` 图片，并在有公式图片时受控保留临时源 Excel；预览不提取或保存商品图片。Confirm 时仅当前实际写入正式 Product 的通过行才从临时源文件提取媒体，保存到项目相对目录 `local-data/files/product-images/<import-task-id>/`。实际媒体文件受 `.gitignore` 隔离；数据库不保存本机绝对路径，只保存形如 `local-media/product-images/...` 的站内相对引用。后端通过 `/local-media/` 提供该本地开发媒体。
 
 无法从工作簿找到对应内嵌图片时不阻断其他业务校验；正式 Product 的图片引用为空。非公式图片列仍按原始 URL/文本保存。重新导入替换或清空图片时，先成功提交 Product 更新事务，再删除被替代的旧本地图片。全量 Confirm 后临时源 Excel 立即删除；每次新预览会将超过 `PRODUCT_IMPORT_UNCONFIRMED_RETENTION_DAYS`（默认 7 天）的未完成或部分确认任务标记为 `EXPIRED`，仅删除其临时源文件与未导入行媒体。普通编辑使用 `POST /api/v1/products/{product_id}/image` 上传图片、`DELETE /api/v1/products/{product_id}/image` 清除图片，均要求 `product:update`。
+
+## 大文件导入边界
+
+商品导入默认支持最大 **1GB** 的 `.xlsx` 文件和 **100,000** 条数据行，分别可通过
+`PRODUCT_IMPORT_MAX_FILE_MB`、`PRODUCT_IMPORT_MAX_ROWS` 调整。上传按 1MB 分块写入临时文件，
+解析使用 `openpyxl` 的只读文件路径；因此 500MB 级商品大表不会因后端的整文件内存读取而被
+25MB 旧限制拦截。浏览器预览请求超时为 15 分钟，仍应根据网络、服务器 CPU、磁盘和数据库容量
+合理设置部署环境的反向代理上传大小及超时。
 
 `scm_product.source_supplier_id` 表示商品大表该行的**来源供应商**，不是当前报价供应商，也不是唯一供应商。成本价更新不自动新建报价关联或历史记录。
 

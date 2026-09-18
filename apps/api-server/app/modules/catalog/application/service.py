@@ -11,7 +11,6 @@ from app.common.contracts import AppError, PageParams, PageResult
 from app.core.transaction import transaction_scope
 from app.infrastructure.adapters import ObjectStorage, get_object_storage
 from app.modules.catalog.domain.lifecycle import ProductStatus
-from app.modules.catalog.domain.pricing import PricingCalculationError, calculate_product_pricing
 from app.modules.catalog.infrastructure.models import Category, Product, ProductPurgeAudit
 from app.modules.catalog.infrastructure.repository import ProductRepository
 from app.modules.catalog.schemas import (
@@ -209,42 +208,10 @@ class ProductService:
             product = await self.repository.by_id_for_update(product_id)
             if product is None:
                 raise AppError("PRODUCT_NOT_FOUND", "Product not found", 404)
-            category = (
-                await self.repository.category_by_id(product.category_id)
-                if product.category_id is not None
-                else None
-            )
-            if category is None:
-                raise AppError("PRODUCT_CATEGORY_NOT_FOUND", "Product category not found", 409)
-            if product.jd_price is None or product.jd_self_operated_price is None:
-                raise AppError(
-                    "PRODUCT_PRICING_INPUT_MISSING",
-                    "Product pricing inputs are incomplete",
-                    409,
-                )
-            try:
-                result = calculate_product_pricing(
-                    cost_price=payload.cost_price,
-                    jd_price=product.jd_price,
-                    jd_self_operated_price=product.jd_self_operated_price,
-                    deduction_rate=category.deduction_rate,
-                )
-            except PricingCalculationError as exc:
-                raise AppError("PRODUCT_PRICING_CALCULATION_FAILED", str(exc), 422) from exc
             product.cost_price = payload.cost_price
-            product.market_price = result.market_price
-            product.agreement_price = result.agreement_price
-            product.agreement_purchase_price = result.agreement_purchase_price
-            product.profit = result.profit
-            product.jd_margin = result.jd_margin
-            product.deduction_review = result.deduction_review
-            product.gross_margin = result.gross_margin
-            product.discount_rate = result.discount_rate
-            product.price_inflation_rate = result.price_inflation_rate
-            product.deduction_rate = category.deduction_rate
             product.updated_by = actor_id
             await self.session.flush()
-            return await self._detail(product, category=category)
+            return await self._detail(product)
 
     async def update_image(
         self,

@@ -1,6 +1,7 @@
 import uuid
 from decimal import Decimal
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
@@ -8,6 +9,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import ApiResponse, AppError, PageParams, PageResult, success
+from app.core.config import get_settings
 from app.core.database import get_db_session
 from app.modules.auth.dependencies import require_permission
 from app.modules.auth.schemas import CurrentUser
@@ -34,6 +36,36 @@ SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 PRODUCT_IMPORT_TEMPLATE_PATH = (
     Path(__file__).resolve().parents[1] / "resources" / "product-master-template.xlsx"
 )
+PRODUCT_IMPORT_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+async def _stage_product_import_upload(file: UploadFile) -> tuple[Path, int]:
+    """Copy an incoming workbook to disk without retaining it in application memory."""
+    max_bytes = get_settings().product_import_max_file_mb * 1024 * 1024
+    if file.size is not None and file.size > max_bytes:
+        raise AppError(
+            "PRODUCT_IMPORT_FILE_TOO_LARGE",
+            f"The import file exceeds {get_settings().product_import_max_file_mb} MB",
+            422,
+        )
+    temporary = NamedTemporaryFile(prefix="scm-product-import-", suffix=".xlsx", delete=False)
+    path = Path(temporary.name)
+    file_size = 0
+    try:
+        with temporary:
+            while chunk := await file.read(PRODUCT_IMPORT_UPLOAD_CHUNK_BYTES):
+                file_size += len(chunk)
+                if file_size > max_bytes:
+                    raise AppError(
+                        "PRODUCT_IMPORT_FILE_TOO_LARGE",
+                        f"The import file exceeds {get_settings().product_import_max_file_mb} MB",
+                        422,
+                    )
+                temporary.write(chunk)
+        return path, file_size
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
 
 
 @router.get("", response_model=ApiResponse[PageResult[ProductListItem]])
@@ -97,11 +129,18 @@ async def preview_product_import(
     current: Annotated[CurrentUser, Depends(require_permission("product:import"))],
     session: SessionDep,
 ) -> ApiResponse[ProductImportPreviewResponse]:
-    return success(
-        await ProductImportService(session).preview(
-            file.filename or "product-import.xlsx", await file.read(), current.user_id
+    upload_path: Path | None = None
+    try:
+        upload_path, file_size = await _stage_product_import_upload(file)
+        return success(
+            await ProductImportService(session).preview(
+                file.filename or "product-import.xlsx", upload_path, file_size, current.user_id
+            )
         )
-    )
+    finally:
+        if upload_path is not None:
+            upload_path.unlink(missing_ok=True)
+        await file.close()
 
 
 @router.get("/imports/template", response_class=FileResponse)

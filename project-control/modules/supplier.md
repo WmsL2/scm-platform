@@ -2,7 +2,7 @@
 
 状态：IMPLEMENTED / ARCHIVE_STATUS_SELECTION
 Owner：人员 A（Backend）/ 人员 B（Frontend）
-Last Updated：2026-09-11
+Last Updated：2026-09-18
 
 ## Database
 - [x] Revision `20260907_0004`：`scm_supplier`、联系人、资质关系表、合作状态历史表
@@ -16,7 +16,7 @@ Last Updated：2026-09-11
 - [x] DRAFT → PENDING → ARCHIVED；NORMAL ↔ STOPPED、NORMAL ↔ BLACKLIST 状态机；无 STOPPED ↔ BLACKLIST
 - [x] 创建/编辑/归档 Actor 与时间审计；停止/拉黑及恢复/移出黑名单均写合作状态历史和原因
 - [x] 逻辑删除 API：保留数据库记录，正常查询过滤 `is_deleted = true`；同名再次创建时复用该历史记录、恢复并覆盖业务数据，编码不变
-- [x] Excel 模板下载、上传校验、错误预览、归档状态选择与显式 Confirm；活动同名供应商及 Excel 内重复行会逐行提示
+- [x] Excel 模板下载、上传校验、错误预览、归档状态选择与显式 Confirm；Excel 中仅“供应商名称”必填，其余四列可空；活动同名供应商及 Excel 内重复行会逐行提示
 - [x] 导入确认采用原子持久化：锁定并直接读取批次行，Supplier 写入 `flush` 成功且数量一致后才标记 `CONFIRMED`；异常整批回滚
 
 ## Frontend
@@ -76,7 +76,7 @@ Last Updated：2026-09-11
 - 联系人字段可空，但一条联系人记录至少要有姓名或电话；`contacts: []` 可用于编辑时清空联系人。
 - Migration 仅创建权限目录，不分配用户角色；本机浏览器验收需要使用已经拥有 Supplier 权限的账号。
 - `supplier:delete` 仅写入权限目录；管理员用户/角色/权限分配页面由独立 Account 分支实现。未分配该权限时前端不显示删除按钮，后端仍返回 403。
-- 导入文件只接受下载模板对应的 `.xlsx`，最多 5 MB、1,000 条数据行；未确认字段、手机号格式验证和来源旧编码均不导入。活动供应商重名或 Excel 内重名会阻止整批导入；已逻辑删除的同名供应商可被导入恢复并覆盖。
+- 导入文件只接受下载模板对应的 `.xlsx`，最多 5 MB、1,000 条数据行；仅“供应商名称”为必填列，主营品牌、主要优势、联系人和联系电话允许留空。为保持既有正式表的非空列约束，导入空的主营品牌和主要优势以空字符串保存；未确认字段、手机号格式验证和来源旧编码均不导入。活动供应商重名或 Excel 内重名会阻止整批导入；已逻辑删除的同名供应商可被导入恢复并覆盖。
 
 ## Next Step
 为 `supplier:delete` 分配权限后完成浏览器验收；不要新增或猜测未确认供应商字段。

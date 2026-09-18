@@ -75,7 +75,9 @@ export const productApi = {
   previewImport(file: File): Promise<ProductImportPreview> {
     const form = new FormData()
     form.append("file", file)
-    return http.post<ProductImportPreview, FormData>(path("/imports/preview"), form)
+    return http.post<ProductImportPreview, FormData>(path("/imports/preview"), form, {
+      timeoutMs: 900_000,
+    })
   },
 
   downloadImportTemplate(): Promise<Blob> {

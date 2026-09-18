@@ -119,7 +119,7 @@ async function updateCost(): Promise<void> {
   submitting.value = true
   try {
     product.value = await productApi.updateCost(productId.value, form.cost_price)
-    ElMessage.success("成本价和派生定价已同步更新")
+    ElMessage.success("成本价已更新，其他价格保持不变")
     editCostVisible.value = false
     await router.replace({ query: {} })
   } catch (error) {
@@ -289,7 +289,7 @@ onMounted(() => void loadProduct())
         <div>
           <el-button @click="$router.back()">返回列表</el-button>
           <el-button v-if="canUpdate" @click="openEdit">编辑基础资料</el-button>
-          <el-button v-if="canUpdateCost" type="primary" @click="editCostVisible = true">更新成本价</el-button>
+          <el-button v-if="canUpdateCost" type="primary" @click="editCostVisible = true">修改成本价</el-button>
         </div>
       </header>
 
@@ -350,8 +350,8 @@ onMounted(() => void loadProduct())
       </el-card>
     </template>
 
-    <el-dialog v-model="editCostVisible" title="更新当前成本价" width="420px" :close-on-click-modal="false">
-      <p class="dialog-tip">此独立维护操作会原子重算价格字段；固定大表导入不会重算或覆盖 Excel 价格。</p>
+    <el-dialog v-model="editCostVisible" title="修改当前成本价" width="420px" :close-on-click-modal="false">
+      <p class="dialog-tip">此操作只修改成本价，市场价、京东价、协议价、利润及各比例均保持原值。固定大表重新导入会按 Excel 原值逐列覆盖。</p>
       <el-input v-model="form.cost_price" inputmode="decimal" placeholder="例如：123.4567">
         <template #prepend>¥</template>
       </el-input>
@@ -362,7 +362,7 @@ onMounted(() => void loadProduct())
     </el-dialog>
 
     <el-dialog v-model="editVisible" title="编辑商品主数据" width="920px" :close-on-click-modal="!submitting" :close-on-press-escape="!submitting" :show-close="!submitting">
-      <p class="dialog-tip">供应商与 SKU 是商品业务键，不可修改。这里直接维护主数据值；“更新成本价”按钮仍用于按定价公式联动重算。</p>
+      <p class="dialog-tip">供应商与 SKU 是商品业务键，不可修改。所有价格和比例均为独立主数据值，可分别维护；“修改成本价”仅更新成本价本身。</p>
       <el-form label-width="105px" class="edit-form">
         <el-row :gutter="16">
           <el-col :span="12"><el-form-item label="上架日期"><el-date-picker v-model="editForm.listed_at" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item></el-col>

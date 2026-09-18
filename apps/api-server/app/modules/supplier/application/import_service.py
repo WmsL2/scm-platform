@@ -3,6 +3,7 @@ from datetime import datetime
 from io import BytesIO
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.comments import Comment
 from openpyxl.styles import Font, PatternFill
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,6 +47,9 @@ class SupplierImportService:
         for cell in worksheet[1]:
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill("solid", fgColor="1F4E78")
+        worksheet["A1"].comment = Comment(
+            "必填：供应商名称。主营品牌、主要优势、联系人和联系电话均可留空。", "系统"
+        )
         worksheet["E2"].number_format = "@"
         output = BytesIO()
         workbook.save(output)
@@ -136,8 +140,8 @@ class SupplierImportService:
                             "SUPPLIER"
                         ),
                         supplier_name=supplier_name,
-                        main_brands=self._required_value(row.main_brands),
-                        advantage=self._required_value(row.advantage),
+                        main_brands=self._optional_value(row.main_brands),
+                        advantage=self._optional_value(row.advantage),
                         archive_status=archive_status,
                         cooperation_status=CooperationStatus.NORMAL,
                         created_by=actor_id,
@@ -249,8 +253,8 @@ class SupplierImportService:
         actor_id: uuid.UUID,
         archive_status: ArchiveStatus,
     ) -> None:
-        supplier.main_brands = self._required_value(row.main_brands)
-        supplier.advantage = self._required_value(row.advantage)
+        supplier.main_brands = self._optional_value(row.main_brands)
+        supplier.advantage = self._optional_value(row.advantage)
         supplier.archive_status = archive_status
         supplier.cooperation_status = CooperationStatus.NORMAL
         supplier.is_deleted = False
@@ -268,10 +272,8 @@ class SupplierImportService:
     @staticmethod
     def _row_errors(cells: tuple[object, ...], values: list[str]) -> list[str]:
         errors = []
-        labels = ("供应商名称", "主营品牌", "主要优势")
-        for index, label in enumerate(labels):
-            if not values[index]:
-                errors.append(f"{label}不能为空")
+        if not values[0]:
+            errors.append("供应商名称不能为空")
         for cell in cells:
             if getattr(cell, "data_type", None) == "f":
                 errors.append("不支持公式单元格")
@@ -291,6 +293,11 @@ class SupplierImportService:
         if value is None:
             raise RuntimeError("Validated import row contains a required null field")
         return value
+
+    @staticmethod
+    def _optional_value(value: str | None) -> str:
+        """Persist an empty string for nullable import cells in non-null Supplier fields."""
+        return value or ""
 
     @staticmethod
     def _contacts_from_row(row: SupplierImportRow, actor_id: uuid.UUID) -> list[SupplierContact]:

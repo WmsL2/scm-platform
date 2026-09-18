@@ -45,6 +45,15 @@ npm run dev
 
 ## 默认开发
 
+首次部署可在 API 的 `.env` 设置一次性初始化管理员：
+
+```env
+INITIAL_ADMIN_USERNAME=platform-admin
+INITIAL_ADMIN_PASSWORD=replace-with-a-long-random-password
+```
+
+应用在数据库 Migration 完成后启动时会创建已启用的 `boss` 账号，并授予该角色当前全部权限。创建成功后应从部署环境删除这两个变量；即使变量误保留，系统也不会复活或重建后来删除的同名账号。
+
 ```env
 TASK_MODE=inline
 STORAGE_MODE=local
