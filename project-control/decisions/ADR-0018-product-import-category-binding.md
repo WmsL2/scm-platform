@@ -1,6 +1,10 @@
 # ADR-0018：商品导入强制绑定商城三级类目
 
-状态：ACCEPTED
+状态：SUPERSEDED BY ADR-0026
+
+> 2026-09-18 起不再适用于 Product Master：`scm_product.category_id` 与
+> `scm_product_import_row.category_id` 已由 Migration `20260918_0032` 删除。类目维表保留，
+> 但不再是商品导入或编辑的受控关联来源。
 日期：2026-09-15
 
 ## 背景

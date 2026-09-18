@@ -40,6 +40,21 @@ class CategoryFilterOptionPageResponse(BaseModel):
     has_more: bool
 
 
+class ProductCategoryFilterOptionResponse(BaseModel):
+    selection_key: str
+    label: str
+    level: Literal["LEVEL1", "LEVEL2", "LEVEL3"]
+    level1_selection_key: str
+    level2_selection_key: str
+    level1_label: str
+    level2_label: str
+
+
+class ProductCategoryFilterOptionPageResponse(BaseModel):
+    items: list[ProductCategoryFilterOptionResponse]
+    has_more: bool
+
+
 class CategoryWriteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_type: Literal["MALL_LEVEL3", "INDUSTRIAL_LINE"]
@@ -97,7 +112,6 @@ class ProductListItem(BaseModel):
     product_name: str | None
     item_number: str | None
     jd_same_product_url: str | None
-    category_id: uuid.UUID | None
     category_path: str
     source_supplier_id: uuid.UUID
     source_supplier_name: str | None
@@ -149,7 +163,6 @@ class ProductDetailResponse(BaseModel):
     model: str | None
     sku: str | None
     product_name: str | None
-    category: CategoryResponse | None
     category_level1_name: str | None
     category_level2_name: str | None
     category_level3_name: str | None
@@ -224,7 +237,9 @@ class ProductUpdateRequest(BaseModel):
     brand: str | None = Field(default=None, max_length=128)
     model: str | None = Field(default=None, max_length=255)
     product_name: str | None = Field(default=None, max_length=512)
-    category_id: uuid.UUID | None = None
+    category_level1_name: str = Field(min_length=1, max_length=255)
+    category_level2_name: str = Field(min_length=1, max_length=255)
+    category_level3_name: str = Field(min_length=1, max_length=255)
     item_number: str | None = Field(default=None, max_length=255)
     jd_same_product_url: str | None = Field(default=None, max_length=2048)
     cost_price: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=4)
@@ -283,6 +298,9 @@ class ProductUpdateRequest(BaseModel):
         "tax_category",
         "shipping_courier",
         "after_sales_policy",
+        "category_level1_name",
+        "category_level2_name",
+        "category_level3_name",
     )
     @classmethod
     def normalize_text(cls, value: str | None) -> str | None:
@@ -313,7 +331,6 @@ class ProductImportRowResponse(BaseModel):
     image_saved: bool
     image_pending_save: bool
     category_path: str
-    category_id: uuid.UUID | None
     supplier_match_id: uuid.UUID | None
     is_valid: bool
     write_action: Literal["CREATE", "UPDATE"]

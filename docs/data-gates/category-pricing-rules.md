@@ -1,9 +1,9 @@
 # Category and Pricing Rules / 类目与价格规则门禁
 
-状态：PARTIALLY SUPERSEDED BY ADR-0010 / ADR-0018
+状态：PARTIALLY SUPERSEDED BY ADR-0010 / ADR-0024 / ADR-0026
 范围：类目来源、扣点规则、价格公式与计算责任；本文件不创建 Category 或 Product Schema。
 
-> ADR-0018 恢复固定商品大表导入的受控类目要求：Excel 一级、二级、三级类目必须唯一匹配有效商城三级类目，Confirm 写入 `category_id` 与 Category-owned 路径。ADR-0024 冻结价格独立维护：固定大表导入和单独成本价更新均不按类目扣点或公式重算价格、毛利、折扣率和价格虚高比例。
+> ADR-0026 已取消 Product 与 Category 的关联：Excel 一级、二级、三级类目作为 Product 自有必填文本直接保存，Confirm 不再写入 `category_id` 或校验 Category。ADR-0024 冻结价格独立维护：固定大表导入和单独成本价更新均不按类目扣点或公式重算价格、毛利、折扣率和价格虚高比例。
 
 ## 类目来源与扣点
 
@@ -16,7 +16,7 @@
 - 工业品类目未明确标记为 5% 时，当前默认 `deduction_rate = 0.0800`。
 - 扣点率必须通过正式 Category Table 数据查询取得，禁止在 Product/Pricing Python 中以类目 `if/else` 写死。
 
-概念关系：`Product → category_id → Category → deduction_rate`。商品同时保存本次计算实际使用的 `deduction_rate` 快照，使类目规则日后变化仍可解释历史计算。
+该概念关系不再适用于 Product Master。`scm_category.deduction_rate` 仅属于独立类目管理数据，不能作为商品价格或导入的前置规则。
 
 ## 价格公式
 

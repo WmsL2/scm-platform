@@ -58,8 +58,8 @@ Supplier：
 
 - `scm_product`
 - `scm_product.source_supplier_id` FK → `scm_supplier.id`（来源供应商，不是当前报价或唯一供应商）
-- `scm_product.category_level1_name`、`category_level2_name`、`category_level3_name`（由受控 Category 写入的完整类目路径）
-- `scm_product.category_id`（固定商品大表 Confirm 的受控类目关联）
+- `scm_product.category_level1_name`、`category_level2_name`、`category_level3_name`（Product 自有的三级类目文本）
+- `ix_scm_product_status_category_path`（状态与三级类目路径筛选索引；文本列使用 MySQL 128 字符索引前缀）
 - `scm_product.cost_price`（当前成本价；业务确认等同当前供应商报价）
 - `scm_category`
 - 品牌相关表（如需要）
@@ -67,7 +67,7 @@ Supplier：
 
 是否拆品牌、分类、参数表，必须以真实大表字段和检索需求决定。
 
-当前已实现 Product 列表、详情、成本价更新和商品大表导入。固定商品大表必须唯一匹配有效商城三级类目并写入 Category 关联，价格值仍直接保存。
+当前已实现 Product 列表、详情、成本价更新和商品大表导入。固定商品大表直接保存三个必填类目文本，不依赖 Category 关联；价格值仍直接保存。
 
 明确：
 

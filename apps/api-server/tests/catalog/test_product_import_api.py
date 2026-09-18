@@ -263,7 +263,7 @@ async def _cleanup_import_data(
         await session.commit()
 
 
-async def test_product_import_binds_unique_active_mall_category(
+async def test_product_import_saves_required_category_text_without_category_binding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     storage = _RecordingStorage()
@@ -304,7 +304,7 @@ async def test_product_import_binds_unique_active_mall_category(
             data = preview.json()["data"]
             assert data["status"] == "READY_TO_CONFIRM"
             assert data["valid_rows"] == 1
-            assert data["rows"][0]["category_id"] == str(category_id)
+            assert data["rows"][0]["category_path"] == "测试一级 / 测试二级 / 测试三级"
             confirmed = await client.post(
                 f"/api/v1/products/imports/{data['id']}/confirm", headers=headers
             )
@@ -424,7 +424,6 @@ async def test_product_import_binds_unique_active_mall_category(
             assert product.product_name == "停用前商品名称"
             assert product.cost_price == Decimal("321.0000")
             assert product.source_supplier_id == supplier_id
-            assert product.category_id == category_id
             assert product.category_level3_name == "测试三级"
             assert str(product.market_price) == "999.0000"
             assert str(product.agreement_price) == "199.9000"
@@ -437,7 +436,7 @@ async def test_product_import_binds_unique_active_mall_category(
         await _cleanup_import_user(user_id)
 
 
-async def test_product_import_rejects_missing_ambiguous_and_inactive_categories() -> None:
+async def test_product_import_accepts_category_paths_without_category_master_binding() -> None:
     user_id, headers = await _create_import_user()
     supplier_id, default_category_id = await _create_references()
     ambiguous_path = ("重复一级", "重复二级", "重复三级")
@@ -465,9 +464,8 @@ async def test_product_import_rejects_missing_ambiguous_and_inactive_categories(
             )
             assert missing.status_code == 200
             missing_row = missing.json()["data"]["rows"][0]
-            assert missing_row["is_valid"] is False
-            assert missing_row["category_id"] is None
-            assert "未找到有效商城三级类目" in missing_row["error_message"]
+            assert missing_row["is_valid"] is True
+            assert missing_row["error_message"] is None
 
             ambiguous = await client.post(
                 "/api/v1/products/imports/preview",
@@ -482,9 +480,8 @@ async def test_product_import_rejects_missing_ambiguous_and_inactive_categories(
             )
             assert ambiguous.status_code == 200
             ambiguous_row = ambiguous.json()["data"]["rows"][0]
-            assert ambiguous_row["is_valid"] is False
-            assert ambiguous_row["category_id"] is None
-            assert "商城三级类目匹配不唯一" in ambiguous_row["error_message"]
+            assert ambiguous_row["is_valid"] is True
+            assert ambiguous_row["error_message"] is None
 
             inactive = await client.post(
                 "/api/v1/products/imports/preview",
@@ -499,9 +496,8 @@ async def test_product_import_rejects_missing_ambiguous_and_inactive_categories(
             )
             assert inactive.status_code == 200
             inactive_row = inactive.json()["data"]["rows"][0]
-            assert inactive_row["is_valid"] is False
-            assert inactive_row["category_id"] is None
-            assert "匹配的商城三级类目已停用" in inactive_row["error_message"]
+            assert inactive_row["is_valid"] is True
+            assert inactive_row["error_message"] is None
     finally:
         await _cleanup_import_data(
             supplier_id,

@@ -1,11 +1,11 @@
-import type { CategoryFilterOption } from "../../types/category"
+import type { ProductCategoryFilterOption } from "../../types/catalog"
 
 function unique(values: string[]): string[] {
   return Array.from(new Set(values)).sort((left, right) => left.localeCompare(right, "zh-CN"))
 }
 
 export function derivedLevel1Keys(
-  optionsByKey: Map<string, CategoryFilterOption>,
+  optionsByKey: Map<string, ProductCategoryFilterOption>,
   level2Keys: string[],
   level3Keys: string[],
 ): string[] {
@@ -15,7 +15,7 @@ export function derivedLevel1Keys(
 }
 
 export function derivedLevel2Keys(
-  optionsByKey: Map<string, CategoryFilterOption>,
+  optionsByKey: Map<string, ProductCategoryFilterOption>,
   level3Keys: string[],
 ): string[] {
   return unique(level3Keys

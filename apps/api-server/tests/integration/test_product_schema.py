@@ -7,7 +7,7 @@ async def test_product_schema_and_permission_directory() -> None:
     expected_product_columns = {
             "id", "company_name", "listed_at", "brand", "image_reference", "model", "sku",
             "product_name",
-            "category_id", "category_level1_name", "category_level2_name", "category_level3_name",
+            "category_level1_name", "category_level2_name", "category_level3_name",
             "item_number", "jd_same_product_url", "cost_price", "market_price",
         "jd_price", "agreement_price", "agreement_purchase_price", "profit", "jd_margin",
             "purchasing_agent", "source_supplier_id", "barcode_text", "deduction_review",
@@ -46,12 +46,11 @@ async def test_product_schema_and_permission_directory() -> None:
             text(
                 "SELECT column_name, is_nullable FROM information_schema.columns "
                 "WHERE table_schema = DATABASE() AND table_name = 'scm_product' "
-                "AND column_name IN ('category_id', 'category_level1_name', "
+                        "AND column_name IN ('category_level1_name', "
                 "'category_level2_name', 'category_level3_name')"
             )
         )
         assert {row[0]: row[1] for row in category_columns} == {
-            "category_id": "YES",
             "category_level1_name": "YES",
             "category_level2_name": "YES",
             "category_level3_name": "YES",
