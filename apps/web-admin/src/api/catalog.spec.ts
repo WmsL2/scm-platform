@@ -56,6 +56,30 @@ describe("product import api", () => {
     )
   })
 
+  it("repeats each selected category ID in the product list query", async () => {
+    http.get.mockResolvedValue({ items: [] })
+    const { productApi } = await import("./catalog")
+
+    await productApi.list({ category_ids: ["category-1", "category-2"] })
+
+    expect(http.get).toHaveBeenCalledWith(
+      "/api/v1/products?category_ids=category-1&category_ids=category-2",
+    )
+  })
+
+  it("repeats each direct category selection in the product list query", async () => {
+    http.get.mockResolvedValue({ items: [] })
+    const { productApi } = await import("./catalog")
+
+    await productApi.list({
+      category_selections: ["LEVEL1:category-1", "LEVEL3:category-2"],
+    })
+
+    expect(http.get).toHaveBeenCalledWith(
+      "/api/v1/products?category_selections=LEVEL1%3Acategory-1&category_selections=LEVEL3%3Acategory-2",
+    )
+  })
+
   it("uses product lifecycle routes", async () => {
     http.post.mockResolvedValue({ id: "product-1", status: "DISABLED" })
     http.delete.mockResolvedValue({ id: "product-1", status: "PURGED" })

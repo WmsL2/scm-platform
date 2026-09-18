@@ -4,10 +4,10 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
-from typing import cast
+from typing import Literal, cast
 
 from openpyxl import Workbook, load_workbook
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -66,6 +66,57 @@ class CategoryService:
     async def list_active_selection(self) -> list[Category]:
         statement = select(Category).where(Category.is_active.is_(True)).order_by(Category.source_type, Category.level1_name, Category.level2_name, Category.level3_name, Category.id)
         return list((await self.session.scalars(statement)).all())
+
+    async def list_filter_options(
+        self,
+        level: Literal["LEVEL1", "LEVEL2", "LEVEL3"],
+        keyword: str | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[Category], bool]:
+        statement = select(Category).where(
+            Category.source_type == "MALL_LEVEL3", Category.is_active.is_(True)
+        )
+        if keyword and (query := keyword.strip()):
+            if level == "LEVEL1":
+                statement = statement.where(Category.level1_name.ilike(f"%{query}%"))
+            elif level == "LEVEL2":
+                statement = statement.where(or_(
+                    Category.level1_name.ilike(f"%{query}%"),
+                    Category.level2_name.ilike(f"%{query}%"),
+                ))
+            else:
+                statement = statement.where(or_(
+                    Category.level1_name.ilike(f"%{query}%"),
+                    Category.level2_name.ilike(f"%{query}%"),
+                    Category.level3_name.ilike(f"%{query}%"),
+                ))
+        statement = statement.order_by(
+            Category.level1_name, Category.level2_name, Category.level3_name, Category.id
+        )
+        if level == "LEVEL3":
+            rows = list(
+                (
+                    await self.session.scalars(statement.offset(offset).limit(limit + 1))
+                ).all()
+            )
+            return rows[:limit], len(rows) > limit
+        categories = list((await self.session.scalars(statement)).all())
+        seen: set[str | tuple[str, str]] = set()
+        options: list[Category] = []
+        for category in categories:
+            key: str | tuple[str, str] = (
+                category.level1_name
+                if level == "LEVEL1"
+                else (category.level1_name, category.level2_name)
+            )
+            if key not in seen:
+                seen.add(key)
+                options.append(category)
+            if len(options) == limit:
+                break
+        page = options[offset : offset + limit]
+        return page, len(options) > offset + limit
 
     async def get(self, category_id: uuid.UUID) -> Category:
         category = await self.session.get(Category, category_id)

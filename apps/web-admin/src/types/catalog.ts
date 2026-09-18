@@ -86,6 +86,8 @@ export interface ProductListParams {
   category_level1_name?: string
   category_level2_name?: string
   category_id?: string
+  category_ids?: string[]
+  category_selections?: string[]
   source_supplier_id?: string
   cost_price_min?: string
   cost_price_max?: string

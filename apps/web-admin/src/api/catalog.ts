@@ -19,7 +19,9 @@ function path(suffix = ""): string {
 function listQuery(params: ProductListParams): string {
   const query = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== "") query.set(key, String(value))
+    if (Array.isArray(value)) {
+      for (const item of value) query.append(key, item)
+    } else if (value !== undefined && value !== "") query.set(key, String(value))
   }
   const serialized = query.toString()
   return serialized ? `?${serialized}` : ""
