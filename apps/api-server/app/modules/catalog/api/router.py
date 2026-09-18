@@ -2,7 +2,7 @@ import uuid
 from decimal import Decimal
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -170,10 +170,19 @@ async def product_import_supplier_candidates(
 @router.get("/imports/{task_id}", response_model=ApiResponse[ProductImportPreviewResponse])
 async def get_product_import(
     task_id: uuid.UUID,
-    _: Annotated[CurrentUser, Depends(require_permission("product:import"))],
+    current: Annotated[CurrentUser, Depends(require_permission("product:import"))],
     session: SessionDep,
+    page_params: Annotated[PageParams, Depends()],
+    row_status: Literal["ALL", "PASSED", "UPDATE", "FAILED"] = Query("ALL"),
 ) -> ApiResponse[ProductImportPreviewResponse]:
-    return success(await ProductImportService(session).get_preview(task_id))
+    return success(
+        await ProductImportService(session).get_preview(
+            task_id,
+            current.user_id,
+            page_params,
+            row_status=row_status,
+        )
+    )
 
 
 @router.post(

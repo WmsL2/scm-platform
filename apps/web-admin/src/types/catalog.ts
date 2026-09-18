@@ -153,6 +153,9 @@ export interface ProductImportPreview {
   update_rows: number
   invalid_rows: number
   imported_rows: number
+  row_total: number
+  page: number
+  page_size: number
   rows: ProductImportRow[]
   supplier_matches: ProductImportSupplierMatch[]
 }

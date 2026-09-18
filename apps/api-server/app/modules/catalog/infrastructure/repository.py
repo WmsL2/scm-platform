@@ -5,7 +5,7 @@ from typing import List, cast
 
 from sqlalchemy import Select, and_, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.contracts import PageParams
@@ -100,6 +100,60 @@ class ProductRepository:
         )
         return cast(ProductImportTask | None, await self.session.scalar(statement))
 
+    async def import_task_summary_by_id(self, task_id: uuid.UUID) -> ProductImportTask | None:
+        statement = (
+            select(ProductImportTask)
+            .options(
+                noload(ProductImportTask.rows),
+                selectinload(ProductImportTask.supplier_matches),
+            )
+            .where(ProductImportTask.id == task_id)
+        )
+        return cast(ProductImportTask | None, await self.session.scalar(statement))
+
+    async def import_rows_page(
+        self,
+        task_id: uuid.UUID,
+        page_params: PageParams,
+        *,
+        row_status: str,
+    ) -> tuple[list[ProductImportRow], int]:
+        criteria = [ProductImportRow.import_task_id == task_id]
+        if row_status == "PASSED":
+            criteria.extend(
+                (
+                    ProductImportRow.is_valid.is_(True),
+                    ProductImportRow.is_imported.is_(False),
+                    ProductImportRow.write_action == "CREATE",
+                )
+            )
+        elif row_status == "UPDATE":
+            criteria.extend(
+                (
+                    ProductImportRow.is_valid.is_(True),
+                    ProductImportRow.is_imported.is_(False),
+                    ProductImportRow.write_action == "UPDATE",
+                )
+            )
+        elif row_status == "FAILED":
+            criteria.extend(
+                (
+                    ProductImportRow.is_valid.is_(False),
+                    ProductImportRow.is_imported.is_(False),
+                )
+            )
+        statement = (
+            select(ProductImportRow)
+            .where(*criteria)
+            .order_by(ProductImportRow.source_row_number, ProductImportRow.id)
+            .offset((page_params.page - 1) * page_params.page_size)
+            .limit(page_params.page_size)
+        )
+        count_statement = select(func.count()).select_from(ProductImportRow).where(*criteria)
+        rows = list((await self.session.scalars(statement)).all())
+        total = cast(int, await self.session.scalar(count_statement))
+        return rows, total
+
     async def import_task_by_id_for_update(self, task_id: uuid.UUID) -> ProductImportTask | None:
         statement = (
             select(ProductImportTask)
@@ -158,8 +212,11 @@ class ProductRepository:
     ) -> dict[tuple[uuid.UUID, str], Product]:
         if not keys:
             return {}
-        statement = select(Product).where(
-            tuple_(Product.source_supplier_id, Product.sku).in_(keys)
+        ordered_keys = sorted(keys, key=lambda item: (str(item[0]), item[1]))
+        statement = (
+            select(Product)
+            .where(tuple_(Product.source_supplier_id, Product.sku).in_(ordered_keys))
+            .order_by(Product.source_supplier_id, Product.sku, Product.id)
         )
         if for_update:
             statement = statement.with_for_update()

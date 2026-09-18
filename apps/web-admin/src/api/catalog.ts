@@ -84,8 +84,15 @@ export const productApi = {
     return http.getBlob(path("/imports/template"))
   },
 
-  getImportPreview(taskId: string): Promise<ProductImportPreview> {
-    return http.get<ProductImportPreview>(path(`/imports/${taskId}`))
+  getImportPreview(
+    taskId: string,
+    params: {
+      page?: number
+      page_size?: number
+      row_status?: "ALL" | "PASSED" | "UPDATE" | "FAILED"
+    } = {},
+  ): Promise<ProductImportPreview> {
+    return http.get<ProductImportPreview>(path(`/imports/${taskId}${listQuery(params)}`))
   },
 
   importSupplierCandidates(): Promise<ProductImportSupplierCandidate[]> {

@@ -36,7 +36,7 @@ Last Updated：2026-09-17
 | 15 | 京东价 | `jd_price` | `DECIMAL(18,4)` | 直接保存 |
 | 16 | 协议价 | `agreement_price` | `DECIMAL(18,4)` | 直接保存 |
 | 17 | 协议价采购价 | `agreement_purchase_price` | `DECIMAL(18,4)` | 直接保存 |
-| 18 | 利润 | `profit` | `DECIMAL(18,4)` | 直接保存 |
+| 18 | 利润 | `profit` | `DECIMAL(18,4)` | 金额；直接保存，不接受 `%` |
 | 19 | 京东价毛利（30-50） | `jd_margin` | `DECIMAL(9,4)` | 比率；支持 `0.95` / `95%` |
 | 20 | 扣点复核 | `deduction_review` | `DECIMAL(9,4)` | 原“毛利复核”；支持百分比文本 |
 | 21 | 毛利率 | `gross_margin` | `DECIMAL(9,4)` | 原“众诚毛利”；支持百分比文本 |
@@ -55,7 +55,7 @@ Last Updated：2026-09-17
 | 34 | 销量 | `sales_volume` | `BIGINT` | 可空；整数且大于等于 0 |
 | 35 | 好评率 | `positive_rating` | `DECIMAL(9,4)` | `0..1`；支持 `0.95` / `95%`，拒绝裸数字 `95` |
 | 36 | 折扣率 | `discount_rate` | `DECIMAL(9,4)` | `0..1`；支持 `0.95` / `95%`，拒绝裸数字 `95` |
-| 37 | 价格虚高比例 | `price_inflation_rate` | `DECIMAL(9,4)` | 原“价格虚高比例（30%)” |
+| 37 | 价格虚高比例 | `price_inflation_rate` | `DECIMAL(9,4)` | 原“价格虚高比例（30%)”；支持 `0.4625` / `46.25%` |
 | 38 | 税收编码 | `tax_code` | `VARCHAR(255)` | 普通文本 |
 | 39 | 开票名称 | `invoice_name` | `VARCHAR(512)` | 普通文本 |
 | 40 | 税收分类 | `tax_category` | `VARCHAR(255)` | 普通文本 |

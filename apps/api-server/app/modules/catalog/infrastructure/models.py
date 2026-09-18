@@ -263,6 +263,7 @@ class ProductImportRow(Base):
         Index("ix_scm_product_import_row_task_id", "import_task_id"),
         Index("ix_scm_product_import_row_category_id", "category_id"),
         Index("ix_scm_product_import_row_supplier_match_id", "supplier_match_id"),
+        Index("ix_scm_product_import_row_target_product_id", "target_product_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
@@ -272,6 +273,7 @@ class ProductImportRow(Base):
     source_row_number: Mapped[int] = mapped_column(nullable=False)
     source_data: Mapped[dict[str, str | None]] = mapped_column(JSON, nullable=False)
     calculated_data: Mapped[dict[str, str | None]] = mapped_column(JSON, nullable=False)
+    normalized_data: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     supplier_name_raw: Mapped[str | None] = mapped_column(String(255), nullable=True)
     image_storage_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     category_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -285,6 +287,8 @@ class ProductImportRow(Base):
     is_valid: Mapped[bool] = mapped_column(Boolean, nullable=False)
     write_action: Mapped[str] = mapped_column(String(16), nullable=False, default="CREATE")
     changed_fields: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    target_product_id: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+    target_product_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     is_imported: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     imported_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
     imported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

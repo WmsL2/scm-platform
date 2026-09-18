@@ -11,10 +11,11 @@ from tempfile import NamedTemporaryFile
 from typing import Literal, cast
 
 from openpyxl import load_workbook
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.contracts import AppError
+from app.common.contracts import AppError, PageParams
 from app.core.config import get_settings
 from app.core.transaction import transaction_scope
 from app.infrastructure.adapters import ObjectStorage, get_object_storage
@@ -39,6 +40,7 @@ from app.modules.catalog.schemas import (
     ProductImportRowResponse,
     ProductImportSupplierCandidateResponse,
     ProductImportSupplierMatchResponse,
+    ProductUpdateRequest,
 )
 from app.modules.supplier.domain.matching import (
     SupplierMatchCandidate,
@@ -118,6 +120,14 @@ _PERCENT_HEADERS = {
     "折扣率",
     "价格虚高比例",
 }
+PRODUCT_IMPORT_DB_BATCH_SIZE = 500
+PRODUCT_IMPORT_DEFAULT_PAGE_SIZE = 50
+_WORKBOOK_SEMAPHORES: dict[int, asyncio.Semaphore] = {}
+
+
+def _workbook_semaphore() -> asyncio.Semaphore:
+    limit = get_settings().product_import_max_concurrent_workbooks
+    return _WORKBOOK_SEMAPHORES.setdefault(limit, asyncio.Semaphore(limit))
 
 _IMPORT_UPDATE_FIELD_LABELS = {
     "company_name": "所属公司",
@@ -172,57 +182,85 @@ class ProductImportService:
     async def preview(
         self, filename: str, file_path: Path, file_size: int, actor_id: uuid.UUID
     ) -> ProductImportPreviewResponse:
-        await self._cleanup_expired_temp_media()
-        self._validate_upload(filename, file_size)
-        rows = await asyncio.to_thread(self._parse_rows, file_path)
-        has_embedded_image_formula = any(
-            dispimg_image_id(row.source_data.get("图片")) is not None for row in rows
-        )
-        candidates = await self.supplier_repository.eligible_source_suppliers()
-        task = ProductImportTask(
-            original_filename=filename[:255],
-            status="VALIDATED",
-            total_rows=len(rows),
-            valid_rows=0,
-            update_rows=0,
-            invalid_rows=0,
-            imported_rows=0,
-            created_by=actor_id,
-            rows=rows,
-        )
-        self._create_supplier_matches(task, candidates)
-        self._assign_row_matches(task)
-        stored_source_key: str | None = None
-        try:
-            async with transaction_scope(self.session):
-                self.session.add(task)
-                await self.session.flush()
-                # `rows` and `supplier_matches` are select-in relationships.  Reload them
-                # while the task is clean, before assigning the temporary source-file key.
-                # Otherwise an async lazy load can trigger an autoflush of that assignment
-                # and fail with MissingGreenlet for workbooks containing DISPIMG formulas.
-                reloaded_task = await self.repository.import_task_by_id(task.id)
-                if reloaded_task is None:
-                    raise RuntimeError("The new Product Import task could not be reloaded")
-                task = reloaded_task
+        async with _workbook_semaphore():
+            await self._cleanup_expired_temp_media()
+            self._validate_upload(filename, file_size)
+            rows = await asyncio.to_thread(self._parse_rows, file_path)
+            has_embedded_image_formula = any(
+                dispimg_image_id(row.source_data.get("图片")) is not None for row in rows
+            )
+            candidates = await self.supplier_repository.eligible_source_suppliers()
+            task = ProductImportTask(
+                id=uuid.uuid4(),
+                original_filename=filename[:255],
+                status="VALIDATED",
+                total_rows=len(rows),
+                valid_rows=0,
+                update_rows=0,
+                invalid_rows=0,
+                imported_rows=0,
+                created_by=actor_id,
+            )
+            self._create_supplier_matches(task, candidates, rows)
+            stored_source_key: str | None = None
+            try:
                 if has_embedded_image_formula:
                     stored_source_key = await self.storage.save_file(
                         f"product-import-sources/{task.id}.xlsx", file_path
                     )
                     task.source_file_storage_key = stored_source_key
-                await self._refresh_validation(task)
-                response = await self._preview_response(task)
-        except Exception:
-            if stored_source_key is not None:
-                await self.storage.delete(stored_source_key)
-            raise
-        return response
+                async with transaction_scope(self.session):
+                    self.session.add(task)
+                    await self.session.flush()
+                    matches_by_name = {
+                        match.supplier_name_normalized: match
+                        for match in task.supplier_matches
+                    }
+                    for offset in range(0, len(rows), PRODUCT_IMPORT_DB_BATCH_SIZE):
+                        batch = rows[offset : offset + PRODUCT_IMPORT_DB_BATCH_SIZE]
+                        for row in batch:
+                            row.import_task_id = task.id
+                            if row.supplier_name_raw:
+                                match = matches_by_name.get(
+                                    normalize_supplier_name(row.supplier_name_raw)
+                                )
+                                row.supplier_match_id = match.id if match is not None else None
+                        self.session.add_all(batch)
+                        await self.session.flush()
+                    self.session.expire(task, ["rows", "supplier_matches"])
+                    reloaded_task = await self.repository.import_task_by_id(task.id)
+                    if reloaded_task is None:
+                        raise RuntimeError("The new Product Import task could not be reloaded")
+                    task = reloaded_task
+                    await self._refresh_validation(task)
+                    response = await self._preview_response(task)
+            except Exception:
+                if stored_source_key is not None:
+                    await self.storage.delete(stored_source_key)
+                raise
+            return response
 
-    async def get_preview(self, task_id: uuid.UUID) -> ProductImportPreviewResponse:
-        task = await self.repository.import_task_by_id(task_id)
+    async def get_preview(
+        self,
+        task_id: uuid.UUID,
+        actor_id: uuid.UUID,
+        page_params: PageParams,
+        *,
+        row_status: str,
+    ) -> ProductImportPreviewResponse:
+        task = await self.repository.import_task_summary_by_id(task_id)
         if task is None:
             raise AppError("PRODUCT_IMPORT_TASK_NOT_FOUND", "Import task not found", 404)
-        return await self._preview_response(task)
+        self._assert_viewable_task(task, actor_id)
+        rows, row_total = await self.repository.import_rows_page(
+            task_id, page_params, row_status=row_status
+        )
+        return await self._preview_response(
+            task,
+            rows=rows,
+            row_total=row_total,
+            page_params=page_params,
+        )
 
     async def supplier_candidates(self) -> list[ProductImportSupplierCandidateResponse]:
         suppliers = await self.supplier_repository.eligible_source_suppliers()
@@ -277,7 +315,7 @@ class ProductImportService:
                 task = await self.repository.import_task_by_id_for_update(task_id)
                 self._assert_editable_task(task, actor_id)
                 assert task is not None
-                await self._refresh_validation(task)
+                await self._refresh_validation(task, preserve_target_snapshots=True)
                 rows_to_write = [row for row in task.rows if row.is_valid and not row.is_imported]
                 if not rows_to_write:
                     raise AppError(
@@ -286,6 +324,7 @@ class ProductImportService:
                         409,
                     )
                 matches = {match.id: match for match in task.supplier_matches}
+                staged_image_keys = await self._stage_confirmed_row_images(task, rows_to_write)
                 try:
                     async with self.session.begin_nested():
                         row_supplier_sku_keys: dict[int, tuple[uuid.UUID, str]] = {}
@@ -305,6 +344,19 @@ class ProductImportService:
                             row_supplier_sku_keys[row.source_row_number] = (
                                 match.matched_supplier_id,
                                 sku,
+                            )
+                        supplier_ids = {
+                            supplier_id for supplier_id, _ in row_supplier_sku_keys.values()
+                        }
+                        get_suppliers = (
+                            self.supplier_repository.eligible_source_suppliers_by_ids_for_update
+                        )
+                        suppliers = await get_suppliers(supplier_ids)
+                        if set(suppliers) != supplier_ids:
+                            raise AppError(
+                                "PRODUCT_IMPORT_REFERENCE_CHANGED",
+                                "A source supplier changed after preview; preview the batch again",
+                                409,
                             )
                         existing_products = await self.repository.products_by_supplier_sku(
                             set(row_supplier_sku_keys.values()), for_update=True
@@ -331,16 +383,6 @@ class ProductImportService:
                                 raise RuntimeError(
                                     "A ready Product Import row is missing a resolved relation"
                                 )
-                            supplier = await self.supplier_repository.active_by_id(
-                                match.matched_supplier_id
-                            )
-                            if supplier is None or not self._supplier_is_eligible(supplier):
-                                raise AppError(
-                                    "PRODUCT_IMPORT_REFERENCE_CHANGED",
-                                    "A source supplier changed after preview; "
-                                    "preview the batch again",
-                                    409,
-                                )
                             supplier_sku_key = row_supplier_sku_keys[row.source_row_number]
                             existing_product = existing_products.get(supplier_sku_key)
                             if (
@@ -353,17 +395,35 @@ class ProductImportService:
                                     "must be enabled or permanently deleted before importing",
                                     409,
                                 )
+                            if existing_product is None and row.target_product_id is not None:
+                                raise AppError(
+                                    "PRODUCT_IMPORT_STALE_PREVIEW",
+                                    "This product was deleted after preview; "
+                                    "upload and preview the workbook again",
+                                    409,
+                                )
                             if existing_product is None and row.write_action == "UPDATE":
                                 raise AppError(
-                                    "PRODUCT_IMPORT_REFERENCE_CHANGED",
-                                    "A product changed after preview; preview the batch again",
+                                    "PRODUCT_IMPORT_STALE_PREVIEW",
+                                    "A product changed after preview; "
+                                    "upload and preview the workbook again",
                                     409,
                                 )
                             if existing_product is not None and row.write_action != "UPDATE":
                                 raise AppError(
-                                    "PRODUCT_IMPORT_DUPLICATE_PRODUCT",
-                                    "A product with the same source supplier and SKU "
-                                    "already exists",
+                                    "PRODUCT_IMPORT_STALE_PREVIEW",
+                                    "Another import created this product after preview; "
+                                    "upload and preview the workbook again",
+                                    409,
+                                )
+                            if existing_product is not None and (
+                                row.target_product_id != existing_product.id
+                                or row.target_product_updated_at != existing_product.updated_at
+                            ):
+                                raise AppError(
+                                    "PRODUCT_IMPORT_STALE_PREVIEW",
+                                    "This product was updated after preview; "
+                                    "upload and preview the workbook again",
                                     409,
                                 )
                             if row.category_id is None:
@@ -378,9 +438,6 @@ class ProductImportService:
                                     409,
                                 )
                             resolved_rows.append((row, match.matched_supplier_id, category))
-                        staged_image_keys = await self._stage_confirmed_row_images(
-                            task, rows_to_write
-                        )
                         created_count = 0
                         updated_count = 0
                         for row, source_supplier_id, category in resolved_rows:
@@ -408,8 +465,9 @@ class ProductImportService:
                 except IntegrityError as exc:
                     if "uq_scm_product_source_supplier_sku" in str(exc.orig).lower():
                         raise AppError(
-                            "PRODUCT_IMPORT_DUPLICATE_PRODUCT",
-                            "A product with the same source supplier and SKU already exists",
+                            "PRODUCT_IMPORT_STALE_PREVIEW",
+                            "Another import created the same source supplier and SKU; "
+                            "upload and preview the workbook again",
                             409,
                         ) from exc
                     raise
@@ -536,7 +594,12 @@ class ProductImportService:
             formula_workbook.close()
             cached_workbook.close()
 
-    def _create_supplier_matches(self, task: ProductImportTask, candidates: list[Supplier]) -> None:
+    def _create_supplier_matches(
+        self,
+        task: ProductImportTask,
+        candidates: list[Supplier],
+        rows: list[ProductImportRow],
+    ) -> None:
         candidate_models = [
             SupplierMatchCandidate(
                 id=supplier.id,
@@ -550,7 +613,7 @@ class ProductImportService:
         names = sorted(
             {
                 normalize_supplier_name(row.supplier_name_raw)
-                for row in task.rows
+                for row in rows
                 if row.supplier_name_raw and normalize_supplier_name(row.supplier_name_raw)
             }
         )
@@ -565,14 +628,9 @@ class ProductImportService:
                 )
             )
 
-    @staticmethod
-    def _assign_row_matches(task: ProductImportTask) -> None:
-        matches = {item.supplier_name_normalized: item for item in task.supplier_matches}
-        for row in task.rows:
-            if row.supplier_name_raw:
-                row.supplier_match = matches.get(normalize_supplier_name(row.supplier_name_raw))
-
-    async def _refresh_validation(self, task: ProductImportTask) -> None:
+    async def _refresh_validation(
+        self, task: ProductImportTask, *, preserve_target_snapshots: bool = False
+    ) -> None:
         matches = {match.id: match for match in task.supplier_matches}
         category_errors = await self._refresh_category_bindings(task)
         row_supplier_sku_keys: dict[int, tuple[uuid.UUID, str]] = {}
@@ -611,6 +669,7 @@ class ProductImportService:
                 existing_products=existing_products,
                 first_excel_row=first_excel_row,
                 category_error=category_errors.get(row.source_row_number),
+                preserve_target_snapshot=preserve_target_snapshots,
             )
             row.error_message = "；".join(errors) or None
             row.warning_message = "；".join(warnings) or None
@@ -674,13 +733,23 @@ class ProductImportService:
         existing_products: dict[tuple[uuid.UUID, str], Product],
         first_excel_row: int | None,
         category_error: str | None,
+        preserve_target_snapshot: bool,
     ) -> tuple[list[str], list[str]]:
         values = row.source_data
         errors: list[str] = []
         warnings: list[str] = []
         row.write_action = "CREATE"
         row.changed_fields = None
-        cost_price = self._required_decimal(row, "成本价", errors)
+        row.normalized_data = None
+        if not preserve_target_snapshot:
+            row.target_product_id = None
+            row.target_product_updated_at = None
+        existing_product: Product | None = None
+        if self._formula_result_missing(row, "成本价"):
+            errors.append("成本价公式没有可用计算结果，请用Excel/WPS重新计算并保存")
+            cost_price = None
+        else:
+            cost_price = self._required_decimal(row, "成本价", errors)
         if cost_price is not None and cost_price <= 0:
             errors.append("成本价必须大于0")
         if category_error is not None:
@@ -690,6 +759,9 @@ class ProductImportService:
             errors.append("SKU不能为空")
         for header in _DIRECT_DECIMAL_HEADERS:
             if header == "成本价":
+                continue
+            if self._formula_result_missing(row, header):
+                errors.append(f"{header}公式没有可用计算结果，请用Excel/WPS重新计算并保存")
                 continue
             value = self._import_value(row, header)
             if value and self._decimal_or_none(
@@ -719,11 +791,22 @@ class ProductImportService:
                 errors.append(f"与Excel第{first_excel_row}行的来源供应商与SKU重复")
             elif existing_product is not None:
                 row.write_action = "UPDATE"
+        if values["上架日期"] and self._optional_date(values["上架日期"]) is None:
+            warnings.append("上架日期无法确定年份，正式商品将暂不写入上架日期")
+        if not errors and match is not None and match.matched_supplier_id is not None:
+            try:
+                self._store_normalized_product_values(row, match.matched_supplier_id)
+            except ValidationError as exc:
+                field = str(exc.errors()[0]["loc"][0]) if exc.errors() else "商品字段"
+                label = _IMPORT_UPDATE_FIELD_LABELS.get(field, field)
+                errors.append(f"{label}格式、长度或精度不符合要求")
+            if not errors and existing_product is not None:
+                if not preserve_target_snapshot:
+                    row.target_product_id = existing_product.id
+                    row.target_product_updated_at = existing_product.updated_at
                 row.changed_fields = self._changed_import_fields(
                     existing_product, row, match.matched_supplier_id
                 )
-        if values["上架日期"] and self._optional_date(values["上架日期"]) is None:
-            warnings.append("上架日期无法确定年份，正式商品将暂不写入上架日期")
         return errors, warnings
 
     def _product_from_row(
@@ -770,35 +853,58 @@ class ProductImportService:
         source_supplier_id: uuid.UUID,
         category: Category | None,
     ) -> dict[str, object]:
-        values = row.source_data
-        cost_price = self._decimal_or_none(self._import_value(row, "成本价"))
-        if cost_price is None:
+        if row.normalized_data is None:
+            raise RuntimeError("A ready Product Import row is missing normalized values")
+        data = row.normalized_data
+        payload = ProductUpdateRequest.model_validate(
+            {name: data.get(name) for name in ProductUpdateRequest.model_fields}
+        )
+        if payload.cost_price is None:
             raise RuntimeError("A ready Product Import row is missing a cost price")
-        sku = self._optional(values["sku"])
-        if sku is None:
+        sku = data.get("sku")
+        if not isinstance(sku, str) or not sku:
             raise RuntimeError("A ready Product Import row is missing an SKU")
-        image_reference = self._image_reference(row)
-        return {
+        product_values = payload.model_dump()
+        product_values.update(
+            {
+                "image_reference": self._optional(self._image_reference(row)),
+                "sku": sku,
+                "source_supplier_id": source_supplier_id,
+                "category_id": category.id if category is not None else payload.category_id,
+                "category_level1_name": (
+                    category.level1_name
+                    if category is not None
+                    else data.get("category_level1_name")
+                ),
+                "category_level2_name": (
+                    category.level2_name
+                    if category is not None
+                    else data.get("category_level2_name")
+                ),
+                "category_level3_name": (
+                    category.level3_name
+                    if category is not None
+                    else data.get("category_level3_name")
+                ),
+                "deduction_rate": None,
+            }
+        )
+        return product_values
+
+    def _store_normalized_product_values(
+        self, row: ProductImportRow, source_supplier_id: uuid.UUID
+    ) -> None:
+        values = row.source_data
+        candidate = {
             "company_name": self._optional(values["所属公司"]),
             "listed_at": self._optional_date(values["上架日期"]),
             "brand": self._optional(values["品牌"]),
-            "image_reference": self._optional(image_reference),
             "model": self._optional(values["型号"]),
-            "sku": sku,
             "product_name": self._optional(values["商品名称"]),
-            "category_id": category.id if category is not None else row.category_id,
-            "category_level1_name": (
-                category.level1_name if category is not None else self._optional(values["一级类目"])
-            ),
-            "category_level2_name": (
-                category.level2_name if category is not None else self._optional(values["二级类目"])
-            ),
-            "category_level3_name": (
-                category.level3_name if category is not None else self._optional(values["三级类目"])
-            ),
+            "category_id": row.category_id,
             "item_number": self._optional(values["货号"]),
             "jd_same_product_url": self._optional(values["链接"]),
-            "cost_price": cost_price,
+            "cost_price": self._decimal_or_none(self._import_value(row, "成本价")),
             "market_price": self._decimal_or_none(self._import_value(row, "市场价")),
             "jd_price": self._decimal_or_none(self._import_value(row, "京东价")),
             "agreement_price": self._decimal_or_none(self._import_value(row, "协议价")),
@@ -809,20 +915,19 @@ class ProductImportService:
             "jd_margin": self._decimal_or_none(
                 self._import_value(row, "京东价毛利（30-50）"), percentage=True
             ),
-            "purchasing_agent": self._optional(values["采销员"]),
-            "source_supplier_id": source_supplier_id,
-            "barcode_text": self._optional(values["69码"]),
-            "certification_3c_code": self._optional(values["3c编码"]),
             "deduction_review": self._decimal_or_none(
                 self._import_value(row, "扣点复核"), percentage=True
             ),
+            "gross_margin": self._decimal_or_none(
+                self._import_value(row, "毛利率"), percentage=True
+            ),
+            "purchasing_agent": self._optional(values["采销员"]),
+            "barcode_text": self._optional(values["69码"]),
+            "certification_3c_code": self._optional(values["3c编码"]),
             "product_specification": self._optional(values["产品规格"]),
             "selling_points": self._optional(values["卖点"]),
             "packaging_list": self._optional(values["包装清单"]),
             "warranty_period": self._optional(values["质保期"]),
-            "gross_margin": self._decimal_or_none(
-                self._import_value(row, "毛利率"), percentage=True
-            ),
             "remark": self._optional(values["备注"]),
             "discount_rate": self._decimal_or_none(
                 self._import_value(row, "折扣率"), percentage=True
@@ -840,13 +945,26 @@ class ProductImportService:
             "price_inflation_rate": self._decimal_or_none(
                 self._import_value(row, "价格虚高比例"), percentage=True
             ),
-            "deduction_rate": None,
             "tax_code": self._optional(values["税收编码"]),
             "invoice_name": self._optional(values["开票名称"]),
             "tax_category": self._optional(values["税收分类"]),
             "shipping_courier": self._optional(values["发货快递"]),
             "after_sales_policy": self._optional(values["售后政策"]),
         }
+        payload = ProductUpdateRequest.model_validate(candidate)
+        if payload.cost_price is None:
+            raise RuntimeError("Validated Product Import values are missing cost price")
+        normalized = payload.model_dump(mode="json")
+        normalized.update(
+            {
+                "sku": self._optional(values["sku"]),
+                "source_supplier_id": str(source_supplier_id),
+                "category_level1_name": self._optional(values["一级类目"]),
+                "category_level2_name": self._optional(values["二级类目"]),
+                "category_level3_name": self._optional(values["三级类目"]),
+            }
+        )
+        row.normalized_data = normalized
 
     async def _stage_confirmed_row_images(
         self, task: ProductImportTask, rows: list[ProductImportRow]
@@ -859,24 +977,25 @@ class ProductImportService:
                 "The temporary import file is unavailable; upload the workbook again",
                 409,
             )
-        temporary = NamedTemporaryFile(
-            prefix="scm-product-import-source-", suffix=".xlsx", delete=False
-        )
-        source_path = Path(temporary.name)
-        temporary.close()
-        try:
+        async with _workbook_semaphore():
+            temporary = NamedTemporaryFile(
+                prefix="scm-product-import-source-", suffix=".xlsx", delete=False
+            )
+            source_path = Path(temporary.name)
+            temporary.close()
             try:
-                await self.storage.copy_to(task.source_file_storage_key, source_path)
-            except FileNotFoundError as exc:
-                raise AppError(
-                    "PRODUCT_IMPORT_SOURCE_FILE_MISSING",
-                    "The temporary import file is unavailable; upload the workbook again",
-                    409,
-                ) from exc
-            images = await asyncio.to_thread(extract_dispimg_images_from_path, source_path)
-            return await self._stage_images(task, images, rows)
-        finally:
-            source_path.unlink(missing_ok=True)
+                try:
+                    await self.storage.copy_to(task.source_file_storage_key, source_path)
+                except FileNotFoundError as exc:
+                    raise AppError(
+                        "PRODUCT_IMPORT_SOURCE_FILE_MISSING",
+                        "The temporary import file is unavailable; upload the workbook again",
+                        409,
+                    ) from exc
+                images = await asyncio.to_thread(extract_dispimg_images_from_path, source_path)
+                return await self._stage_images(task, images, rows)
+            finally:
+                source_path.unlink(missing_ok=True)
 
     async def _cleanup_expired_temp_media(self) -> None:
         cutoff = datetime.now() - timedelta(
@@ -978,15 +1097,22 @@ class ProductImportService:
         return None
 
     @staticmethod
-    def _assert_editable_task(task: ProductImportTask | None, actor_id: uuid.UUID) -> None:
+    def _assert_viewable_task(task: ProductImportTask | None, actor_id: uuid.UUID) -> None:
         if task is None:
             raise AppError("PRODUCT_IMPORT_TASK_NOT_FOUND", "Import task not found", 404)
         if task.created_by != actor_id:
             raise AppError(
                 "PRODUCT_IMPORT_TASK_FORBIDDEN",
-                "Only the uploader can resolve or confirm this import batch",
+                "Only the uploader can view or operate this import batch",
                 403,
             )
+
+    @classmethod
+    def _assert_editable_task(
+        cls, task: ProductImportTask | None, actor_id: uuid.UUID
+    ) -> None:
+        cls._assert_viewable_task(task, actor_id)
+        assert task is not None
         if task.status == "EXPIRED":
             raise AppError(
                 "PRODUCT_IMPORT_TASK_EXPIRED",
@@ -1010,12 +1136,34 @@ class ProductImportService:
             )
         )
 
-    async def _preview_response(self, task: ProductImportTask) -> ProductImportPreviewResponse:
+    async def _preview_response(
+        self,
+        task: ProductImportTask,
+        *,
+        rows: list[ProductImportRow] | None = None,
+        row_total: int | None = None,
+        page_params: PageParams | None = None,
+    ) -> ProductImportPreviewResponse:
+        if page_params is None:
+            page_params = PageParams(page=1, page_size=PRODUCT_IMPORT_DEFAULT_PAGE_SIZE)
+        if rows is None:
+            all_rows = list(task.rows)
+            row_total = len(all_rows)
+            start = (page_params.page - 1) * page_params.page_size
+            rows = all_rows[start : start + page_params.page_size]
+        if row_total is None:
+            row_total = len(rows)
+        supplier_ids = {
+            match.matched_supplier_id
+            for match in task.supplier_matches
+            if match.matched_supplier_id is not None
+        }
+        suppliers = await self.supplier_repository.active_by_ids(supplier_ids)
         supplier_names: dict[uuid.UUID, tuple[str, str]] = {}
         for match in task.supplier_matches:
             if match.matched_supplier_id is None:
                 continue
-            supplier = await self.supplier_repository.active_by_id(match.matched_supplier_id)
+            supplier = suppliers.get(match.matched_supplier_id)
             if supplier is not None:
                 supplier_names[match.id] = (supplier.supplier_code, supplier.supplier_name)
         return ProductImportPreviewResponse(
@@ -1027,6 +1175,9 @@ class ProductImportService:
             update_rows=task.update_rows,
             invalid_rows=task.invalid_rows,
             imported_rows=task.imported_rows,
+            row_total=row_total,
+            page=page_params.page,
+            page_size=page_params.page_size,
             rows=[
                 ProductImportRowResponse(
                     source_row_number=row.source_row_number,
@@ -1050,7 +1201,7 @@ class ProductImportService:
                     error_message=row.error_message,
                     warning_message=row.warning_message,
                 )
-                for row in task.rows
+                for row in rows
             ],
             supplier_matches=[
                 ProductImportSupplierMatchResponse(
@@ -1146,6 +1297,14 @@ class ProductImportService:
         if source and source.startswith("="):
             return row.calculated_data.get(header)
         return source
+
+    @staticmethod
+    def _formula_result_missing(row: ProductImportRow, header: str) -> bool:
+        source = row.source_data.get(header)
+        if not source or not source.startswith("="):
+            return False
+        calculated = row.calculated_data.get(header)
+        return calculated is None or not calculated.strip()
 
     @staticmethod
     def _optional_date(value: str | None) -> date | None:

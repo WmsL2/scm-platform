@@ -121,17 +121,8 @@ const importPreview = ref<ProductImportPreview>()
 const supplierCandidates = ref<ProductImportSupplierCandidate[]>([])
 const selections = reactive<Record<string, string>>({})
 const importRowFilter = ref<"ALL" | "PASSED" | "FAILED" | "UPDATE">("ALL")
+const importRowsLoading = ref(false)
 const activeTab = ref<"products" | "audit">("products")
-
-const filteredImportRows = computed(() => {
-  const rows = importPreview.value?.rows ?? []
-  if (importRowFilter.value === "PASSED") {
-    return rows.filter((row) => row.is_valid && !row.is_imported && row.write_action === "CREATE")
-  }
-  if (importRowFilter.value === "UPDATE") return rows.filter((row) => row.write_action === "UPDATE")
-  if (importRowFilter.value === "FAILED") return rows.filter((row) => !row.is_valid && !row.is_imported)
-  return rows
-})
 
 async function loadProducts(targetPage = page.value): Promise<void> {
   loading.value = true
@@ -372,6 +363,22 @@ async function previewImport(event: Event): Promise<void> {
   }
 }
 
+async function loadImportRows(targetPage = 1): Promise<void> {
+  if (!importPreview.value) return
+  importRowsLoading.value = true
+  try {
+    importPreview.value = await productApi.getImportPreview(importPreview.value.id, {
+      page: targetPage,
+      page_size: 50,
+      row_status: importRowFilter.value,
+    })
+  } catch (error) {
+    ElMessage.error(error instanceof HttpError ? error.response.message : "加载导入明细失败")
+  } finally {
+    importRowsLoading.value = false
+  }
+}
+
 async function resolveSupplier(matchId: string): Promise<void> {
   if (!importPreview.value || !selections[matchId]) return
   importing.value = true
@@ -381,6 +388,7 @@ async function resolveSupplier(matchId: string): Promise<void> {
       matchId,
       selections[matchId],
     )
+    importRowFilter.value = "ALL"
     ElMessage.success("来源供应商已解析，已重新校验该批次")
   } catch (error) {
     ElMessage.error(error instanceof HttpError ? error.response.message : "来源供应商解析失败")
@@ -394,7 +402,7 @@ async function confirmImport(): Promise<void> {
   importing.value = true
   try {
     const result = await productApi.confirmImport(importPreview.value.id)
-    importPreview.value = await productApi.getImportPreview(importPreview.value.id)
+    await loadImportRows(1)
     ElMessage.success(`本次新增 ${result.created_count} 条，更新 ${result.updated_count} 条商品`)
     if (result.status === "CONFIRMED") {
       importDialogVisible.value = false
@@ -699,13 +707,13 @@ onMounted(() => { void loadProducts() })
         </el-table>
 
         <h3>行校验结果</h3>
-        <el-radio-group v-model="importRowFilter" class="import-row-filter">
+        <el-radio-group v-model="importRowFilter" class="import-row-filter" @change="loadImportRows(1)">
           <el-radio-button label="ALL">全部（{{ importPreview.total_rows }}）</el-radio-button>
           <el-radio-button label="PASSED">通过（{{ importPreview.valid_rows }}）</el-radio-button>
           <el-radio-button label="UPDATE">更新（{{ importPreview.update_rows }}）</el-radio-button>
           <el-radio-button label="FAILED">不通过（{{ importPreview.invalid_rows }}）</el-radio-button>
         </el-radio-group>
-        <el-table :data="filteredImportRows" max-height="300">
+        <el-table v-loading="importRowsLoading" :data="importPreview.rows" max-height="300">
           <el-table-column prop="source_row_number" label="Excel 行" width="90" />
           <el-table-column prop="product_name" label="商品名称" min-width="180" show-overflow-tooltip />
           <el-table-column label="图片" width="85">
@@ -730,6 +738,15 @@ onMounted(() => { void loadProducts() })
             </template>
           </el-table-column>
         </el-table>
+        <el-pagination
+          v-if="importPreview.row_total > importPreview.page_size"
+          class="pagination"
+          layout="prev, pager, next, total"
+          :current-page="importPreview.page"
+          :page-size="importPreview.page_size"
+          :total="importPreview.row_total"
+          @current-change="loadImportRows"
+        />
       </template>
       <template #footer>
         <el-button :disabled="importing" @click="importDialogVisible = false">关闭</el-button>

@@ -94,6 +94,17 @@ Revision `20260911_0020` 将 Product 生命周期冻结为 `ACTIVE` / `DISABLED`
 25MB 旧限制拦截。浏览器预览请求超时为 15 分钟，仍应根据网络、服务器 CPU、磁盘和数据库容量
 合理设置部署环境的反向代理上传大小及超时。
 
+工作簿解析与 Confirm 图片提取共用进程内资源闸门，默认每 API 进程同时执行 1 个重任务，可用
+`PRODUCT_IMPORT_MAX_CONCURRENT_WORKBOOKS` 调整。数据库暂存行按 500 条批量写入；行明细使用
+`page`、`page_size`（最大 100）和 `row_status=ALL|PASSED|UPDATE|FAILED` 服务端分页，页面默认
+每页 50 行。该闸门只限制重型工作簿操作，不阻止商品查询等普通请求；多 Worker 部署时总并发量是
+各 Worker 配置之和。
+
+所有金额、比例和销量在预览阶段转换并经过 Pydantic/Decimal 校验，标准化结果单独保存在 Staging。
+带 `%` 的比例除以 100，例如 `46.25%` 保存为 `0.4625`；不带 `%` 的比例按数据库小数值解释；
+空单元格写 `NULL`。`profit` 是金额，不接受 `%`。`5000+` 等非法内容和没有缓存计算结果的数值公式
+均使该行不通过，Confirm 不会把原始字符串直接交给 MySQL。
+
 `scm_product.source_supplier_id` 表示商品大表该行的**来源供应商**，不是当前报价供应商，也不是唯一供应商。成本价更新不自动新建报价关联或历史记录。
 
 ## 来源供应商解析
@@ -105,5 +116,10 @@ Excel“供应商”原值只写入 Staging 的 `supplier_name_raw`，用于审�
 有效候选必须同时为 `ARCHIVED`、`NORMAL`、未逻辑删除。多个有效候选为 `AMBIGUOUS`；没有同名供应商为 `UNMATCHED`；存在同名但均不符合有效条件为 `INELIGIBLE`。后三者必须由用户从当前有效 Supplier Master 中人工选择（`MANUAL`），或先在 Supplier Master 处理后重试；不得在导入页面创建、归档或恢复供应商，也不得创建独立报价记录。
 
 当前实现的 Import Task 状态为 `VALIDATED`、`NEEDS_RESOLUTION`、`READY_TO_CONFIRM`、`PARTIALLY_CONFIRMED`、`CONFIRMED`、`EXPIRED`。每个未处理行另记录 `CREATE` 或 `UPDATE`；`UPDATE` 保留变更字段列表，确认后仍可显示“已更新”。Confirm 对当前所有通过新增行和更新行保持单事务原子性：重新校验必要字段、Match Decision 和每个 `matched_supplier_id` 仍为有效候选后，才提取该批行的图片，创建新 Product 或更新锁定的正常同键 Product。更新保留 ID、创建审计、生命周期状态及供应商 + SKU 键；其余 41 个模板字段按 Excel 覆盖，空单元格清空，价格不重算。任一拟导入行失败不得让本次其他通过行部分写入；不通过行保留在 Staging，绝不入库。
+
+系统不以文件名或文件哈希判断两个用户是否导入“同一份 Excel”。不同任务命中相同的
+`source_supplier_id + sku` 时，Confirm 会锁定对应正式商品并比较预览时的 Product ID / `updated_at`。
+预览后若另一任务已创建、更新或删除该商品，当前确认返回 `PRODUCT_IMPORT_STALE_PREVIEW`（409），
+要求重新上传预览；数据库 UNIQUE 约束继续兜底创建竞争。因此并发不会静默采用“后确认覆盖先确认”。
 
 已实现 API：`GET /api/v1/products/imports/template`、`POST /api/v1/products/imports/preview`、`GET /api/v1/products/imports/{task_id}`、`GET /api/v1/products/imports/supplier-candidates`、`POST /api/v1/products/imports/{task_id}/supplier-matches/{match_id}/resolve`、`POST /api/v1/products/imports/{task_id}/confirm`。模板下载与其他导入 API 均要求 `product:import`；人工解析请求只提交 `{ "supplier_id": "<UUID>" }`；Backend 必须再次验证该 UUID 当前有效，前端不得把 supplier_name 作为正式选择结果。

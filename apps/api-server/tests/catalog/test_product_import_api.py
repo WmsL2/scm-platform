@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
 
@@ -174,6 +174,7 @@ def _workbook_bytes(
     product_name: str = "测试商品",
     cost_price: str = "100",
     sku_override: str | None = None,
+    value_overrides: dict[str, object] | None = None,
     styled_blank_columns_after_template: bool = False,
 ) -> bytes:
     workbook = Workbook()
@@ -181,7 +182,7 @@ def _workbook_bytes(
     assert worksheet is not None
     worksheet.append(PRODUCT_IMPORT_HEADERS)
     for index, supplier_name in enumerate(supplier_names, start=1):
-        values = {
+        values: dict[str, object] = {
             "所属公司": "测试公司", "上架日期": "2026-09-10", "品牌": "测试品牌",
             "图片": image_value, "型号": "型号", "sku": sku_override or f"SKU-{index}",
             "商品名称": product_name, "一级类目": category_path[0], "二级类目": category_path[1],
@@ -197,6 +198,7 @@ def _workbook_bytes(
             "开票名称": "测试商品", "税收分类": "测试分类", "发货快递": "京东物流",
             "售后政策": "七天无理由", "备注": "备注",
         }
+        values.update(value_overrides or {})
         worksheet.append([values[header] for header in PRODUCT_IMPORT_HEADERS])
     if styled_blank_columns_after_template:
         worksheet.cell(row=1, column=16_384).fill = PatternFill(
@@ -636,6 +638,218 @@ async def test_product_import_defers_formula_image_storage_until_confirm() -> No
             async with SessionLocal() as session:
                 task = await session.get(ProductImportTask, data["id"])
                 assert task is not None and task.source_file_storage_key is None
+    finally:
+        await _cleanup_import_data(supplier_id, user_id, (category_id,))
+        await _cleanup_import_user(user_id)
+
+
+async def test_product_import_normalizes_rates_and_rejects_invalid_numeric_text() -> None:
+    user_id, headers = await _create_import_user()
+    supplier_id, category_id = await _create_references()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            valid_preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "normalized-rates.xlsx",
+                        _workbook_bytes(
+                            "导入测试供应商",
+                            value_overrides={
+                                "利润": None,
+                                "京东价毛利（30-50）": "74.32%",
+                                "毛利率": 0.2778,
+                                "折扣率": None,
+                                "价格虚高比例": "46.25%",
+                            },
+                        ),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert valid_preview.status_code == 200
+            valid_data = valid_preview.json()["data"]
+            assert valid_data["valid_rows"] == 1
+
+            async with SessionLocal() as session:
+                staged_row = await session.scalar(
+                    select(ProductImportRow).where(
+                        ProductImportRow.import_task_id == valid_data["id"]
+                    )
+                )
+                assert staged_row is not None
+                assert staged_row.normalized_data is not None
+                assert staged_row.normalized_data["price_inflation_rate"] == "0.4625"
+                assert staged_row.normalized_data["jd_margin"] == "0.7432"
+                assert staged_row.normalized_data["gross_margin"] == "0.2778"
+                assert staged_row.normalized_data["discount_rate"] is None
+                assert staged_row.normalized_data["profit"] is None
+
+            confirmed = await client.post(
+                f"/api/v1/products/imports/{valid_data['id']}/confirm", headers=headers
+            )
+            assert confirmed.status_code == 200
+
+            invalid_preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "invalid-numbers.xlsx",
+                        _workbook_bytes(
+                            "导入测试供应商",
+                            sku_override="SKU-INVALID",
+                            value_overrides={"利润": "46.25%", "价格虚高比例": "5000+"},
+                        ),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            invalid_row = invalid_preview.json()["data"]["rows"][0]
+            assert invalid_row["is_valid"] is False
+            assert "利润必须是数字" in invalid_row["error_message"]
+            assert "价格虚高比例必须是数字" in invalid_row["error_message"]
+
+            formula_preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "formula-without-cache.xlsx",
+                        _workbook_bytes(
+                            "导入测试供应商",
+                            sku_override="SKU-FORMULA",
+                            value_overrides={"成本价": "=1+1"},
+                        ),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            formula_row = formula_preview.json()["data"]["rows"][0]
+            assert formula_row["is_valid"] is False
+            assert "成本价公式没有可用计算结果" in formula_row["error_message"]
+
+        async with SessionLocal() as session:
+            product = await session.scalar(select(Product).where(Product.created_by == user_id))
+            assert product is not None
+            assert product.price_inflation_rate == Decimal("0.4625")
+            assert product.jd_margin == Decimal("0.7432")
+            assert product.gross_margin == Decimal("0.2778")
+            assert product.discount_rate is None
+            assert product.profit is None
+    finally:
+        await _cleanup_import_data(supplier_id, user_id, (category_id,))
+        await _cleanup_import_user(user_id)
+
+
+async def test_product_import_preview_rows_are_server_paginated() -> None:
+    user_id, headers = await _create_import_user()
+    supplier_id, category_id = await _create_references()
+    try:
+        workbook = _workbook_bytes(*(["导入测试供应商"] * 105))
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "paginated-products.xlsx",
+                        workbook,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert preview.status_code == 200
+            data = preview.json()["data"]
+            assert data["row_total"] == 105
+            assert data["page"] == 1
+            assert data["page_size"] == 50
+            assert len(data["rows"]) == 50
+
+            page_three = await client.get(
+                f"/api/v1/products/imports/{data['id']}",
+                headers=headers,
+                params={"page": 3, "page_size": 50, "row_status": "PASSED"},
+            )
+            assert page_three.status_code == 200
+            page_data = page_three.json()["data"]
+            assert page_data["row_total"] == 105
+            assert page_data["page"] == 3
+            assert len(page_data["rows"]) == 5
+            assert page_data["rows"][0]["source_row_number"] == 102
+    finally:
+        await _cleanup_import_data(supplier_id, user_id, (category_id,))
+        await _cleanup_import_user(user_id)
+
+
+async def test_product_import_confirm_rejects_stale_concurrent_preview() -> None:
+    user_id, headers = await _create_import_user()
+    supplier_id, category_id = await _create_references()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            preview_ids: list[str] = []
+            for filename in ("concurrent-a.xlsx", "concurrent-b.xlsx"):
+                preview = await client.post(
+                    "/api/v1/products/imports/preview",
+                    headers=headers,
+                    files={
+                        "file": (
+                            filename,
+                            _workbook_bytes("导入测试供应商"),
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+                    },
+                )
+                assert preview.status_code == 200
+                preview_ids.append(preview.json()["data"]["id"])
+
+            first_confirm = await client.post(
+                f"/api/v1/products/imports/{preview_ids[0]}/confirm", headers=headers
+            )
+            assert first_confirm.status_code == 200
+            stale_create = await client.post(
+                f"/api/v1/products/imports/{preview_ids[1]}/confirm", headers=headers
+            )
+            assert stale_create.status_code == 409
+            assert stale_create.json()["code"] == "PRODUCT_IMPORT_STALE_PREVIEW"
+
+            update_preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "stale-update.xlsx",
+                        _workbook_bytes(
+                            "导入测试供应商", product_name="来自过期预览的名称"
+                        ),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            update_id = update_preview.json()["data"]["id"]
+
+            async with SessionLocal() as session:
+                product = await session.scalar(
+                    select(Product).where(Product.created_by == user_id)
+                )
+                assert product is not None
+                product.product_name = "其他并发操作已更新"
+                product.updated_at = datetime.now() + timedelta(seconds=5)
+                await session.commit()
+
+            stale_update = await client.post(
+                f"/api/v1/products/imports/{update_id}/confirm", headers=headers
+            )
+            assert stale_update.status_code == 409
+            assert stale_update.json()["code"] == "PRODUCT_IMPORT_STALE_PREVIEW"
+
+        async with SessionLocal() as session:
+            products = list(
+                (await session.scalars(select(Product).where(Product.created_by == user_id))).all()
+            )
+            assert len(products) == 1
+            assert products[0].product_name == "其他并发操作已更新"
     finally:
         await _cleanup_import_data(supplier_id, user_id, (category_id,))
         await _cleanup_import_user(user_id)

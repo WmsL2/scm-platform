@@ -332,6 +332,9 @@ class ProductImportPreviewResponse(BaseModel):
     update_rows: int
     invalid_rows: int
     imported_rows: int
+    row_total: int
+    page: int
+    page_size: int
     rows: list[ProductImportRowResponse]
     supplier_matches: list[ProductImportSupplierMatchResponse]
 

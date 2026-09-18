@@ -23,7 +23,11 @@ describe("product import api", () => {
 
     await productApi.previewImport(file)
     await productApi.downloadImportTemplate()
-    await productApi.getImportPreview("task-1")
+    await productApi.getImportPreview("task-1", {
+      page: 1,
+      page_size: 50,
+      row_status: "ALL",
+    })
     await productApi.importSupplierCandidates()
     await productApi.resolveImportSupplier("task-1", "match-1", "supplier-1")
     const confirmed = await productApi.confirmImport("task-1")
@@ -36,7 +40,9 @@ describe("product import api", () => {
     )
     expect(http.get).toHaveBeenCalledWith("/api/v1/products/imports/supplier-candidates")
     expect(http.getBlob).toHaveBeenCalledWith("/api/v1/products/imports/template")
-    expect(http.get).toHaveBeenCalledWith("/api/v1/products/imports/task-1")
+    expect(http.get).toHaveBeenCalledWith(
+      "/api/v1/products/imports/task-1?page=1&page_size=50&row_status=ALL",
+    )
     expect(http.post).toHaveBeenNthCalledWith(
       2,
       "/api/v1/products/imports/task-1/supplier-matches/match-1/resolve",
