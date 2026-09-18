@@ -7,7 +7,7 @@ Last Updated：2026-09-18
 ## Database
 - [x] `20260910_0013` 创建 `scm_product_import_task`、`scm_product_import_row`、`scm_product_import_supplier_match`
 - [x] `20260911_0022` 为 Task 增加 `imported_rows`，为 Staging 行增加导入状态与操作审计字段
-- [x] `20260918_0031` 为 Staging 行增加标准化正式值及目标 Product 版本快照，不修改正式业务表
+- [x] `20260918_0033` 为 Staging 行增加标准化正式值及目标 Product 版本快照，不修改正式业务表
 - [x] 原始 Excel 行和 `supplier_name_raw` 仅保留在 Staging；正式 `scm_product` 不增加供应商名称字段
 
 ## Backend
@@ -41,7 +41,7 @@ Last Updated：2026-09-18
 - 商城三级品类维表是当前模板的受控匹配来源。类目无匹配、停用或不唯一时，该行显示明确原因并保留在 Staging，不写入 Product。
 - 2026-09-10 对用户提供的 50 行模板进行了事务回滚预检：34 行通过，16 行因供应商为空或未解析而未通过；预检未保留任何暂存或正式数据。
 - `20260914_0023` 后，新预览不再生成商品图片文件；预览表显示“确认后保存”。临时源 Excel 在全量 Confirm 后立即删除；每次新预览会清理超过 `PRODUCT_IMPORT_UNCONFIRMED_RETENTION_DAYS`（默认 7 天）的未完成/部分确认任务的源文件和未导入行媒体，过期任务不可继续确认。已导入 Product 的图片绝不属于此清理范围。
-- 升级到 `20260918_0031` 前已生成的未确认更新任务没有 Product 版本快照，必须重新上传预览后再确认。
+- 升级到 `20260918_0033` 前已生成的未确认更新任务没有 Product 版本快照，必须重新上传预览后再确认。
 
 ## Next Step
 维护/归档有效 Supplier Master，并为 Excel 的空供应商补齐来源供应商后重新上传该固定模板；不可绕过预览直接导入。

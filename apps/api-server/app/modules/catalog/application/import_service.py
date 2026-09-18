@@ -26,7 +26,6 @@ from app.modules.catalog.application.excel_images import (
 )
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import (
-    Category,
     Product,
     ProductImportRow,
     ProductImportSupplierMatch,
@@ -136,7 +135,9 @@ _IMPORT_UPDATE_FIELD_LABELS = {
     "image_reference": "图片",
     "model": "型号",
     "product_name": "商品名称",
-    "category_id": "类目",
+    "category_level1_name": "一级类目",
+    "category_level2_name": "二级类目",
+    "category_level3_name": "三级类目",
     "item_number": "货号",
     "jd_same_product_url": "链接",
     "cost_price": "成本价",
@@ -361,18 +362,7 @@ class ProductImportService:
                         existing_products = await self.repository.products_by_supplier_sku(
                             set(row_supplier_sku_keys.values()), for_update=True
                         )
-                        category_ids = {row.category_id for row in rows_to_write}
-                        if None in category_ids:
-                            raise RuntimeError(
-                                "A ready Product Import row is missing a resolved category"
-                            )
-                        resolved_category_ids = {
-                            category_id for category_id in category_ids if category_id is not None
-                        }
-                        categories = await self.repository.active_mall_categories_by_ids(
-                            resolved_category_ids, for_update=True
-                        )
-                        resolved_rows: list[tuple[ProductImportRow, uuid.UUID, Category]] = []
+                        resolved_rows: list[tuple[ProductImportRow, uuid.UUID]] = []
                         for row in rows_to_write:
                             match = (
                                 matches.get(row.supplier_match_id)
@@ -426,34 +416,21 @@ class ProductImportService:
                                     "upload and preview the workbook again",
                                     409,
                                 )
-                            if row.category_id is None:
-                                raise RuntimeError(
-                                    "A ready Product Import row is missing a resolved category"
-                                )
-                            category = categories.get(row.category_id)
-                            if category is None:
-                                raise AppError(
-                                    "PRODUCT_IMPORT_REFERENCE_CHANGED",
-                                    "A category changed after preview; preview the batch again",
-                                    409,
-                                )
-                            resolved_rows.append((row, match.matched_supplier_id, category))
+                            resolved_rows.append((row, match.matched_supplier_id))
                         created_count = 0
                         updated_count = 0
-                        for row, source_supplier_id, category in resolved_rows:
+                        for row, source_supplier_id in resolved_rows:
                             supplier_sku_key = row_supplier_sku_keys[row.source_row_number]
                             existing_product = existing_products.get(supplier_sku_key)
                             if existing_product is None:
                                 self.session.add(
-                                    self._product_from_row(
-                                        row, source_supplier_id, category, actor_id
-                                    )
+                                    self._product_from_row(row, source_supplier_id, actor_id)
                                 )
                                 created_count += 1
                             else:
                                 previous_image_reference = existing_product.image_reference
                                 self._update_product_from_row(
-                                    existing_product, row, source_supplier_id, category, actor_id
+                                    existing_product, row, source_supplier_id, actor_id
                                 )
                                 if previous_image_reference != existing_product.image_reference:
                                     previous_key = self._local_media_key(previous_image_reference)
@@ -632,7 +609,6 @@ class ProductImportService:
         self, task: ProductImportTask, *, preserve_target_snapshots: bool = False
     ) -> None:
         matches = {match.id: match for match in task.supplier_matches}
-        category_errors = await self._refresh_category_bindings(task)
         row_supplier_sku_keys: dict[int, tuple[uuid.UUID, str]] = {}
         for row in task.rows:
             if row.is_imported:
@@ -668,7 +644,6 @@ class ProductImportService:
                 matches,
                 existing_products=existing_products,
                 first_excel_row=first_excel_row,
-                category_error=category_errors.get(row.source_row_number),
                 preserve_target_snapshot=preserve_target_snapshots,
             )
             row.error_message = "；".join(errors) or None
@@ -701,30 +676,6 @@ class ProductImportService:
         else:
             task.status = "VALIDATED"
 
-    async def _refresh_category_bindings(self, task: ProductImportTask) -> dict[int, str]:
-        categories_by_path: dict[tuple[str, str, str], list[Category]] = {}
-        for category in await self.repository.mall_categories():
-            path = (category.level1_name, category.level2_name, category.level3_name)
-            categories_by_path.setdefault(path, []).append(category)
-
-        errors: dict[int, str] = {}
-        for row in task.rows:
-            if row.is_imported:
-                continue
-            path = self._category_path(row)
-            candidates = categories_by_path.get(path, [])
-            active_candidates = [category for category in candidates if category.is_active]
-            row.category_id = None
-            if len(active_candidates) == 1:
-                row.category_id = active_candidates[0].id
-            elif not candidates:
-                errors[row.source_row_number] = self._category_not_found_message(path)
-            elif not active_candidates:
-                errors[row.source_row_number] = self._category_inactive_message(path)
-            else:
-                errors[row.source_row_number] = self._category_ambiguous_message(path)
-        return errors
-
     async def _row_messages(
         self,
         row: ProductImportRow,
@@ -732,7 +683,6 @@ class ProductImportService:
         *,
         existing_products: dict[tuple[uuid.UUID, str], Product],
         first_excel_row: int | None,
-        category_error: str | None,
         preserve_target_snapshot: bool,
     ) -> tuple[list[str], list[str]]:
         values = row.source_data
@@ -752,8 +702,9 @@ class ProductImportService:
             cost_price = self._required_decimal(row, "成本价", errors)
         if cost_price is not None and cost_price <= 0:
             errors.append("成本价必须大于0")
-        if category_error is not None:
-            errors.append(category_error)
+        for header in ("一级类目", "二级类目", "三级类目"):
+            if self._optional(self._import_value(row, header)) is None:
+                errors.append(f"{header}不能为空")
         sku = self._optional(values["sku"])
         if sku is None:
             errors.append("SKU不能为空")
@@ -813,11 +764,10 @@ class ProductImportService:
         self,
         row: ProductImportRow,
         source_supplier_id: uuid.UUID,
-        category: Category,
         actor_id: uuid.UUID,
     ) -> Product:
         return Product(
-            **self._product_values_from_row(row, source_supplier_id, category),
+            **self._product_values_from_row(row, source_supplier_id),
             created_by=actor_id,
             updated_by=actor_id,
         )
@@ -827,10 +777,9 @@ class ProductImportService:
         product: Product,
         row: ProductImportRow,
         source_supplier_id: uuid.UUID,
-        category: Category,
         actor_id: uuid.UUID,
     ) -> None:
-        product_values = self._product_values_from_row(row, source_supplier_id, category)
+        product_values = self._product_values_from_row(row, source_supplier_id)
         for field, value in product_values.items():
             if field not in {"source_supplier_id", "sku"}:
                 setattr(product, field, value)
@@ -840,7 +789,7 @@ class ProductImportService:
     def _changed_import_fields(
         self, product: Product, row: ProductImportRow, source_supplier_id: uuid.UUID
     ) -> list[str]:
-        planned_values = self._product_values_from_row(row, source_supplier_id, None)
+        planned_values = self._product_values_from_row(row, source_supplier_id)
         return [
             label
             for field, label in _IMPORT_UPDATE_FIELD_LABELS.items()
@@ -851,7 +800,6 @@ class ProductImportService:
         self,
         row: ProductImportRow,
         source_supplier_id: uuid.UUID,
-        category: Category | None,
     ) -> dict[str, object]:
         if row.normalized_data is None:
             raise RuntimeError("A ready Product Import row is missing normalized values")
@@ -870,22 +818,6 @@ class ProductImportService:
                 "image_reference": self._optional(self._image_reference(row)),
                 "sku": sku,
                 "source_supplier_id": source_supplier_id,
-                "category_id": category.id if category is not None else payload.category_id,
-                "category_level1_name": (
-                    category.level1_name
-                    if category is not None
-                    else data.get("category_level1_name")
-                ),
-                "category_level2_name": (
-                    category.level2_name
-                    if category is not None
-                    else data.get("category_level2_name")
-                ),
-                "category_level3_name": (
-                    category.level3_name
-                    if category is not None
-                    else data.get("category_level3_name")
-                ),
                 "deduction_rate": None,
             }
         )
@@ -901,7 +833,9 @@ class ProductImportService:
             "brand": self._optional(values["品牌"]),
             "model": self._optional(values["型号"]),
             "product_name": self._optional(values["商品名称"]),
-            "category_id": row.category_id,
+            "category_level1_name": self._required_text(row, "一级类目"),
+            "category_level2_name": self._required_text(row, "二级类目"),
+            "category_level3_name": self._required_text(row, "三级类目"),
             "item_number": self._optional(values["货号"]),
             "jd_same_product_url": self._optional(values["链接"]),
             "cost_price": self._decimal_or_none(self._import_value(row, "成本价")),
@@ -1192,7 +1126,6 @@ class ProductImportService:
                         self._normalized(row.source_data[name])
                         for name in ("一级类目", "二级类目", "三级类目")
                     ),
-                    category_id=row.category_id,
                     supplier_match_id=row.supplier_match_id,
                     is_valid=row.is_valid,
                     write_action=cast(Literal["CREATE", "UPDATE"], row.write_action),
@@ -1233,29 +1166,16 @@ class ProductImportService:
     def _normalized(value: object) -> str:
         return str(value or "").strip()
 
-    def _category_path(self, row: ProductImportRow) -> tuple[str, str, str]:
-        return (
-            self._normalized(row.source_data["一级类目"]),
-            self._normalized(row.source_data["二级类目"]),
-            self._normalized(row.source_data["三级类目"]),
-        )
-
-    @staticmethod
-    def _category_not_found_message(path: tuple[str, str, str]) -> str:
-        return f"未找到有效商城三级类目：{' / '.join(path)}"
-
-    @staticmethod
-    def _category_inactive_message(path: tuple[str, str, str]) -> str:
-        return f"匹配的商城三级类目已停用：{' / '.join(path)}"
-
-    @staticmethod
-    def _category_ambiguous_message(path: tuple[str, str, str]) -> str:
-        return f"商城三级类目匹配不唯一：{' / '.join(path)}"
-
     @staticmethod
     def _optional(value: str | None) -> str | None:
         if value is None or not value.strip():
             return None
+        return value
+
+    def _required_text(self, row: ProductImportRow, header: str) -> str:
+        value = self._optional(self._import_value(row, header))
+        if value is None:
+            raise RuntimeError(f"A ready Product Import row is missing {header}")
         return value
 
     @staticmethod

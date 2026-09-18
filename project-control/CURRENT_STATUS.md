@@ -23,7 +23,7 @@ Sprint 1 — Auth/RBAC + Supplier
 
 商品主数据 2026 模板、组合筛选、Product Master 直接类目候选及商品与类目维表脱钩已在分支 `feat/product-master-category-filter-options` 实现；最新单 Head 为 `20260918_0032`（基于 `20260918_0031`）。
 
-商品导入数值安全、4,000+ 行分页与并发确认保护已在分支 `feat/product-import-safety-concurrency` 实现；Revision `20260918_0031` 为暂存行增加标准化值和 Product 版本快照。Confirm 以供应商 + SKU 锁及版本冲突返回 409，重型工作簿操作默认每 API 进程并发 1。
+商品导入数值安全、4,000+ 行分页与并发确认保护已在分支 `feat/product-import-safety-concurrency` 实现；Revision `20260918_0033` 基于类目解耦 Revision `20260918_0032`，为暂存行增加标准化值和 Product 版本快照。Confirm 以供应商 + SKU 锁及版本冲突返回 409，重型工作簿操作默认每 API 进程并发 1。
 
 投标项目核心已在分支 `feat/bid-project-core` 实现：新增唯一 Migration `20260915_0024`，包含项目、模板、文件版本、需求行、事件、匹配和人工选品共享表，项目编号序列及投标权限。项目创建、ORIGINAL 保存、模板指纹识别、分页查询、文件下载、报价版本、提交和结果接口已完成；真实买家 Excel 尚未提供，因此当前不预置客户模板或报价列。2 号匹配和 3 号前端可在本结构上并行开发。
 
@@ -75,11 +75,7 @@ Sprint 1 — Auth/RBAC + Supplier
 - Post-Merge Hardening：Request transaction ownership、Service caller-owned transaction participation、Account association ID 幂等去重与 Supplier UUID Router validation 已验证；ADR-0007 冻结事务规则，无 Migration 变化。
 - Catalog：`IMPLEMENTED / PRODUCT_MASTER_CATEGORY_DECOUPLED`；固定商品大表直接保存三级必填文本，不再匹配或写入 Category ID，Excel 价格直接保存。正常同键商品可覆盖更新，停用同键商品仍阻止；空 Excel 单元格清空旧值。Product 列表提供综合搜索、文本包含、类目和价格/比例/销量闭区间筛选及本地自定义列；详情/编辑覆盖全部业务字段，供应商与 SKU 只读，图片仅通过受控上传/清除维护。
 - Product Price Maintenance：`cost_price` 是当前成本价和当前供应商报价，不建设 `scm_supplier_product_quote`；成本价更新仍受 `product:cost:update` 保护，但仅保存成本价，所有价格、利润和比例独立维护（ADR-0024）。
-<<<<<<< HEAD
-- Bid Matching / Task 2-3：PR #46 已提供投标共享 Schema 后，匹配任务、候选持久化、Top 20 可解释候选、人工选品不可变快照、无报价与四个受权限保护的 API 已完成。Task 3 已实现 Web 项目列表、创建、详情、文件版本和服务端分页匹配工作台；候选按需加载且历史展示不可变快照。项目业务开始时间 `start_at` 与审计 `created_at` 已分离。基础信息可由 `bid:update` 在允许状态编辑；删除采用 `bid:void` 业务作废，`VOIDED` 为历史保留终态（Revisions `20260916_0025`、`20260916_0026`、`20260916_0027`）。真实 API 浏览器验收仍等待已识别 BidTemplate，Template Management 仍为后续任务。
-=======
 - Product Operator Display：商品主数据已增加“操作记录”页签，复用正式 Product 列表和分页，显示既有 `created_by` / `created_at` / `updated_by` / `updated_at` 所表达的导入人、导入时间、最后更新人和最后更新时间；接口批量解析历史用户名，不新增表或 Migration。
-- Bid Matching / Task 2：PR #46 已提供投标共享 Schema 后，2 号任务已接入匹配任务、候选持久化、Top 20 可解释候选、人工选品不可变快照、无报价与四个受权限保护的 API。MySQL 持久化测试、全量后端测试、Ruff 和 mypy 已通过；3 号前端联调及未来 ARQ Worker 验收尚未完成。
->>>>>>> origin/main
+- Bid Matching / Task 2-3：PR #46 已提供投标共享 Schema 后，匹配任务、候选持久化、Top 20 可解释候选、人工选品不可变快照、无报价与四个受权限保护的 API 已完成。Task 3 已实现 Web 项目列表、创建、详情、文件版本和服务端分页匹配工作台；候选按需加载且历史展示不可变快照。项目业务开始时间 `start_at` 与审计 `created_at` 已分离。基础信息可由 `bid:update` 在允许状态编辑；删除采用 `bid:void` 业务作废，`VOIDED` 为历史保留终态（Revisions `20260916_0025`、`20260916_0026`、`20260916_0027`）。真实 API 浏览器验收仍等待已识别 BidTemplate，Template Management 仍为后续任务。
 - Web Admin Data Refresh：统一 API 客户端已设置 `cache: no-store`；新增、编辑、删除和导入确认后的页面重新加载不会复用浏览器中的旧 GET 响应，前端测试、类型检查和生产构建已验证。
 - Category Management：基于既有 `scm_category` 三级维表补齐列表、详情、新增、编辑、删除、启用选择和 Excel 导入；商品不再引用该表，删除不再因 Product 被阻止。
