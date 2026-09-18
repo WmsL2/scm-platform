@@ -546,7 +546,7 @@ async def test_supplier_excel_preview_and_confirm() -> None:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             template = await client.get("/api/v1/suppliers/imports/template", headers=headers)
             assert template.status_code == 200
-            template_workbook = load_workbook(BytesIO(template.content), read_only=True)
+            template_workbook = load_workbook(BytesIO(template.content), read_only=False)
             template_sheet = template_workbook.active
             assert template_sheet is not None
             assert tuple(cell.value for cell in next(template_sheet.iter_rows(max_row=1))) == (
@@ -556,27 +556,31 @@ async def test_supplier_excel_preview_and_confirm() -> None:
                 "联系人",
                 "联系电话",
             )
+            assert template_sheet["A1"].comment is not None
+            assert "必填：供应商名称" in template_sheet["A1"].comment.text
 
-            invalid_preview = await client.post(
+            name_only_preview = await client.post(
                 "/api/v1/suppliers/imports/preview",
                 headers=headers,
                 files={
                     "file": (
-                        "invalid.xlsx",
-                        workbook_bytes([("错误供应商", "品牌", None, None, None)]),
+                        "name-only.xlsx",
+                        workbook_bytes([("仅名称供应商", None, None, None, None)]),
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
                 },
             )
-            assert invalid_preview.status_code == 200
-            invalid_batch = invalid_preview.json()["data"]
-            batch_ids.append(invalid_batch["id"])
-            assert invalid_batch["invalid_rows"] == 1
-            assert invalid_batch["rows"][0]["error_message"] == "主要优势不能为空"
-            invalid_confirm = await client.post(
-                f"/api/v1/suppliers/imports/{invalid_batch['id']}/confirm", headers=headers
+            assert name_only_preview.status_code == 200
+            name_only_batch = name_only_preview.json()["data"]
+            batch_ids.append(name_only_batch["id"])
+            assert name_only_batch["valid_rows"] == 1
+            assert name_only_batch["invalid_rows"] == 0
+            assert name_only_batch["rows"][0]["main_brands"] is None
+            assert name_only_batch["rows"][0]["advantage"] is None
+            name_only_confirm = await client.post(
+                f"/api/v1/suppliers/imports/{name_only_batch['id']}/confirm", headers=headers
             )
-            assert invalid_confirm.status_code == 409
+            assert name_only_confirm.status_code == 200
 
             existing = await client.post(
                 "/api/v1/suppliers",
@@ -740,6 +744,13 @@ async def test_supplier_excel_preview_and_confirm() -> None:
             assert imported[0].archive_status == "PENDING"
             assert imported[0].cooperation_status == "NORMAL"
             assert imported[0].supplier_code.startswith("SUP")
+            name_only_supplier = await session.scalar(
+                select(Supplier).where(Supplier.supplier_name == "仅名称供应商")
+            )
+            assert name_only_supplier is not None
+            supplier_ids.append(str(name_only_supplier.id))
+            assert name_only_supplier.main_brands == ""
+            assert name_only_supplier.advantage == ""
     finally:
         await cleanup_suppliers(supplier_ids)
         await cleanup_import_batches(batch_ids)

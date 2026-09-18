@@ -4,13 +4,19 @@ from decimal import Decimal
 from io import BytesIO
 
 import pytest
+from fastapi import UploadFile
 from httpx import ASGITransport, AsyncClient
 from openpyxl import Workbook
+from openpyxl.styles import PatternFill
 from sqlalchemy import delete, select
 
 from app.core.database import SessionLocal
 from app.main import app
 from app.modules.auth.security import create_token, hash_password
+from app.modules.catalog.api.router import (
+    PRODUCT_IMPORT_UPLOAD_CHUNK_BYTES,
+    _stage_product_import_upload,
+)
 from app.modules.catalog.application.import_service import PRODUCT_IMPORT_HEADERS
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import (
@@ -24,6 +30,37 @@ from app.modules.supplier.infrastructure.models import Supplier
 from app.modules.system.models import Permission, Role, RolePermission, User, UserRole
 
 IMPORT_PERMISSIONS = ("product:import", "product:import:resolve")
+
+
+async def test_product_import_upload_is_staged_in_chunks() -> None:
+    class ChunkRecordingFile:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+            self.offset = 0
+            self.read_sizes: list[int] = []
+
+        def read(self, size: int = -1) -> bytes:
+            self.read_sizes.append(size)
+            if self.offset >= len(self.content):
+                return b""
+            chunk = self.content[self.offset : self.offset + size]
+            self.offset += len(chunk)
+            return chunk
+
+        def close(self) -> None:
+            return None
+
+    content = b"x" * (PRODUCT_IMPORT_UPLOAD_CHUNK_BYTES * 2 + 1)
+    source = ChunkRecordingFile(content)
+    file = UploadFile(file=source, filename="large-product-import.xlsx")
+    staged_path, file_size = await _stage_product_import_upload(file)
+    try:
+        assert file_size == len(content)
+        assert staged_path.read_bytes() == content
+        assert source.read_sizes == [PRODUCT_IMPORT_UPLOAD_CHUNK_BYTES] * 4
+    finally:
+        staged_path.unlink(missing_ok=True)
+        await file.close()
 
 
 class _RecordingStorage:
@@ -137,6 +174,7 @@ def _workbook_bytes(
     product_name: str = "测试商品",
     cost_price: str = "100",
     sku_override: str | None = None,
+    styled_blank_columns_after_template: bool = False,
 ) -> bytes:
     workbook = Workbook()
     worksheet = workbook.active
@@ -160,9 +198,38 @@ def _workbook_bytes(
             "售后政策": "七天无理由", "备注": "备注",
         }
         worksheet.append([values[header] for header in PRODUCT_IMPORT_HEADERS])
+    if styled_blank_columns_after_template:
+        worksheet.cell(row=1, column=16_384).fill = PatternFill(
+            fill_type="solid", fgColor="FFFFFF"
+        )
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
+
+
+async def test_product_import_accepts_blank_styled_columns_after_approved_headers() -> None:
+    user_id, headers = await _create_import_user()
+    supplier_id, category_id = await _create_references()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "styled-blank-columns.xlsx",
+                        _workbook_bytes(
+                            "导入测试供应商", styled_blank_columns_after_template=True
+                        ),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert preview.status_code == 200
+            assert preview.json()["data"]["total_rows"] == 1
+    finally:
+        await _cleanup_import_data(supplier_id, user_id, (category_id,))
+        await _cleanup_import_user(user_id)
 
 
 async def _cleanup_import_data(

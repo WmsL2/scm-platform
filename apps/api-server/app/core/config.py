@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     storage_mode: str = "local"
     local_storage_path: Path = Path("local-data/files")
     product_import_unconfirmed_retention_days: int = 7
+    product_import_max_file_mb: int = 1024
+    product_import_max_rows: int = 100_000
+    initial_admin_username: str | None = None
+    initial_admin_password: SecretStr | None = None
     redis_enabled: bool = False
     minio_enabled: bool = False
 
@@ -39,12 +43,19 @@ class Settings(BaseSettings):
         path = Path(value)
         return path if path.is_absolute() else PROJECT_ROOT / path
 
+    @field_validator("initial_admin_username", "initial_admin_password", mode="before")
+    @classmethod
+    def blank_initial_admin_setting_is_unset(cls, value: str | None) -> str | None:
+        return None if isinstance(value, str) and not value.strip() else value
+
     @field_validator(
         "auth_access_token_minutes",
         "auth_refresh_idle_days",
         "auth_session_absolute_days",
         "auth_refresh_rotation_grace_seconds",
         "product_import_unconfirmed_retention_days",
+        "product_import_max_file_mb",
+        "product_import_max_rows",
     )
     @classmethod
     def positive_auth_duration(cls, value: int) -> int:
@@ -57,6 +68,10 @@ class Settings(BaseSettings):
         if self.auth_refresh_idle_days > self.auth_session_absolute_days:
             raise ValueError(
                 "auth_refresh_idle_days cannot exceed auth_session_absolute_days"
+            )
+        if (self.initial_admin_username is None) != (self.initial_admin_password is None):
+            raise ValueError(
+                "initial_admin_username and initial_admin_password must be configured together"
             )
         return self
 

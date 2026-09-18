@@ -10,6 +10,7 @@ from app.modules.catalog.application.excel_images import (
     ExcelImage,
     dispimg_image_id,
     extract_dispimg_images,
+    extract_dispimg_images_from_path,
 )
 from app.modules.catalog.application.import_service import ProductImportService
 from app.modules.catalog.infrastructure.models import ProductImportRow, ProductImportTask
@@ -45,6 +46,15 @@ def test_extracts_wps_dispimg_image_by_formula_identifier() -> None:
 
     assert dispimg_image_id('=DISPIMG("ID_PRODUCT",1)') == "ID_PRODUCT"
     assert images["ID_PRODUCT"].extension == ".png"
+    assert images["ID_PRODUCT"].content == b"png-content"
+
+
+def test_extracts_wps_dispimg_images_from_workbook_path(tmp_path) -> None:
+    source = tmp_path / "source.xlsx"
+    source.write_bytes(_workbook_with_wps_cell_image())
+
+    images = extract_dispimg_images_from_path(source)
+
     assert images["ID_PRODUCT"].content == b"png-content"
 
 
@@ -88,6 +98,10 @@ async def test_confirm_reads_temporary_workbook_before_staging_embedded_image() 
         async def read(self, key: str) -> bytes:
             assert key == "product-import-sources/task.xlsx"
             return _workbook_with_wps_cell_image()
+
+        async def copy_to(self, key: str, destination) -> None:
+            assert key == "product-import-sources/task.xlsx"
+            destination.write_bytes(_workbook_with_wps_cell_image())
 
         async def save(self, name: str, content: bytes) -> str:
             self.saved.append((name, content))

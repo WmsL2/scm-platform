@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from io import BytesIO
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Literal, cast
 
 from openpyxl import load_workbook
@@ -19,7 +21,7 @@ from app.infrastructure.adapters import ObjectStorage, get_object_storage
 from app.modules.catalog.application.excel_images import (
     ExcelImage,
     dispimg_image_id,
-    extract_dispimg_images,
+    extract_dispimg_images_from_path,
 )
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import (
@@ -93,9 +95,6 @@ PRODUCT_IMPORT_HEADERS = (
     "售后政策",
     "备注",
 )
-MAX_IMPORT_FILE_BYTES = 25 * 1024 * 1024
-MAX_IMPORT_ROWS = 20_000
-
 _DIRECT_DECIMAL_HEADERS = (
     "成本价",
     "市场价",
@@ -171,11 +170,11 @@ class ProductImportService:
         self.supplier_repository = SupplierRepository(session)
 
     async def preview(
-        self, filename: str, file_bytes: bytes, actor_id: uuid.UUID
+        self, filename: str, file_path: Path, file_size: int, actor_id: uuid.UUID
     ) -> ProductImportPreviewResponse:
         await self._cleanup_expired_temp_media()
-        self._validate_upload(filename, file_bytes)
-        rows = self._parse_rows(file_bytes)
+        self._validate_upload(filename, file_size)
+        rows = await asyncio.to_thread(self._parse_rows, file_path)
         has_embedded_image_formula = any(
             dispimg_image_id(row.source_data.get("图片")) is not None for row in rows
         )
@@ -207,8 +206,8 @@ class ProductImportService:
                     raise RuntimeError("The new Product Import task could not be reloaded")
                 task = reloaded_task
                 if has_embedded_image_formula:
-                    stored_source_key = await self.storage.save(
-                        f"product-import-sources/{task.id}.xlsx", file_bytes
+                    stored_source_key = await self.storage.save_file(
+                        f"product-import-sources/{task.id}.xlsx", file_path
                     )
                     task.source_file_storage_key = stored_source_key
                 await self._refresh_validation(task)
@@ -447,74 +446,95 @@ class ProductImportService:
                 pass
         return response
 
-    def _validate_upload(self, filename: str, file_bytes: bytes) -> None:
+    def _validate_upload(self, filename: str, file_size: int) -> None:
         if not filename.lower().endswith(".xlsx"):
             raise AppError(
                 "PRODUCT_IMPORT_FILE_TYPE_INVALID", "Only .xlsx files are supported", 422
             )
-        if not file_bytes:
+        if file_size <= 0:
             raise AppError("PRODUCT_IMPORT_FILE_EMPTY", "The import file is empty", 422)
-        if len(file_bytes) > MAX_IMPORT_FILE_BYTES:
-            raise AppError("PRODUCT_IMPORT_FILE_TOO_LARGE", "The import file exceeds 25 MB", 422)
+        max_file_mb = get_settings().product_import_max_file_mb
+        if file_size > max_file_mb * 1024 * 1024:
+            raise AppError(
+                "PRODUCT_IMPORT_FILE_TOO_LARGE",
+                f"The import file exceeds {max_file_mb} MB",
+                422,
+            )
 
-    def _parse_rows(self, file_bytes: bytes) -> list[ProductImportRow]:
+    def _parse_rows(self, file_path: Path) -> list[ProductImportRow]:
         try:
-            formula_workbook = load_workbook(BytesIO(file_bytes), read_only=True, data_only=False)
-            cached_workbook = load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
+            formula_workbook = load_workbook(file_path, read_only=True, data_only=False)
+            cached_workbook = load_workbook(file_path, read_only=True, data_only=True)
         except Exception as exc:
             raise AppError(
                 "PRODUCT_IMPORT_FILE_INVALID", "The file is not a valid .xlsx workbook", 422
             ) from exc
-        formula_sheet = formula_workbook.active
-        cached_sheet = cached_workbook.active
-        assert formula_sheet is not None and cached_sheet is not None
-        headers = tuple(
-            self._normalized(cell.value) for cell in next(formula_sheet.iter_rows(max_row=1))
-        )
-        if headers != PRODUCT_IMPORT_HEADERS:
-            raise AppError(
-                "PRODUCT_IMPORT_TEMPLATE_INVALID",
-                "Template headers must exactly match the approved "
-                "43-column Product Master template",
-                422,
+        try:
+            formula_sheet = formula_workbook.active
+            cached_sheet = cached_workbook.active
+            assert formula_sheet is not None and cached_sheet is not None
+            header_cells = next(
+                formula_sheet.iter_rows(max_row=1, max_col=len(PRODUCT_IMPORT_HEADERS))
             )
-        rows: list[ProductImportRow] = []
-        for source_row_number, (formula_cells, cached_cells) in enumerate(
-            zip(
-                formula_sheet.iter_rows(min_row=2, max_col=len(PRODUCT_IMPORT_HEADERS)),
-                cached_sheet.iter_rows(min_row=2, max_col=len(PRODUCT_IMPORT_HEADERS)),
-                strict=True,
-            ),
-            start=2,
-        ):
-            if not any(cell.value is not None for cell in formula_cells):
-                continue
-            if len(rows) >= MAX_IMPORT_ROWS:
+            headers = tuple(self._normalized(cell.value) for cell in header_cells)
+            extra_header_cells = next(
+                formula_sheet.iter_rows(
+                    min_row=1,
+                    max_row=1,
+                    min_col=len(PRODUCT_IMPORT_HEADERS) + 1,
+                    max_col=formula_sheet.max_column,
+                ),
+                (),
+            )
+            has_extra_header = any(self._normalized(cell.value) for cell in extra_header_cells)
+            if headers != PRODUCT_IMPORT_HEADERS or has_extra_header:
                 raise AppError(
-                    "PRODUCT_IMPORT_TOO_MANY_ROWS",
-                    f"An import may contain at most {MAX_IMPORT_ROWS} data rows",
+                    "PRODUCT_IMPORT_TEMPLATE_INVALID",
+                    "Template headers must exactly match the approved "
+                    "43-column Product Master template",
                     422,
                 )
-            source_data = {
-                header: self._cell_text(cell.value)
-                for header, cell in zip(PRODUCT_IMPORT_HEADERS, formula_cells)
-            }
-            calculated_data = {
-                header: self._cell_text(cell.value)
-                for header, cell in zip(PRODUCT_IMPORT_HEADERS, cached_cells)
-            }
-            rows.append(
-                ProductImportRow(
-                    source_row_number=source_row_number,
-                    source_data=source_data,
-                    calculated_data=calculated_data,
-                    supplier_name_raw=self._optional(source_data["供应商"]),
-                    is_valid=False,
+            max_rows = get_settings().product_import_max_rows
+            rows: list[ProductImportRow] = []
+            for source_row_number, (formula_cells, cached_cells) in enumerate(
+                zip(
+                    formula_sheet.iter_rows(min_row=2, max_col=len(PRODUCT_IMPORT_HEADERS)),
+                    cached_sheet.iter_rows(min_row=2, max_col=len(PRODUCT_IMPORT_HEADERS)),
+                    strict=True,
+                ),
+                start=2,
+            ):
+                if not any(cell.value is not None for cell in formula_cells):
+                    continue
+                if len(rows) >= max_rows:
+                    raise AppError(
+                        "PRODUCT_IMPORT_TOO_MANY_ROWS",
+                        f"An import may contain at most {max_rows} data rows",
+                        422,
+                    )
+                source_data = {
+                    header: self._cell_text(cell.value)
+                    for header, cell in zip(PRODUCT_IMPORT_HEADERS, formula_cells)
+                }
+                calculated_data = {
+                    header: self._cell_text(cell.value)
+                    for header, cell in zip(PRODUCT_IMPORT_HEADERS, cached_cells)
+                }
+                rows.append(
+                    ProductImportRow(
+                        source_row_number=source_row_number,
+                        source_data=source_data,
+                        calculated_data=calculated_data,
+                        supplier_name_raw=self._optional(source_data["供应商"]),
+                        is_valid=False,
+                    )
                 )
-            )
-        if not rows:
-            raise AppError("PRODUCT_IMPORT_NO_DATA_ROWS", "The workbook has no data rows", 422)
-        return rows
+            if not rows:
+                raise AppError("PRODUCT_IMPORT_NO_DATA_ROWS", "The workbook has no data rows", 422)
+            return rows
+        finally:
+            formula_workbook.close()
+            cached_workbook.close()
 
     def _create_supplier_matches(self, task: ProductImportTask, candidates: list[Supplier]) -> None:
         candidate_models = [
@@ -839,15 +859,24 @@ class ProductImportService:
                 "The temporary import file is unavailable; upload the workbook again",
                 409,
             )
+        temporary = NamedTemporaryFile(
+            prefix="scm-product-import-source-", suffix=".xlsx", delete=False
+        )
+        source_path = Path(temporary.name)
+        temporary.close()
         try:
-            source_file = await self.storage.read(task.source_file_storage_key)
-        except FileNotFoundError as exc:
-            raise AppError(
-                "PRODUCT_IMPORT_SOURCE_FILE_MISSING",
-                "The temporary import file is unavailable; upload the workbook again",
-                409,
-            ) from exc
-        return await self._stage_images(task, extract_dispimg_images(source_file), rows)
+            try:
+                await self.storage.copy_to(task.source_file_storage_key, source_path)
+            except FileNotFoundError as exc:
+                raise AppError(
+                    "PRODUCT_IMPORT_SOURCE_FILE_MISSING",
+                    "The temporary import file is unavailable; upload the workbook again",
+                    409,
+                ) from exc
+            images = await asyncio.to_thread(extract_dispimg_images_from_path, source_path)
+            return await self._stage_images(task, images, rows)
+        finally:
+            source_path.unlink(missing_ok=True)
 
     async def _cleanup_expired_temp_media(self) -> None:
         cutoff = datetime.now() - timedelta(

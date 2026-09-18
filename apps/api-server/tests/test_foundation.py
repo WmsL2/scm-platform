@@ -33,6 +33,12 @@ async def test_local_storage(tmp_path) -> None:
     await storage.delete(key)
     with pytest.raises(FileNotFoundError):
         await storage.read(key)
+    source = tmp_path / "source.xlsx"
+    source.write_bytes(b"workbook")
+    workbook_key = await storage.save_file("product-import-sources/task.xlsx", source)
+    copied = tmp_path / "copied.xlsx"
+    await storage.copy_to(workbook_key, copied)
+    assert copied.read_bytes() == b"workbook"
 
 
 def test_response() -> None:

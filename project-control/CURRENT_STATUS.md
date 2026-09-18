@@ -49,10 +49,11 @@ Sprint 1 — Auth/RBAC + Supplier
 
 ## 下一步
 
-- 主任务：Product Master 已升级为 2026 固定 43 列模板；新增 11 个正式字段、覆盖式同键重新导入、成功提交后的旧图片回收、组合筛选、可搜索三级类目联动、自定义列表列和全字段详情/编辑均已实现。供应商 + SKU 仍为不可修改业务键，停用同键商品仍阻止入库（Revision `20260917_0030`，ADR-0021）。
-- 后续任务：准备真实商品大表需要的有效 Supplier Master，并处理 Excel 的空供应商；类目 Source Loader 不再是商品 Confirm 前置条件。
+- 主任务：Product Master 已升级为 2026 固定 43 列模板；新增 11 个正式字段、覆盖式同键重新导入、成功提交后的旧图片回收、组合筛选、可搜索三级类目联动、自定义列表列和全字段详情/编辑均已实现。商品导入已改为分块上传与磁盘只读解析，默认支持 1GB / 100,000 行，浏览器预览超时为 15 分钟（无 Alembic Revision，ADR-0022）。供应商 + SKU 仍为不可修改业务键，停用同键商品仍阻止入库（Revision `20260917_0030`，ADR-0021）。
+- 后续任务：准备真实商品大表需要的有效 Supplier Master，并处理 Excel 的空供应商；供应商 Excel 导入目前仅要求供应商名称，其余模板字段可后补；类目 Source Loader 不再是商品 Confirm 前置条件。
 - 业务冻结：Supplier Product Quote 已取消；后续供应商新报价直接更新正式 Product 的 `cost_price`，并原子重算派生价格；不创建报价历史、有效期或比价模块。
 - Auth 会话：Refresh Token、服务端 Session、令牌轮换、三天无活动过期、三十天绝对过期和全设备失效已实现；管理员设备会话管理页与 Role disable policy 仍待后续冻结。
+- 部署初始化：通过 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` 可一次性创建全权限 `boss` 管理员；同名账号一旦存在（包括逻辑删除）不被自动重建，创建后可安全移除环境变量并按常规账号管理删除该账号（ADR-0023，无 Migration）。
 
 ## Blocker
 

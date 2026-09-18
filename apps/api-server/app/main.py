@@ -16,8 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.router import router as api_v1_router
 from app.common.contracts import ApiResponse, AppError, ErrorResponse, success
 from app.core.config import get_settings
-from app.core.database import close_database, get_db_session
+from app.core.database import SessionLocal, close_database, get_db_session
 from app.infrastructure.adapters import MinioStorage, RedisCache
+from app.modules.system.bootstrap import provision_initial_administrator
 
 request_id_context: ContextVar[str] = ContextVar("request_id", default="-")
 settings = get_settings()
@@ -27,6 +28,11 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
+    async with SessionLocal() as session:
+        async with session.begin():
+            created = await provision_initial_administrator(session)
+    if created:
+        logger.warning("initial administrator account provisioned from environment configuration")
     yield
     await close_database()
 

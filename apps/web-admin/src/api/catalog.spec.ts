@@ -32,6 +32,7 @@ describe("product import api", () => {
       1,
       "/api/v1/products/imports/preview",
       expect.any(FormData),
+      { timeoutMs: 900_000 },
     )
     expect(http.get).toHaveBeenCalledWith("/api/v1/products/imports/supplier-candidates")
     expect(http.getBlob).toHaveBeenCalledWith("/api/v1/products/imports/template")

@@ -362,7 +362,11 @@ async function previewImport(event: Event): Promise<void> {
     }
     importDialogVisible.value = true
   } catch (error) {
-    ElMessage.error(error instanceof HttpError ? error.response.message : "商品 Excel 预览失败")
+    ElMessage.error(
+      error instanceof HttpError
+        ? error.response.message
+        : "商品 Excel 上传或预览超时，请检查网络和服务状态后重试",
+    )
   } finally {
     importing.value = false
   }

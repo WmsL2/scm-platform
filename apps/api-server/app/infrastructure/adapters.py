@@ -1,3 +1,5 @@
+import asyncio
+import shutil
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Protocol
@@ -23,7 +25,13 @@ class ArqTaskQueue:
 
 class ObjectStorage(Protocol):
     async def save(self, name: str, content: bytes) -> str: ...
+
+    async def save_file(self, name: str, source: Path) -> str: ...
+
     async def read(self, key: str) -> bytes: ...
+
+    async def copy_to(self, key: str, destination: Path) -> None: ...
+
     async def delete(self, key: str) -> None: ...
 
 
@@ -51,8 +59,23 @@ class LocalFileStorage:
         target.write_bytes(content)
         return key
 
+    async def save_file(self, name: str, source: Path) -> str:
+        requested = Path(name.replace("\\", "/"))
+        if requested.is_absolute() or ".." in requested.parts:
+            raise ValueError("Storage key must stay inside configured root")
+        suffix = requested.suffix.lower() or source.suffix.lower()
+        key = (requested.parent / f"{uuid4()}{suffix}").as_posix()
+        target = self._target(key)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(shutil.copyfile, source, target)
+        return key
+
     async def read(self, key: str) -> bytes:
         return self._target(key).read_bytes()
+
+    async def copy_to(self, key: str, destination: Path) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(shutil.copyfile, self._target(key), destination)
 
     async def delete(self, key: str) -> None:
         self._target(key).unlink(missing_ok=True)
@@ -66,8 +89,16 @@ class MinioStorage:
         del name, content
         raise RuntimeError("MinIO storage is not configured")
 
+    async def save_file(self, name: str, source: Path) -> str:
+        del name, source
+        raise RuntimeError("MinIO storage is not configured")
+
     async def read(self, key: str) -> bytes:
         del key
+        raise RuntimeError("MinIO storage is not configured")
+
+    async def copy_to(self, key: str, destination: Path) -> None:
+        del key, destination
         raise RuntimeError("MinIO storage is not configured")
 
     async def delete(self, key: str) -> None:

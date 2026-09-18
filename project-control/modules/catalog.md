@@ -1,7 +1,7 @@
 # 商品主数据 / Catalog
 
-状态：IMPLEMENTED / PRODUCT_MASTER_2026_TEMPLATE_AND_FILTERS
-Owner：feat/product-master-2026-template-filters
+状态：IMPLEMENTED / PRODUCT_IMPORT_LARGE_FILE_SUPPORT
+Owner：feat/product-import-large-file-support
 Last Updated：2026-09-18
 
 ## Database
@@ -30,6 +30,8 @@ Last Updated：2026-09-18
 - [x] 仅已停用 Product 可永久删除；删除前写入最小审计并依赖事务及外键保护，永久删除后同键可重新导入为新商品
 - [x] Product Import 对同来源供应商 + SKU 的正常商品标记为更新候选并在 Confirm 原子覆盖固定模板字段；停用商品仍报错并阻止 Confirm
 - [x] 同键更新保留供应商与 SKU，其他 41 列按 Excel 覆盖且空值清空；成功提交后清理被替换的旧本地图片
+- [x] 商品大表使用分块上传、临时文件和只读路径解析，默认允许 1GB / 100,000 行；`DISPIMG` 临时源文件保存与 Confirm 图片提取均避免整份工作簿读入内存
+- [x] 商品导入表头校验兼容 Excel/WPS 末尾空白格式列；只允许批准的 43 个非空表头
 
 ## Frontend
 - [x] 商品列表筛选支持一级、二级、三级类目直接搜索和多选；选择三级时自动回显对应一级、二级，选择二级时自动回显一级。页面首次进入不加载完整类目表，聚焦或搜索时远程获取每层最多 50 个选项；下拉滚动接近底部即自动继续读取下一批，并保留到底事件作为后备，更换关键词会重置结果。直接选择项按层级组成 OR 查询。商品编辑页继续使用单个三级类目作为正式 `category_id`。列表提供常用/高级可输入筛选和浏览器本地自定义列，详情和编辑覆盖 43 列业务字段，供应商/SKU 只读，图片通过文件上传维护

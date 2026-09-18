@@ -89,6 +89,11 @@ scm_product.cost_price
 
 ## 5. Local-First
 
+商品大表导入采用分块上传到操作系统临时文件、`openpyxl` 只读解析和本地 ObjectStorage
+文件复制，不将完整 `.xlsx` 长期保留在 Python 内存。默认单文件上限为 1GB、数据行上限为
+100,000，均通过环境变量配置；含 `DISPIMG` 的工作簿仅在预览后受控保留临时源文件，Confirm
+时再从文件路径提取实际需要的图片。
+
 Docker 非必需。
 
 最低：
