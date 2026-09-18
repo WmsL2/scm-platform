@@ -82,9 +82,9 @@ Revision `20260911_0020` 将 Product 生命周期冻结为 `ACTIVE` / `DISABLED`
 
 ## 商品图片本地保存
 
-预览只检测固定大表的 WPS/Excel `DISPIMG` 图片，并在有公式图片时受控保留临时源 Excel；预览不提取或保存商品图片。Confirm 时仅当前实际写入正式 Product 的通过行才从临时源文件提取媒体，保存到项目相对目录 `local-data/files/product-images/<import-task-id>/`。实际媒体文件受 `.gitignore` 隔离；数据库不保存本机绝对路径，只保存形如 `local-media/product-images/...` 的站内相对引用。后端通过 `/local-media/` 提供该本地开发媒体。
+预览校验固定大表的 WPS/Excel `DISPIMG` 引用及内嵌媒体元数据，并在有公式图片时受控保留临时源 Excel；预览不提取或保存商品图片。Confirm 时仅当前实际写入正式 Product 的通过行才从临时源文件逐张流式解码并保存到项目相对目录 `local-data/files/product-images/<import-task-id>/`，不再把整批图片读入内存，也不再使用旧的 50MB 全工作簿累计上限。实际媒体文件受 `.gitignore` 隔离；数据库不保存本机绝对路径，只保存形如 `local-media/product-images/...` 的站内相对引用。后端通过 `/local-media/` 提供该本地开发媒体。
 
-无法从工作簿找到对应内嵌图片时不阻断其他业务校验；正式 Product 的图片引用为空。非公式图片列仍按原始 URL/文本保存。重新导入替换或清空图片时，先成功提交 Product 更新事务，再删除被替代的旧本地图片。全量 Confirm 后临时源 Excel 立即删除；每次新预览会将超过 `PRODUCT_IMPORT_UNCONFIRMED_RETENTION_DAYS`（默认 7 天）的未完成或部分确认任务标记为 `EXPIRED`，仅删除其临时源文件与未导入行媒体。普通编辑使用 `POST /api/v1/products/{product_id}/image` 上传图片、`DELETE /api/v1/products/{product_id}/image` 清除图片，均要求 `product:update`。
+图片列为空仍允许导入；但只要存在 `DISPIMG` 公式，其引用的内嵌媒体缺失、类型不支持、单图超过 `PRODUCT_IMPORT_MAX_IMAGE_MB`（默认 64MB）或 Confirm 时无法安全解码，该行就必须失败，不允许静默写成无图商品。PNG/JPEG/GIF/WebP 保持原格式，TIFF/EMF/BMP/WMF 保存前转换为 PNG，确保浏览器可显示。非公式图片列仍按原始 URL/文本保存。重新导入替换或清空图片时，先成功提交 Product 更新事务，再删除被替代的旧本地图片。全量 Confirm 后临时源 Excel 立即删除；每次新预览会将超过 `PRODUCT_IMPORT_UNCONFIRMED_RETENTION_DAYS`（默认 7 天）的未完成或部分确认任务标记为 `EXPIRED`，仅删除其临时源文件与未导入行媒体。普通编辑使用 `POST /api/v1/products/{product_id}/image` 上传图片、`DELETE /api/v1/products/{product_id}/image` 清除图片，均要求 `product:update`。本规则不自动回填或改写历史 Product；历史数据需重新上传并 Confirm 才应用新逻辑。
 
 ## 大文件导入边界
 
@@ -99,6 +99,10 @@ Revision `20260911_0020` 将 Product 生命周期冻结为 `ACTIVE` / `DISABLED`
 `page`、`page_size`（最大 100）和 `row_status=ALL|PASSED|UPDATE|FAILED` 服务端分页，页面默认
 每页 50 行。该闸门只限制重型工作簿操作，不阻止商品查询等普通请求；多 Worker 部署时总并发量是
 各 Worker 配置之和。
+
+Confirm 的浏览器请求单独允许等待 15 分钟，避免大表后端已完成而浏览器默认 10 秒中止并误报失败。
+用于预览和 Confirm 的 `source_supplier_id + sku` 查询按稳定顺序每 500 组分批执行；Confirm 保持同一
+事务和相同锁顺序，不因分批而放松并发冲突保护，也不触发 MySQL 的超大复合 `IN (...)` 范围优化内存告警。
 
 所有金额、比例和销量在预览阶段转换并经过 Pydantic/Decimal 校验，标准化结果单独保存在 Staging。
 带 `%` 的比例除以 100，例如 `46.25%` 保存为 `0.4625`；不带 `%` 的比例按数据库小数值解释；

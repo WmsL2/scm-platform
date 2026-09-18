@@ -61,14 +61,21 @@ async def test_product_schema_and_permission_directory() -> None:
                 "FROM information_schema.columns "
                 "WHERE table_schema = DATABASE() "
                 "AND ((table_name = 'scm_category' AND column_name = 'deduction_rate') "
-                "OR (table_name = 'scm_product' AND column_name = 'cost_price'))"
+                "OR (table_name = 'scm_product' AND column_name IN "
+                "('cost_price', 'market_price', 'jd_price', 'agreement_price', "
+                "'agreement_purchase_price', 'jd_self_operated_price')))"
             )
         )
         assert {
             (row[0], row[1], row[2], row[3]) for row in decimal_columns
         } == {
             ("scm_category", "deduction_rate", 9, 4),
-            ("scm_product", "cost_price", 18, 4),
+            ("scm_product", "cost_price", 65, 30),
+            ("scm_product", "market_price", 65, 30),
+            ("scm_product", "jd_price", 65, 30),
+            ("scm_product", "agreement_price", 65, 30),
+            ("scm_product", "agreement_purchase_price", 65, 30),
+            ("scm_product", "jd_self_operated_price", 65, 30),
         }
         permissions = await session.execute(
             text(

@@ -23,7 +23,9 @@ Sprint 1 — Auth/RBAC + Supplier
 
 商品主数据 2026 模板、组合筛选、Product Master 直接类目候选及商品与类目维表脱钩已在分支 `feat/product-master-category-filter-options` 实现；最新单 Head 为 `20260918_0032`（基于 `20260918_0031`）。
 
-商品导入数值安全、4,000+ 行分页与并发确认保护已在分支 `feat/product-import-safety-concurrency` 实现；Revision `20260918_0033` 基于类目解耦 Revision `20260918_0032`，为暂存行增加标准化值和 Product 版本快照。Confirm 以供应商 + SKU 锁及版本冲突返回 409，重型工作簿操作默认每 API 进程并发 1。
+商品导入数值安全、4,000+ 行分页与并发确认保护已在分支 `feat/product-import-safety-concurrency` 实现；Revision `20260918_0033` 为暂存行增加标准化值和 Product 版本快照，Revision `20260918_0034` 将六个正式价格字段扩展为 `DECIMAL(65,30)` 以无损保存 Excel 价格原值。Confirm 以供应商 + SKU 锁及版本冲突返回 409，重型工作簿操作默认每 API 进程并发 1。内嵌图片改为 Confirm 时逐张流式解码与保存，移除旧 50MB 累计截断；TIFF/EMF 等转 PNG，公式缺图或坏图按行阻止确认，单图默认上限 64MB（ADR-0029，无 Migration）。历史商品图片不自动回填，重新导入后生效。
+
+真实 4,000+ 行 Confirm 的浏览器等待时间已设为 15 分钟；正式 Product 的供应商 + SKU 查询和锁定按稳定顺序每 500 组分批，避免 MySQL 默认 `range_optimizer_max_mem_size=8MB` 对超大复合 `IN` 查询的警告，仍保持单次 Confirm 的事务原子性和并发保护（无 Migration）。
 
 投标项目核心已在分支 `feat/bid-project-core` 实现：新增唯一 Migration `20260915_0024`，包含项目、模板、文件版本、需求行、事件、匹配和人工选品共享表，项目编号序列及投标权限。项目创建、ORIGINAL 保存、模板指纹识别、分页查询、文件下载、报价版本、提交和结果接口已完成；真实买家 Excel 尚未提供，因此当前不预置客户模板或报价列。2 号匹配和 3 号前端可在本结构上并行开发。
 
@@ -61,7 +63,7 @@ Sprint 1 — Auth/RBAC + Supplier
 
 - Repository：无代码合并 Blocker。
 - Supplier：名称唯一与重复数据清理已实现：同名只保留最早历史记录，后建重复记录已物理删除；创建/导入遇到已逻辑删除的同名记录会恢复并覆盖。合作状态已冻结为 NORMAL ↔ STOPPED / BLACKLIST，恢复均保留原因和历史；Import Confirm 已按原子持久化加固：锁定实际导入行、flush 成功和数量一致后才确认批次，异常整批回滚。未确认的企业、税务、地址、银行、资质等字段仍不得自行添加。资质业务字段及其 API 继续冻结。
-- Product / Catalog：Product Master 与 Product Import 已实现；实际 Confirm 写入当前通过新增行与正常同键更新行，空/无效来源供应商、三级类目为空、同 Excel 重复或停用同键商品等失败行保留在 Staging，不会入库。Product 已冻结为 `ACTIVE` / `DISABLED`：停用保留业务键并阻止导入；仅已停用商品可由 `product:purge` 永久删除，删除后可新建同键商品。Product 已不再关联 Category Master。
+- Product / Catalog：Product Master 与 Product Import 已实现；实际 Confirm 写入当前通过新增行与正常同键更新行，空/无效来源供应商、三级类目为空、同 Excel 重复、停用同键商品以及公式图片缺失/不可解码等失败行保留在 Staging，不会入库。Product 已冻结为 `ACTIVE` / `DISABLED`：停用保留业务键并阻止导入；仅已停用商品可由 `product:purge` 永久删除，删除后可新建同键商品。Product 已不再关联 Category Master。
 
 ## Workstreams / Implementation Context
 

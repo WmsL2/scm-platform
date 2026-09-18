@@ -42,14 +42,14 @@
 | Product → Category delete action | Cascade 会删除正式 Product，违反正式主数据保留原则；现有资料未把该动作提升为业务冻结规则。 | RECOMMENDED | `ON DELETE RESTRICT`；不得使用 `CASCADE`。 | NO |
 | `source_supplier_id` | ADR-0008 已接受；Confirm 仅在来源供应商已解析且仍有效时写正式 Product。 | FROZEN | `CHAR(36) NOT NULL`、索引、FK → `scm_supplier.id ON DELETE RESTRICT`；单独不唯一，但与 `sku` 组成 Product 防重唯一键。 | NO |
 | `brand` / `model` / `product_name` | 32 列最新商品大表确认字段语义与非唯一性，但没有业务必填规则。 | RECOMMENDED | `NULL`；不得因样例值齐全而改为 NOT NULL。 | NO |
-| `cost_price` | 业务确认它就是当前供应商报价；正式 Product 的当前价格计算以它为基础。 | FROZEN | `DECIMAL(18,4) NOT NULL`；供应商新报价直接更新此值并重算派生价格。 | NO |
+| `cost_price` | 业务确认它就是当前供应商报价；正式 Product 的当前价格计算以它为基础。 | FROZEN | `DECIMAL(65,30) NOT NULL`；供应商新报价直接更新此值。 | NO |
 | `jd_price` / `jd_self_operated_price` | 是价格计算输入；现有资料冻结了公式和除零校验，未冻结所有 Product 都必须拥有这两项输入。 | RECOMMENDED | `NULL`；Pricing 保存/Confirm 时再按所用公式校验需要的输入。 | NO |
 | Category unique constraints | 两份真实类目源数据预检已完成；商城 external ID 无重复，但商城有两组同路径不同 external ID。 | RECOMMENDED | 仅商城建立 `UNIQUE(source_type, level3_external_id)`；工业品完整路径为 Source Loader / Import 去重规则，不建全局数据库路径 UNIQUE。 | NO，预检已完成 |
 | `source_type` | 现有资料有商城三级类目与工业品产品线两种来源。 | RECOMMENDED | `VARCHAR(32) NOT NULL`，受控值 `MALL_LEVEL3` / `INDUSTRIAL_LINE`。 | NO |
 | Category `is_active` | 商城来源含有效标记；当前没有独立删除语义。 | RECOMMENDED | `BOOLEAN NOT NULL DEFAULT TRUE`，表达当前可用性而非逻辑删除。 | NO |
 | `deduction_rate` | 类目扣点规则已冻结：商城标蓝 5%，其余商城及未标记工业品 8%。 | FROZEN | 值只从正式 Category 读取；Product 保存使用值快照。 | NO |
-| Decimal precision | 现有评审已完成精度建议，尚非业务最大金额的正式上限承诺。 | RECOMMENDED | 金额 `DECIMAL(18,4)`；比率 `DECIMAL(9,4)`。 | NO |
-| Rounding | 类目与价格规则门禁已冻结。 | FROZEN | 普通金额/比率 `ROUND_HALF_UP`、4 位小数；仅 `deduction_review` 为 `ROUND_DOWN`、4 位小数。 | NO |
+| Decimal precision | 价格原值不得因数据库精度丢失。 | FROZEN | 六个价格字段 `DECIMAL(65,30)`；利润 `DECIMAL(18,4)`；比率 `DECIMAL(9,4)`。 | NO |
+| Rounding | 类目与价格规则门禁已冻结。 | FROZEN | 六个价格字段不自动四舍五入；利润公式按 Excel 显示精度消除浮点尾差；比率统一 4 位小数。 | NO |
 
 ## 32 列 Product Schema Matrix
 
@@ -68,11 +68,11 @@
 | 9 | 三级类目 | `category_id` FK | `CHAR(36)` | NO | — | YES | NO | CATEGORY_LOOKUP | 正式 Product 为 NOT NULL；FK 指向 `scm_category.id`；导入无法匹配时作为错误而非静默入库。 |
 | 10 | 货号 | `item_number` | `VARCHAR(255)` | YES | `NULL` | YES | NO | MASTER_INPUT | 按源值保留，不是系统标识。 |
 | 11 | 链接 | `jd_same_product_url` | `VARCHAR(2048)` | YES | `NULL` | NO | NO | SOURCE_REFERENCE | 与“参考链接”是两个来源列；不合并。 |
-| 12 | *成本价 | `cost_price` | `DECIMAL(18,4)` | NO | — | YES | NO | MASTER_INPUT | FROZEN：当前成本价，也是当前供应商报价；后端定价基础输入。 |
-| 13 | *市场价 | `market_price` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值为 `jd_price + 10`；旧 Excel 值仅作导入差异检查。 |
-| 14 | *京东价 | `jd_price` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | MASTER_INPUT | `jd_margin` 分母；零值处理由后端确定性校验。 |
-| 15 | *慧采价/协议价 | `agreement_price` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值为 `cost_price * 1.2`。 |
-| 16 | 协议价采购价/结算价 | `agreement_purchase_price` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值由协议价及扣点快照计算。 |
+| 12 | *成本价 | `cost_price` | `DECIMAL(65,30)` | NO | — | YES | NO | MASTER_INPUT | FROZEN：当前成本价，也是当前供应商报价；保留来源原值。 |
+| 13 | *市场价 | `market_price` | `DECIMAL(65,30)` | YES | `NULL` | YES | NO | MASTER_INPUT | 按 Excel 或人工维护的正式原值保存。 |
+| 14 | *京东价 | `jd_price` | `DECIMAL(65,30)` | YES | `NULL` | YES | NO | MASTER_INPUT | 按 Excel 或人工维护的正式原值保存。 |
+| 15 | *慧采价/协议价 | `agreement_price` | `DECIMAL(65,30)` | YES | `NULL` | YES | NO | MASTER_INPUT | 按 Excel 或人工维护的正式原值保存。 |
+| 16 | 协议价采购价/结算价 | `agreement_purchase_price` | `DECIMAL(65,30)` | YES | `NULL` | YES | NO | MASTER_INPUT | 按 Excel 或人工维护的正式原值保存。 |
 | 17 | 利润 | `profit` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值为结算价减成本价。 |
 | 18 | 京东价毛利（30-50） | `jd_margin` | `DECIMAL(9,4)` | YES | `NULL` | YES | NO | DERIVED | 正式公式为 `(jd_price - agreement_purchase_price) / jd_price`；表头括号不替代公式。 |
 | 19 | 毛利复核 | `deduction_review` | `DECIMAL(9,4)` | YES | `NULL` | YES | NO | DERIVED | `ROUNDDOWN((agreement_price - agreement_purchase_price) / agreement_price, 4)`。 |
@@ -83,7 +83,7 @@
 | 24 | 产品规格 | `product_specification` | `TEXT` | YES | `NULL` | NO | NO | MASTER_INPUT | 不根据文本自动拆参数表。 |
 | 25 | 卖点 | `selling_points` | `TEXT` | YES | `NULL` | NO | NO | MASTER_INPUT | 原样保留商品卖点文本；不自动拆关键词或标签表。 |
 | 26 | 限售区域 | `restricted_regions` | `TEXT` | YES | `NULL` | NO | NO | MASTER_INPUT | 原样业务文本；区域结构化规则 PENDING。 |
-| 27 | 京东自营前台价 | `jd_self_operated_price` | `DECIMAL(18,4)` | YES | `NULL` | YES | NO | MASTER_INPUT | 当前活动到手价，不含国补价；不是计算字段。 |
+| 27 | 京东自营前台价 | `jd_self_operated_price` | `DECIMAL(65,30)` | YES | `NULL` | YES | NO | MASTER_INPUT | 当前活动到手价，不含国补价；保留来源原值。 |
 | 28 | 参考链接 | `reference_url` | `VARCHAR(2048)` | YES | `NULL` | NO | NO | MASTER_INPUT | 原样保留该来源链接。 |
 | 29 | 自营旗舰店/官方旗舰店 | `storefront_type` | `VARCHAR(64)` | YES | `NULL` | NO | NO | MASTER_INPUT | 原样保留店铺类型文本；枚举值尚未冻结，不强加约束。 |
 | 30 | 折扣率 | `discount_rate` | `DECIMAL(9,4)` | YES | `NULL` | YES | NO | DERIVED | 正式值为 `agreement_price / jd_self_operated_price`。 |
@@ -189,7 +189,8 @@ Confirm 是 all-or-nothing：重新校验行、类目、价格、全部决策均
 
 | 字段组 | 推荐类型 | 理由 |
 |---|---|---|
-| 金额：`cost_price`、`jd_price`、`jd_self_operated_price`、`market_price`、`agreement_price`、`agreement_purchase_price`、`profit` | `DECIMAL(18,4)` | 支持 14 位整数与 4 位小数，覆盖高价值工业品、汇总前单品金额和冻结的四位结果；不使用 Float。业务最大金额尚未给出，实施前如有超范围资料应复审。 |
+| 价格：`cost_price`、`jd_price`、`jd_self_operated_price`、`market_price`、`agreement_price`、`agreement_purchase_price` | `DECIMAL(65,30)` | 保留最多 35 位整数与 30 位小数的来源原值；不使用 Float，不按 Excel 显示格式四舍五入。 |
+| 利润：`profit` | `DECIMAL(18,4)` | Excel 公式结果按显示精度消除浮点尾差，正式值最多 4 位小数。 |
 | 比率：`deduction_rate`、`jd_margin`、`deduction_review`、`gross_margin`、`discount_rate`、`price_inflation_rate` | `DECIMAL(9,4)` | 保留四位小数，并允许利润率、折扣率或虚高比例超过 1；`deduction_rate` 当前仅为 0.0500 / 0.0800。 |
 
 所有除零场景须由后端确定性校验：`jd_price`、`agreement_price`、`jd_self_operated_price` 作为分母为零时不得产生除零结果。普通金额和比率使用上述冻结的 `ROUND_HALF_UP` / scale 4；仅 `deduction_review` 使用 `ROUND_DOWN` / scale 4。

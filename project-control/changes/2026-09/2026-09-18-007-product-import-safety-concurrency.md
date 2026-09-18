@@ -12,7 +12,11 @@ Branch: feat/product-import-safety-concurrency
 
 ## Delivered
 
-- 比例、金额、销量在预览阶段完成 Decimal/Pydantic 标准化并保存，空值写 `NULL`，非法值阻止确认。
+- 比例、金额、销量在预览阶段完成 Decimal/Pydantic 标准化并保存；比例数值和公式缓存结果先按
+  单元格数字格式的显示精度取值，再四舍五入到数据库 4 位小数；利润公式也按显示精度取值，
+  消除 Excel 浮点尾差。价格保留 Excel 底层原始数值且不按显示格式四舍五入；正式价格字段精度
+  由 ADR-0028 / Revision `20260918_0034` 扩展。空值写 `NULL`，`#DIV/0!`
+  等公式错误及其他非法值阻止确认。
 - 明细 API 和页面改为服务端状态筛选与每页 50 行分页。
 - Staging 写入按 500 行 flush；供应商名称展示和 Confirm 供应商校验改为批量查询。
 - 500MB 级工作簿预览与确认图片提取受同一可配置进程内并发闸门保护，默认并发 1。
@@ -29,5 +33,5 @@ Branch: feat/product-import-safety-concurrency
 
 ## Verification
 
-- Product Import / Excel image targeted pytest：13 passed。
+- Product Import 测试覆盖 Excel 百分比显示精度、利润公式浮点尾差、价格原值精度拒绝和除零错误拒绝。
 - 完整后端、前端与迁移验证见本次结束报告。

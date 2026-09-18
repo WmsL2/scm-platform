@@ -31,11 +31,11 @@ Last Updated：2026-09-17
 | 10 | 三级类目 | `category_level3_name` | `VARCHAR(255)` | 必填文本 |
 | 11 | 货号 | `item_number` | `VARCHAR(255)` | 非唯一 |
 | 12 | 链接 | `jd_same_product_url` | `VARCHAR(2048)` | 普通链接文本 |
-| 13 | 成本价 | `cost_price` | `DECIMAL(18,4)` | 必填且大于 0 |
-| 14 | 市场价 | `market_price` | `DECIMAL(18,4)` | 直接保存 |
-| 15 | 京东价 | `jd_price` | `DECIMAL(18,4)` | 直接保存 |
-| 16 | 协议价 | `agreement_price` | `DECIMAL(18,4)` | 直接保存 |
-| 17 | 协议价采购价 | `agreement_purchase_price` | `DECIMAL(18,4)` | 直接保存 |
+| 13 | 成本价 | `cost_price` | `DECIMAL(65,30)` | 必填且大于 0；保留 Excel 底层原值，不按显示格式四舍五入 |
+| 14 | 市场价 | `market_price` | `DECIMAL(65,30)` | 直接保存原值 |
+| 15 | 京东价 | `jd_price` | `DECIMAL(65,30)` | 直接保存原值 |
+| 16 | 协议价 | `agreement_price` | `DECIMAL(65,30)` | 直接保存原值 |
+| 17 | 协议价采购价 | `agreement_purchase_price` | `DECIMAL(65,30)` | 直接保存原值 |
 | 18 | 利润 | `profit` | `DECIMAL(18,4)` | 金额；直接保存，不接受 `%` |
 | 19 | 京东价毛利（30-50） | `jd_margin` | `DECIMAL(9,4)` | 比率；支持 `0.95` / `95%` |
 | 20 | 扣点复核 | `deduction_review` | `DECIMAL(9,4)` | 原“毛利复核”；支持百分比文本 |
@@ -49,7 +49,7 @@ Last Updated：2026-09-17
 | 28 | 包装清单 | `packaging_list` | `TEXT` | 原样文本 |
 | 29 | 质保期 | `warranty_period` | `VARCHAR(255)` | 自由文本 |
 | 30 | 限售区域 | `restricted_regions` | `TEXT` | 原样文本 |
-| 31 | 京东自营前台价 | `jd_self_operated_price` | `DECIMAL(18,4)` | 直接保存 |
+| 31 | 京东自营前台价 | `jd_self_operated_price` | `DECIMAL(65,30)` | 直接保存原值 |
 | 32 | 自营旗舰店/官方旗舰店 | `storefront_type` | `VARCHAR(64)` | 原样文本 |
 | 33 | 参考链接 | `reference_url` | `VARCHAR(2048)` | 普通链接文本 |
 | 34 | 销量 | `sales_volume` | `BIGINT` | 可空；整数且大于等于 0 |

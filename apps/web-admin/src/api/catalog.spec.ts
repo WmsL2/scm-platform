@@ -48,7 +48,12 @@ describe("product import api", () => {
       "/api/v1/products/imports/task-1/supplier-matches/match-1/resolve",
       { supplier_id: "supplier-1" },
     )
-    expect(http.post).toHaveBeenNthCalledWith(3, "/api/v1/products/imports/task-1/confirm")
+    expect(http.post).toHaveBeenNthCalledWith(
+      3,
+      "/api/v1/products/imports/task-1/confirm",
+      undefined,
+      { timeoutMs: 900_000 },
+    )
     expect(confirmed).toMatchObject({ imported_count: 1 })
   })
 

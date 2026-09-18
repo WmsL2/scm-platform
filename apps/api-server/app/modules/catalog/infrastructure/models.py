@@ -124,11 +124,13 @@ class Product(Base):
     category_level3_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     item_number: Mapped[str | None] = mapped_column(String(255), nullable=True)
     jd_same_product_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
-    cost_price: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
-    market_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
-    jd_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
-    agreement_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
-    agreement_purchase_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    cost_price: Mapped[Decimal] = mapped_column(Numeric(65, 30), nullable=False)
+    market_price: Mapped[Decimal | None] = mapped_column(Numeric(65, 30), nullable=True)
+    jd_price: Mapped[Decimal | None] = mapped_column(Numeric(65, 30), nullable=True)
+    agreement_price: Mapped[Decimal | None] = mapped_column(Numeric(65, 30), nullable=True)
+    agreement_purchase_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(65, 30), nullable=True
+    )
     profit: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
     jd_margin: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
     purchasing_agent: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -146,7 +148,9 @@ class Product(Base):
     remark: Mapped[str | None] = mapped_column(Text, nullable=True)
     discount_rate: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
     restricted_regions: Mapped[str | None] = mapped_column(Text, nullable=True)
-    jd_self_operated_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    jd_self_operated_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(65, 30), nullable=True
+    )
     reference_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     storefront_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sales_volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

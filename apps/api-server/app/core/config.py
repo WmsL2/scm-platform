@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     product_import_max_file_mb: int = 1024
     product_import_max_rows: int = 100_000
     product_import_max_concurrent_workbooks: int = 1
+    product_import_max_image_mb: int = 64
     initial_admin_username: str | None = None
     initial_admin_password: SecretStr | None = None
     redis_enabled: bool = False
@@ -58,6 +59,7 @@ class Settings(BaseSettings):
         "product_import_max_file_mb",
         "product_import_max_rows",
         "product_import_max_concurrent_workbooks",
+        "product_import_max_image_mb",
     )
     @classmethod
     def positive_auth_duration(cls, value: int) -> int:

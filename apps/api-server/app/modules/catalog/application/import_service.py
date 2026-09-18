@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
+from collections import defaultdict
 from datetime import date, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Literal, cast
 
 from openpyxl import load_workbook
@@ -20,9 +22,11 @@ from app.core.config import get_settings
 from app.core.transaction import transaction_scope
 from app.infrastructure.adapters import ObjectStorage, get_object_storage
 from app.modules.catalog.application.excel_images import (
+    DispimgImageArchive,
+    DispimgImageError,
     ExcelImage,
     dispimg_image_id,
-    extract_dispimg_images_from_path,
+    inspect_dispimg_references,
 )
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import (
@@ -96,6 +100,10 @@ PRODUCT_IMPORT_HEADERS = (
     "售后政策",
     "备注",
 )
+
+_IMAGE_VALIDATION_ERROR_KEY = "__image_validation_error"
+
+
 _DIRECT_DECIMAL_HEADERS = (
     "成本价",
     "市场价",
@@ -119,6 +127,8 @@ _PERCENT_HEADERS = {
     "折扣率",
     "价格虚高比例",
 }
+_DISPLAY_FORMAT_DECIMAL_HEADERS = _PERCENT_HEADERS | {"利润"}
+_DATABASE_DECIMAL_QUANTUM = Decimal("0.0001")
 PRODUCT_IMPORT_DB_BATCH_SIZE = 500
 PRODUCT_IMPORT_DEFAULT_PAGE_SIZE = 50
 _WORKBOOK_SEMAPHORES: dict[int, asyncio.Semaphore] = {}
@@ -548,12 +558,16 @@ class ProductImportService:
                         422,
                     )
                 source_data = {
-                    header: self._cell_text(cell.value)
+                    header: self._import_cell_text(header, cell.value, cell.number_format)
                     for header, cell in zip(PRODUCT_IMPORT_HEADERS, formula_cells)
                 }
                 calculated_data = {
-                    header: self._cell_text(cell.value)
-                    for header, cell in zip(PRODUCT_IMPORT_HEADERS, cached_cells)
+                    header: self._import_cell_text(
+                        header, cached_cell.value, formula_cell.number_format
+                    )
+                    for header, formula_cell, cached_cell in zip(
+                        PRODUCT_IMPORT_HEADERS, formula_cells, cached_cells, strict=True
+                    )
                 }
                 rows.append(
                     ProductImportRow(
@@ -566,6 +580,27 @@ class ProductImportService:
                 )
             if not rows:
                 raise AppError("PRODUCT_IMPORT_NO_DATA_ROWS", "The workbook has no data rows", 422)
+            image_ids = {
+                image_id
+                for row in rows
+                if (image_id := dispimg_image_id(row.source_data.get("图片"))) is not None
+            }
+            if image_ids:
+                max_image_bytes = get_settings().product_import_max_image_mb * 1024 * 1024
+                try:
+                    image_errors = inspect_dispimg_references(
+                        file_path,
+                        image_ids,
+                        max_image_bytes=max_image_bytes,
+                    )
+                except DispimgImageError as exc:
+                    image_errors = {image_id: str(exc) for image_id in image_ids}
+                for row in rows:
+                    image_id = dispimg_image_id(row.source_data.get("图片"))
+                    if image_id is not None and image_id in image_errors:
+                        row.calculated_data[_IMAGE_VALIDATION_ERROR_KEY] = (
+                            f"图片无法读取：{image_errors[image_id]}"
+                        )
             return rows
         finally:
             formula_workbook.close()
@@ -695,6 +730,9 @@ class ProductImportService:
             row.target_product_id = None
             row.target_product_updated_at = None
         existing_product: Product | None = None
+        image_validation_error = row.calculated_data.get(_IMAGE_VALIDATION_ERROR_KEY)
+        if image_validation_error:
+            errors.append(image_validation_error)
         if self._formula_result_missing(row, "成本价"):
             errors.append("成本价公式没有可用计算结果，请用Excel/WPS重新计算并保存")
             cost_price = None
@@ -903,7 +941,12 @@ class ProductImportService:
     async def _stage_confirmed_row_images(
         self, task: ProductImportTask, rows: list[ProductImportRow]
     ) -> list[str]:
-        if not any(dispimg_image_id(row.source_data.get("图片")) for row in rows):
+        rows_by_image_id: dict[str, list[ProductImportRow]] = defaultdict(list)
+        for row in rows:
+            image_id = dispimg_image_id(row.source_data.get("图片"))
+            if image_id is not None:
+                rows_by_image_id[image_id].append(row)
+        if not rows_by_image_id:
             return []
         if not task.source_file_storage_key:
             raise AppError(
@@ -926,8 +969,51 @@ class ProductImportService:
                         "The temporary import file is unavailable; upload the workbook again",
                         409,
                     ) from exc
-                images = await asyncio.to_thread(extract_dispimg_images_from_path, source_path)
-                return await self._stage_images(task, images, rows)
+                max_image_bytes = get_settings().product_import_max_image_mb * 1024 * 1024
+                archive = await asyncio.to_thread(DispimgImageArchive, source_path)
+                saved_keys: list[str] = []
+                try:
+                    with TemporaryDirectory(prefix="scm-product-import-images-") as directory:
+                        temporary_directory = Path(directory)
+                        for index, (image_id, image_rows) in enumerate(
+                            rows_by_image_id.items(), start=1
+                        ):
+                            try:
+                                image = await asyncio.to_thread(
+                                    archive.extract_to,
+                                    image_id,
+                                    temporary_directory / f"image-{index}",
+                                    max_image_bytes=max_image_bytes,
+                                )
+                            except DispimgImageError as exc:
+                                row_numbers = ", ".join(
+                                    str(row.source_row_number) for row in image_rows[:5]
+                                )
+                                raise AppError(
+                                    "PRODUCT_IMPORT_IMAGE_INVALID",
+                                    f"Excel row {row_numbers} has an unreadable "
+                                    f"embedded image: {exc}",
+                                    422,
+                                ) from exc
+                            try:
+                                for row in image_rows:
+                                    row.image_storage_key = await self.storage.save_file(
+                                        f"product-images/{task.id}/{row.id}{image.extension}",
+                                        image.path,
+                                    )
+                                    saved_keys.append(row.image_storage_key)
+                            finally:
+                                image.path.unlink(missing_ok=True)
+                    return saved_keys
+                except Exception:
+                    for key in saved_keys:
+                        try:
+                            await self.storage.delete(key)
+                        except Exception:
+                            pass
+                    raise
+                finally:
+                    await asyncio.to_thread(archive.close)
             finally:
                 source_path.unlink(missing_ok=True)
 
@@ -1162,6 +1248,58 @@ class ProductImportService:
             return str(int(value))
         return str(value)
 
+    @classmethod
+    def _import_cell_text(
+        cls, header: str, value: object, number_format: str
+    ) -> str:
+        if (
+            header not in _DISPLAY_FORMAT_DECIMAL_HEADERS
+            or isinstance(value, bool)
+            or not isinstance(value, (int, float, Decimal))
+        ):
+            return cls._cell_text(value)
+        try:
+            decimal_value = Decimal(str(value))
+        except (InvalidOperation, ValueError):
+            return cls._cell_text(value)
+        if not decimal_value.is_finite():
+            return cls._cell_text(value)
+
+        display_format = cls._display_number_format(decimal_value, number_format)
+        decimal_places = cls._display_decimal_places(display_format)
+        if decimal_places is None:
+            return cls._cell_text(value)
+
+        quantum = Decimal(1).scaleb(-decimal_places)
+        if "%" in display_format:
+            displayed = (decimal_value * Decimal("100")).quantize(
+                quantum, rounding=ROUND_HALF_UP
+            )
+            return f"{format(displayed, f'.{decimal_places}f')}%"
+        displayed = decimal_value.quantize(quantum, rounding=ROUND_HALF_UP)
+        return format(displayed, f".{decimal_places}f")
+
+    @staticmethod
+    def _display_number_format(value: Decimal, number_format: str) -> str:
+        sections = number_format.split(";")
+        if value < 0 and len(sections) > 1:
+            return sections[1]
+        return sections[0]
+
+    @staticmethod
+    def _display_decimal_places(number_format: str) -> int | None:
+        if not number_format or number_format.lower() == "general":
+            return None
+        normalized = re.sub(r'"[^"]*"', "", number_format)
+        normalized = re.sub(r"\[[^\]]+\]", "", normalized)
+        normalized = re.sub(r"\\.", "", normalized)
+        match = re.search(r"[0#?]+\.([0#?]+)", normalized)
+        if match is not None:
+            return len(match.group(1))
+        if re.search(r"[0#?]+", normalized):
+            return 0
+        return None
+
     @staticmethod
     def _normalized(value: object) -> str:
         return str(value or "").strip()
@@ -1185,8 +1323,14 @@ class ProductImportService:
         try:
             normalized = value.strip()
             if percentage and normalized.endswith("%"):
-                return Decimal(normalized[:-1].strip()) / Decimal("100")
-            return Decimal(normalized)
+                parsed = Decimal(normalized[:-1].strip()) / Decimal("100")
+            else:
+                parsed = Decimal(normalized)
+            if not parsed.is_finite():
+                return None
+            if percentage:
+                return parsed.quantize(_DATABASE_DECIMAL_QUANTUM, rounding=ROUND_HALF_UP)
+            return parsed
         except (InvalidOperation, ValueError):
             return None
 

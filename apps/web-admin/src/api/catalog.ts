@@ -126,6 +126,10 @@ export const productApi = {
   },
 
   confirmImport(taskId: string): Promise<ProductImportConfirmResult> {
-    return http.post<ProductImportConfirmResult>(path(`/imports/${taskId}/confirm`))
+    return http.post<ProductImportConfirmResult>(
+      path(`/imports/${taskId}/confirm`),
+      undefined,
+      { timeoutMs: 900_000 },
+    )
   },
 }

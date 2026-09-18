@@ -18,6 +18,8 @@ from app.modules.catalog.infrastructure.models import (
 from app.modules.supplier.domain.rules import CooperationStatus
 from app.modules.supplier.infrastructure.models import Supplier
 
+PRODUCT_IMPORT_PRODUCT_LOOKUP_BATCH_SIZE = 500
+
 
 class ProductRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -253,19 +255,28 @@ class ProductRepository:
         if not keys:
             return {}
         ordered_keys = sorted(keys, key=lambda item: (str(item[0]), item[1]))
-        statement = (
-            select(Product)
-            .where(tuple_(Product.source_supplier_id, Product.sku).in_(ordered_keys))
-            .order_by(Product.source_supplier_id, Product.sku, Product.id)
-        )
-        if for_update:
-            statement = statement.with_for_update()
-        products = list((await self.session.scalars(statement)).all())
-        return {
-            (product.source_supplier_id, product.sku): product
-            for product in products
-            if product.sku is not None
-        }
+        products_by_key: dict[tuple[uuid.UUID, str], Product] = {}
+        # A giant tuple IN (...) makes MySQL's range optimizer exceed its default 8MB
+        # budget on real workbooks. Keep the key batches sorted so concurrent confirms
+        # acquire matching product locks in a stable order.
+        for offset in range(0, len(ordered_keys), PRODUCT_IMPORT_PRODUCT_LOOKUP_BATCH_SIZE):
+            key_batch = ordered_keys[offset : offset + PRODUCT_IMPORT_PRODUCT_LOOKUP_BATCH_SIZE]
+            statement = (
+                select(Product)
+                .where(tuple_(Product.source_supplier_id, Product.sku).in_(key_batch))
+                .order_by(Product.source_supplier_id, Product.sku, Product.id)
+            )
+            if for_update:
+                statement = statement.with_for_update()
+            products = list((await self.session.scalars(statement)).all())
+            products_by_key.update(
+                {
+                    (product.source_supplier_id, product.sku): product
+                    for product in products
+                    if product.sku is not None
+                }
+            )
+        return products_by_key
 
     async def other_product_with_supplier_sku(
         self, *, product_id: uuid.UUID, supplier_id: uuid.UUID, sku: str
