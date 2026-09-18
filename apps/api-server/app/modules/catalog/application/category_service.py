@@ -14,7 +14,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.contracts import AppError, PageParams, PageResult
 from app.core.transaction import transaction_scope
-from app.modules.catalog.infrastructure.models import Category, Product
+from app.modules.catalog.infrastructure.models import Category
 from app.modules.catalog.schemas import (
     CategoryImportError,
     CategoryImportResponse,
@@ -169,13 +169,6 @@ class CategoryService:
 
     async def delete(self, category_id: uuid.UUID) -> None:
         category = await self.get(category_id)
-        used = await self.session.scalar(
-            select(func.count()).select_from(Product).where(Product.category_id == category_id)
-        )
-        if used:
-            raise AppError(
-                "CATEGORY_IN_USE", "Category is referenced by products and cannot be deleted", 409
-            )
         async with transaction_scope(self.session):
             await self.session.delete(category)
 

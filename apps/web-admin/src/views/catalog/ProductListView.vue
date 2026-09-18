@@ -5,7 +5,6 @@ import { ElMessage, ElMessageBox } from "element-plus"
 import { useRoute, useRouter } from "vue-router"
 
 import { productApi } from "../../api/catalog"
-import { categoryApi } from "../../api/category"
 import { HttpError } from "../../shared/http"
 import { useAuthStore } from "../../stores/auth"
 import {
@@ -17,9 +16,9 @@ import {
 import type {
   ProductImportPreview,
   ProductImportSupplierCandidate,
+  ProductCategoryFilterOption,
   ProductListItem,
 } from "../../types/catalog"
-import type { CategoryFilterOption } from "../../types/category"
 
 type CategorySelectInstance = {
   scrollbarRef?: {
@@ -41,20 +40,20 @@ const advancedVisible = ref(false)
 const directCategoryLevel1Names = ref<string[]>([])
 const directCategoryLevel2Keys = ref<string[]>([])
 const directCategoryLevel3Ids = ref<string[]>([])
-const categoryOptionsByKey = ref(new Map<string, CategoryFilterOption>())
-const categoryOptionResults = reactive<Record<CategoryFilterOption["level"], CategoryFilterOption[]>>({
+const categoryOptionsByKey = ref(new Map<string, ProductCategoryFilterOption>())
+const categoryOptionResults = reactive<Record<ProductCategoryFilterOption["level"], ProductCategoryFilterOption[]>>({
   LEVEL1: [], LEVEL2: [], LEVEL3: [],
 })
-const categoryOptionLoading = reactive<Record<CategoryFilterOption["level"], boolean>>({
+const categoryOptionLoading = reactive<Record<ProductCategoryFilterOption["level"], boolean>>({
   LEVEL1: false, LEVEL2: false, LEVEL3: false,
 })
-const categoryOptionNextOffset = reactive<Record<CategoryFilterOption["level"], number>>({
+const categoryOptionNextOffset = reactive<Record<ProductCategoryFilterOption["level"], number>>({
   LEVEL1: 0, LEVEL2: 0, LEVEL3: 0,
 })
-const categoryOptionHasMore = reactive<Record<CategoryFilterOption["level"], boolean>>({
+const categoryOptionHasMore = reactive<Record<ProductCategoryFilterOption["level"], boolean>>({
   LEVEL1: true, LEVEL2: true, LEVEL3: true,
 })
-const categoryOptionKeyword = reactive<Record<CategoryFilterOption["level"], string>>({
+const categoryOptionKeyword = reactive<Record<ProductCategoryFilterOption["level"], string>>({
   LEVEL1: "", LEVEL2: "", LEVEL3: "",
 })
 const categoryLevel1SelectRef = ref<CategorySelectInstance>()
@@ -203,8 +202,8 @@ function updateCategoryLevel2(nextValues: string[]): void {
 }
 
 function optionsFor(
-  level: CategoryFilterOption["level"], selectedKeys: string[],
-): CategoryFilterOption[] {
+  level: ProductCategoryFilterOption["level"], selectedKeys: string[],
+): ProductCategoryFilterOption[] {
   const options = new Map(categoryOptionResults[level].map((item) => [item.selection_key, item]))
   for (const key of selectedKeys) {
     const option = categoryOptionsByKey.value.get(key)
@@ -214,7 +213,7 @@ function optionsFor(
 }
 
 async function searchCategoryOptions(
-  level: CategoryFilterOption["level"], keyword = "",
+  level: ProductCategoryFilterOption["level"], keyword = "",
 ): Promise<void> {
   const sequence = ++categorySearchSequence[level]
   const normalizedKeyword = keyword.trim()
@@ -225,26 +224,32 @@ async function searchCategoryOptions(
 }
 
 async function loadNextCategoryOptions(
-  level: CategoryFilterOption["level"],
+  level: ProductCategoryFilterOption["level"],
 ): Promise<void> {
   if (categoryOptionLoading[level] || !categoryOptionHasMore[level]) return
   await loadCategoryOptions(level, categorySearchSequence[level], true)
 }
 
 async function loadCategoryOptions(
-  level: CategoryFilterOption["level"], sequence: number, append: boolean,
+  level: ProductCategoryFilterOption["level"], sequence: number, append: boolean,
 ): Promise<void> {
   categoryOptionLoading[level] = true
   try {
     const offset = append ? categoryOptionNextOffset[level] : 0
-    const result = await categoryApi.filterOptions(level, categoryOptionKeyword[level], offset)
+    const result = await productApi.categoryFilterOptions(
+      level,
+      categoryOptionKeyword[level],
+      offset,
+      categorySelections.value,
+      filters.status,
+    )
     if (sequence !== categorySearchSequence[level]) return
     categoryOptionResults[level] = append
       ? mergeCategoryOptions(categoryOptionResults[level], result.items)
       : result.items
     categoryOptionNextOffset[level] = offset + result.items.length
     categoryOptionHasMore[level] = result.has_more
-    const cache = new Map(categoryOptionsByKey.value)
+    const cache = new Map<string, ProductCategoryFilterOption>(categoryOptionsByKey.value)
     for (const option of result.items) {
       cache.set(option.selection_key, option)
       cache.set(option.level1_selection_key, {
@@ -265,21 +270,21 @@ async function loadCategoryOptions(
 }
 
 function mergeCategoryOptions(
-  existing: CategoryFilterOption[], incoming: CategoryFilterOption[],
-): CategoryFilterOption[] {
+  existing: ProductCategoryFilterOption[], incoming: ProductCategoryFilterOption[],
+): ProductCategoryFilterOption[] {
   const options = new Map(existing.map((item) => [item.selection_key, item]))
   for (const item of incoming) options.set(item.selection_key, item)
   return Array.from(options.values())
 }
 
 function onCategoryEndReached(
-  level: CategoryFilterOption["level"], direction: "top" | "bottom" | "left" | "right",
+  level: ProductCategoryFilterOption["level"], direction: "top" | "bottom" | "left" | "right",
 ): void {
   if (direction !== "bottom") return
   void loadNextCategoryOptions(level)
 }
 
-function categorySelectScrollWrap(level: CategoryFilterOption["level"]): HTMLElement | undefined {
+function categorySelectScrollWrap(level: ProductCategoryFilterOption["level"]): HTMLElement | undefined {
   const select = level === "LEVEL1"
     ? categoryLevel1SelectRef.value
     : level === "LEVEL2"
@@ -289,7 +294,7 @@ function categorySelectScrollWrap(level: CategoryFilterOption["level"]): HTMLEle
 }
 
 function onCategoryPopupScroll(
-  level: CategoryFilterOption["level"], position: CategoryPopupPosition,
+  level: ProductCategoryFilterOption["level"], position: CategoryPopupPosition,
 ): void {
   const wrap = categorySelectScrollWrap(level)
   // Element Plus may not emit end-reached until the scrollbar reaches its exact last pixel.

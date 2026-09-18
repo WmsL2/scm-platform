@@ -4,11 +4,9 @@ import { useRoute, useRouter } from "vue-router"
 import { ElMessage } from "element-plus"
 
 import { productApi } from "../../api/catalog"
-import { categoryApi } from "../../api/category"
 import { HttpError } from "../../shared/http"
 import { useAuthStore } from "../../stores/auth"
-import type { ProductDetail, ProductUpdatePayload } from "../../types/catalog"
-import type { Category } from "../../types/category"
+import type { ProductCategoryFilterOption, ProductDetail, ProductUpdatePayload } from "../../types/catalog"
 
 const route = useRoute()
 const router = useRouter()
@@ -18,10 +16,12 @@ const submitting = ref(false)
 const product = ref<ProductDetail | null>(null)
 const editCostVisible = ref(route.query.editCost === "1")
 const editVisible = ref(false)
-const categories = ref<Category[]>([])
+const categoryOptions = reactive<Record<ProductCategoryFilterOption["level"], ProductCategoryFilterOption[]>>({
+  LEVEL1: [], LEVEL2: [], LEVEL3: [],
+})
 const categoryLevel1 = ref("")
 const categoryLevel2 = ref("")
-const categoryLevel3Id = ref("")
+const categoryLevel3 = ref("")
 const imageInput = ref<HTMLInputElement>()
 const form = reactive({ cost_price: "" })
 const editForm = reactive({
@@ -74,18 +74,12 @@ const rateFields: { key: keyof typeof editForm; label: string }[] = [
   { key: "gross_margin", label: "毛利率" }, { key: "positive_rating", label: "好评率" },
   { key: "discount_rate", label: "折扣率" }, { key: "price_inflation_rate", label: "价格虚高比例" },
 ]
-const level1Options = computed(() => uniqueNames(categories.value.map((item) => item.level1_name)))
-const level2Options = computed(() => uniqueNames(
-  categories.value
-    .filter((item) => item.level1_name === categoryLevel1.value)
-    .map((item) => item.level2_name),
-))
-const level3Options = computed(() => categories.value.filter(
-  (item) => item.level1_name === categoryLevel1.value && item.level2_name === categoryLevel2.value,
-))
+const level1Options = computed(() => uniqueNames(categoryOptions.LEVEL1.map((item) => item.level1_label)))
+const level2Options = computed(() => uniqueNames(categoryOptions.LEVEL2.map((item) => item.label.split(" / ").at(-1) ?? item.label)))
+const level3Options = computed(() => uniqueNames(categoryOptions.LEVEL3.map((item) => item.label.split(" / ").at(-1) ?? item.label)))
 const productId = computed(() => String(route.params.id))
 const canUpdateCost = computed(
-  () => auth.hasPermission("product:cost:update") && product.value?.category_id,
+  () => auth.hasPermission("product:cost:update") && product.value,
 )
 const canUpdate = computed(() => auth.hasPermission("product:update"))
 const imageUrl = computed(() => {
@@ -167,9 +161,9 @@ function populateEditForm(item: ProductDetail): void {
   editForm.tax_category = item.tax_category ?? ""
   editForm.shipping_courier = item.shipping_courier ?? ""
   editForm.after_sales_policy = item.after_sales_policy ?? ""
-  categoryLevel1.value = item.category?.level1_name ?? ""
-  categoryLevel2.value = item.category?.level2_name ?? ""
-  categoryLevel3Id.value = item.category?.id ?? ""
+  categoryLevel1.value = item.category_level1_name ?? ""
+  categoryLevel2.value = item.category_level2_name ?? ""
+  categoryLevel3.value = item.category_level3_name ?? ""
 }
 
 function nullable(value: string): string | null {
@@ -181,20 +175,21 @@ async function openEdit(): Promise<void> {
   if (!product.value || submitting.value) return
   submitting.value = true
   try {
-    categories.value = await categoryApi.selection()
     populateEditForm(product.value)
+    await loadCategoryOptions("LEVEL1", categoryLevel1.value)
+    await loadCategoryOptions("LEVEL2", categoryLevel2.value)
+    await loadCategoryOptions("LEVEL3", categoryLevel3.value)
     editVisible.value = true
   } catch (error) {
-    ElMessage.error(error instanceof HttpError ? error.response.message : "加载可选供应商失败")
+    ElMessage.error(error instanceof HttpError ? error.response.message : "加载类目候选失败")
   } finally {
     submitting.value = false
   }
 }
 
 async function updateProduct(): Promise<void> {
-  const categoryId = categoryLevel3Id.value
-  if (!categoryId || !editForm.cost_price.trim() || Number(editForm.cost_price) <= 0) {
-    ElMessage.warning("请选择三级类目并填写大于0的成本价")
+  if (!categoryLevel1.value.trim() || !categoryLevel2.value.trim() || !categoryLevel3.value.trim() || !editForm.cost_price.trim() || Number(editForm.cost_price) <= 0) {
+    ElMessage.warning("请填写三级类目并填写大于0的成本价")
     return
   }
   const payload: ProductUpdatePayload = {
@@ -203,7 +198,9 @@ async function updateProduct(): Promise<void> {
     brand: nullable(editForm.brand),
     model: nullable(editForm.model),
     product_name: nullable(editForm.product_name),
-    category_id: categoryId,
+    category_level1_name: categoryLevel1.value.trim(),
+    category_level2_name: categoryLevel2.value.trim(),
+    category_level3_name: categoryLevel3.value.trim(),
     item_number: nullable(editForm.item_number),
     jd_same_product_url: nullable(editForm.jd_same_product_url),
     cost_price: editForm.cost_price.trim(),
@@ -250,11 +247,34 @@ async function updateProduct(): Promise<void> {
 }
 
 function uniqueNames(values: string[]): string[] { return Array.from(new Set(values)).sort() }
+function selectedOption(level: ProductCategoryFilterOption["level"], name: string): ProductCategoryFilterOption | undefined {
+  return categoryOptions[level].find((item) => (item.label.split(" / ").at(-1) ?? item.label) === name || item.level1_label === name)
+}
+function parentCategorySelections(level: ProductCategoryFilterOption["level"]): string[] {
+  const level1 = selectedOption("LEVEL1", categoryLevel1.value)
+  if (level === "LEVEL1" || !level1) return []
+  if (level === "LEVEL2") return [level1.level1_selection_key]
+  const level2 = selectedOption("LEVEL2", categoryLevel2.value)
+  return level2 ? [level2.level2_selection_key] : [level1.level1_selection_key]
+}
+async function loadCategoryOptions(level: ProductCategoryFilterOption["level"], keyword = ""): Promise<void> {
+  const result = await productApi.categoryFilterOptions(
+    level, keyword, 0, parentCategorySelections(level), "ACTIVE",
+  )
+  categoryOptions[level] = result.items
+}
 function changeCategoryLevel1(): void {
   categoryLevel2.value = ""
-  categoryLevel3Id.value = ""
+  categoryLevel3.value = ""
+  categoryOptions.LEVEL2 = []
+  categoryOptions.LEVEL3 = []
+  void loadCategoryOptions("LEVEL2")
 }
-function changeCategoryLevel2(): void { categoryLevel3Id.value = "" }
+function changeCategoryLevel2(): void {
+  categoryLevel3.value = ""
+  categoryOptions.LEVEL3 = []
+  void loadCategoryOptions("LEVEL3")
+}
 
 async function updateImage(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement
@@ -305,8 +325,7 @@ onMounted(() => void loadProduct())
           <el-descriptions-item label="型号">{{ product.model ?? "—" }}</el-descriptions-item>
           <el-descriptions-item label="SKU">{{ product.sku ?? "—" }}</el-descriptions-item>
           <el-descriptions-item label="商品名称">{{ product.product_name ?? "—" }}</el-descriptions-item>
-          <el-descriptions-item label="三级类目">{{ [product.category_level1_name, product.category_level2_name, product.category_level3_name].filter(Boolean).join(" / ") || "—" }}</el-descriptions-item>
-          <el-descriptions-item label="受控类目关联">{{ product.category ? "已关联" : "固定大表直存，未关联" }}</el-descriptions-item>
+          <el-descriptions-item label="三级类目" :span="2">{{ [product.category_level1_name, product.category_level2_name, product.category_level3_name].filter(Boolean).join(" / ") || "—" }}</el-descriptions-item>
           <el-descriptions-item label="来源供应商">{{ product.source_supplier_name ?? "—" }}</el-descriptions-item>
           <el-descriptions-item label="货号">{{ product.item_number ?? "—" }}</el-descriptions-item>
           <el-descriptions-item label="69码">{{ product.barcode_text ?? "—" }}</el-descriptions-item>
@@ -372,9 +391,9 @@ onMounted(() => void loadProduct())
           <el-col :span="12"><el-form-item label="商品名称"><el-input v-model="editForm.product_name" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="品牌"><el-input v-model="editForm.brand" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="型号"><el-input v-model="editForm.model" /></el-form-item></el-col>
-          <el-col :span="8"><el-form-item label="一级类目" required><el-select v-model="categoryLevel1" filterable clearable placeholder="输入一级类目" style="width: 100%" @change="changeCategoryLevel1"><el-option v-for="name in level1Options" :key="name" :label="name" :value="name" /></el-select></el-form-item></el-col>
-          <el-col :span="8"><el-form-item label="二级类目" required><el-select v-model="categoryLevel2" filterable clearable placeholder="先选择一级类目" :disabled="!categoryLevel1" style="width: 100%" @change="changeCategoryLevel2"><el-option v-for="name in level2Options" :key="name" :label="name" :value="name" /></el-select></el-form-item></el-col>
-          <el-col :span="8"><el-form-item label="三级类目" required><el-select v-model="categoryLevel3Id" filterable clearable placeholder="先选择二级类目" :disabled="!categoryLevel2" style="width: 100%"><el-option v-for="item in level3Options" :key="item.id" :label="item.level3_name" :value="item.id" /></el-select></el-form-item></el-col>
+          <el-col :span="8"><el-form-item label="一级类目" required><el-select v-model="categoryLevel1" filterable allow-create clearable remote :remote-method="(query: string) => loadCategoryOptions('LEVEL1', query)" placeholder="输入或选择一级类目" style="width: 100%" @focus="loadCategoryOptions('LEVEL1')" @change="changeCategoryLevel1"><el-option v-for="name in level1Options" :key="name" :label="name" :value="name" /></el-select></el-form-item></el-col>
+          <el-col :span="8"><el-form-item label="二级类目" required><el-select v-model="categoryLevel2" filterable allow-create clearable remote :remote-method="(query: string) => loadCategoryOptions('LEVEL2', query)" placeholder="输入或选择二级类目" :disabled="!categoryLevel1" style="width: 100%" @focus="loadCategoryOptions('LEVEL2')" @change="changeCategoryLevel2"><el-option v-for="name in level2Options" :key="name" :label="name" :value="name" /></el-select></el-form-item></el-col>
+          <el-col :span="8"><el-form-item label="三级类目" required><el-select v-model="categoryLevel3" filterable allow-create clearable remote :remote-method="(query: string) => loadCategoryOptions('LEVEL3', query)" placeholder="输入或选择三级类目" :disabled="!categoryLevel2" style="width: 100%" @focus="loadCategoryOptions('LEVEL3')"><el-option v-for="name in level3Options" :key="name" :label="name" :value="name" /></el-select></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="货号"><el-input v-model="editForm.item_number" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="69码"><el-input v-model="editForm.barcode_text" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="3C编码"><el-input v-model="editForm.certification_3c_code" /></el-form-item></el-col>

@@ -1,6 +1,8 @@
 # ADR-0010：商品大表导入直接保存类目与价格正式值
 
-状态：ACCEPTED
+状态：PARTIALLY SUPERSEDED BY ADR-0026
+
+> ADR-0026 删除了本 ADR 所述的可空保留 `scm_product.category_id`；三级类目直接保存的导入规则继续有效，且三个层级现在均为必填文本。
 日期：2026-09-10
 
 ## 背景

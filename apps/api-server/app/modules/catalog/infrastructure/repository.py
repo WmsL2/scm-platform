@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import List, cast
+from typing import List, Literal, cast
 
 from sqlalchemy import Select, and_, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,6 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.common.contracts import PageParams
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import (
-    Category,
     Product,
     ProductImportRow,
     ProductImportTask,
@@ -25,11 +24,15 @@ class ProductRepository:
         self.session = session
 
     async def by_id(self, product_id: uuid.UUID) -> Product | None:
-        statement = select(Product).join(Supplier).where(
-            Product.id == product_id,
-            Product.status == ProductStatus.ACTIVE,
-            Supplier.is_deleted.is_(False),
-            Supplier.cooperation_status == CooperationStatus.NORMAL,
+        statement = (
+            select(Product)
+            .join(Supplier)
+            .where(
+                Product.id == product_id,
+                Product.status == ProductStatus.ACTIVE,
+                Supplier.is_deleted.is_(False),
+                Supplier.cooperation_status == CooperationStatus.NORMAL,
+            )
         )
         return cast(Product | None, await self.session.scalar(statement))
 
@@ -51,43 +54,80 @@ class ProductRepository:
         statement = select(Product).where(Product.id == product_id).with_for_update()
         return cast(Product | None, await self.session.scalar(statement))
 
-    async def category_by_id(self, category_id: uuid.UUID) -> Category | None:
-        statement = select(Category).where(Category.id == category_id)
-        return cast(Category | None, await self.session.scalar(statement))
-
-    async def active_categories_by_path(
-        self, level1_name: str, level2_name: str, level3_name: str
-    ) -> list[Category]:
-        statement = select(Category).where(
-            Category.is_active.is_(True),
-            Category.level1_name == level1_name,
-            Category.level2_name == level2_name,
-            Category.level3_name == level3_name,
+    async def category_filter_options(
+        self,
+        *,
+        level: Literal["LEVEL1", "LEVEL2", "LEVEL3"],
+        keyword: str | None,
+        offset: int,
+        limit: int,
+        level1_names: set[str],
+        level2_paths: set[tuple[str, str]],
+        status: ProductStatus,
+    ) -> tuple[list[tuple[str, ...]], bool]:
+        columns = (
+            (Product.category_level1_name,)
+            if level == "LEVEL1"
+            else (Product.category_level1_name, Product.category_level2_name)
+            if level == "LEVEL2"
+            else (
+                Product.category_level1_name,
+                Product.category_level2_name,
+                Product.category_level3_name,
+            )
         )
-        return list((await self.session.scalars(statement)).all())
-
-    async def mall_categories(self) -> list[Category]:
-        statement = select(Category).where(Category.source_type == "MALL_LEVEL3")
-        return list((await self.session.scalars(statement)).all())
-
-    async def active_mall_categories_by_ids(
-        self, category_ids: set[uuid.UUID], *, for_update: bool = False
-    ) -> dict[uuid.UUID, Category]:
-        if not category_ids:
-            return {}
-        statement = select(Category).where(
-            Category.id.in_(category_ids),
-            Category.source_type == "MALL_LEVEL3",
-            Category.is_active.is_(True),
+        supplier_criteria = (
+            (
+                Supplier.is_deleted.is_(False),
+                Supplier.cooperation_status == CooperationStatus.NORMAL,
+            )
+            if status == ProductStatus.ACTIVE
+            else ()
         )
-        if for_update:
-            statement = statement.with_for_update()
-        categories = list((await self.session.scalars(statement)).all())
-        return {category.id: category for category in categories}
-
-    async def active_category_by_id(self, category_id: uuid.UUID) -> Category | None:
-        statement = select(Category).where(Category.id == category_id, Category.is_active.is_(True))
-        return cast(Category | None, await self.session.scalar(statement))
+        statement = (
+            select(*columns)
+            .select_from(Product)
+            .join(Supplier)
+            .where(
+                Product.status == status,
+                Product.category_level1_name.is_not(None),
+                Product.category_level2_name.is_not(None),
+                Product.category_level3_name.is_not(None),
+                *supplier_criteria,
+            )
+        )
+        if keyword:
+            searchable_columns = columns
+            statement = statement.where(
+                or_(*[column.contains(keyword) for column in searchable_columns])
+            )
+        parent_criteria: list[ColumnElement[bool]] = []
+        if level != "LEVEL1" and level1_names:
+            parent_criteria.append(Product.category_level1_name.in_(level1_names))
+        if level == "LEVEL3" and level2_paths:
+            parent_criteria.append(
+                or_(
+                    *[
+                        and_(
+                            Product.category_level1_name == level1_name,
+                            Product.category_level2_name == level2_name,
+                        )
+                        for level1_name, level2_name in level2_paths
+                    ]
+                )
+            )
+        if parent_criteria:
+            statement = statement.where(or_(*parent_criteria))
+        rows = list(
+            (
+                await self.session.execute(
+                    statement.distinct().order_by(*columns).offset(offset).limit(limit + 1)
+                )
+            ).tuples()
+        )
+        return [tuple(value for value in row if value is not None) for row in rows[:limit]], len(
+            rows
+        ) > limit
 
     async def import_task_by_id(self, task_id: uuid.UUID) -> ProductImportTask | None:
         statement = (
@@ -158,9 +198,7 @@ class ProductRepository:
     ) -> dict[tuple[uuid.UUID, str], Product]:
         if not keys:
             return {}
-        statement = select(Product).where(
-            tuple_(Product.source_supplier_id, Product.sku).in_(keys)
-        )
+        statement = select(Product).where(tuple_(Product.source_supplier_id, Product.sku).in_(keys))
         if for_update:
             statement = statement.with_for_update()
         products = list((await self.session.scalars(statement)).all())
@@ -192,10 +230,9 @@ class ProductRepository:
         source_supplier_id: uuid.UUID | None,
         category_level1_name: str | None,
         category_level2_name: str | None,
-        category_id: uuid.UUID | None,
-        category_ids: set[uuid.UUID],
         category_level1_names: set[str],
         category_level2_paths: set[tuple[str, str]],
+        category_level3_paths: set[tuple[str, str, str]],
         cost_price_min: Decimal | None,
         cost_price_max: Decimal | None,
         agreement_price_min: Decimal | None,
@@ -214,8 +251,8 @@ class ProductRepository:
             if status == ProductStatus.ACTIVE
             else ()
         )
-        statement: Select[tuple[Product]] = select(Product).join(Supplier).where(
-            Product.status == status, *supplier_criteria
+        statement: Select[tuple[Product]] = (
+            select(Product).join(Supplier).where(Product.status == status, *supplier_criteria)
         )
         count_statement = (
             select(func.count())
@@ -242,21 +279,36 @@ class ProductRepository:
             )
             statement = statement.where(criteria)
             count_statement = count_statement.where(criteria)
-        if category_id:
-            statement = statement.where(Product.category_id == category_id)
-            count_statement = count_statement.where(Product.category_id == category_id)
         category_selection_criteria: List[ColumnElement[bool]] = []
-        if category_ids:
-            category_selection_criteria.append(Product.category_id.in_(category_ids))
         if category_level1_names:
             category_selection_criteria.append(
                 Product.category_level1_name.in_(category_level1_names)
             )
         if category_level2_paths:
-            category_selection_criteria.append(or_(*[
-                and_(Product.category_level1_name == level1, Product.category_level2_name == level2)
-                for level1, level2 in category_level2_paths
-            ]))
+            category_selection_criteria.append(
+                or_(
+                    *[
+                        and_(
+                            Product.category_level1_name == level1,
+                            Product.category_level2_name == level2,
+                        )
+                        for level1, level2 in category_level2_paths
+                    ]
+                )
+            )
+        if category_level3_paths:
+            category_selection_criteria.append(
+                or_(
+                    *[
+                        and_(
+                            Product.category_level1_name == level1,
+                            Product.category_level2_name == level2,
+                            Product.category_level3_name == level3,
+                        )
+                        for level1, level2, level3 in category_level3_paths
+                    ]
+                )
+            )
         if category_selection_criteria:
             category_criterion = or_(*category_selection_criteria)
             statement = statement.where(category_criterion)

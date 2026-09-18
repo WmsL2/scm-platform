@@ -269,7 +269,7 @@ class MatchingService:
             brand=product.brand,
             model=product.model,
             product_name=product.product_name,
-            category_id=product.category_id,
+            category_id=None,
             category_level1_name=product.category_level1_name,
             category_level2_name=product.category_level2_name,
             category_level3_name=product.category_level3_name,
@@ -330,7 +330,7 @@ class MatchingService:
             "brand": product.brand,
             "model": product.model,
             "product_name": product.product_name,
-            "category_id": str(product.category_id) if product.category_id else None,
+            "category_id": None,
             "category_path": " / ".join(
                 value
                 for value in (

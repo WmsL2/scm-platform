@@ -2,7 +2,7 @@ import uuid
 from decimal import Decimal
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -17,6 +17,7 @@ from app.modules.catalog.application.import_service import ProductImportService
 from app.modules.catalog.application.service import ProductService
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.schemas import (
+    ProductCategoryFilterOptionPageResponse,
     ProductCostUpdateRequest,
     ProductDetailResponse,
     ProductImportConfirmResponse,
@@ -80,8 +81,6 @@ async def list_products(
     supplier_name: Annotated[str | None, Query(max_length=255)] = None,
     category_level1_name: Annotated[str | None, Query(max_length=255)] = None,
     category_level2_name: Annotated[str | None, Query(max_length=255)] = None,
-    category_id: uuid.UUID | None = None,
-    category_ids: Annotated[list[uuid.UUID] | None, Query()] = None,
     category_selections: Annotated[list[str] | None, Query()] = None,
     source_supplier_id: uuid.UUID | None = None,
     cost_price_min: Annotated[Decimal | None, Query(ge=0)] = None,
@@ -106,8 +105,6 @@ async def list_products(
             supplier_name=supplier_name,
             category_level1_name=category_level1_name,
             category_level2_name=category_level2_name,
-            category_id=category_id,
-            category_ids=category_ids or [],
             category_selections=category_selections or [],
             source_supplier_id=source_supplier_id,
             cost_price_min=cost_price_min,
@@ -118,6 +115,34 @@ async def list_products(
             discount_rate_max=discount_rate_max,
             sales_volume_min=sales_volume_min,
             sales_volume_max=sales_volume_max,
+            status=status,
+        )
+    )
+
+
+@router.get(
+    "/category-filter-options",
+    response_model=ApiResponse[ProductCategoryFilterOptionPageResponse],
+)
+async def product_category_filter_options(
+    current: Annotated[CurrentUser, Depends(require_permission("product:list"))],
+    session: SessionDep,
+    level: Literal["LEVEL1", "LEVEL2", "LEVEL3"],
+    keyword: Annotated[str | None, Query(max_length=255)] = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=50)] = 50,
+    category_selections: Annotated[list[str] | None, Query()] = None,
+    status: ProductStatus = ProductStatus.ACTIVE,
+) -> ApiResponse[ProductCategoryFilterOptionPageResponse]:
+    if status == ProductStatus.DISABLED and "product:disable" not in current.permissions:
+        raise AppError("AUTH_FORBIDDEN", "Permission denied", 403)
+    return success(
+        await ProductService(session).category_filter_options(
+            level=level,
+            keyword=keyword,
+            offset=offset,
+            limit=limit,
+            category_selections=category_selections or [],
             status=status,
         )
     )
@@ -270,9 +295,7 @@ async def update_product_cost(
     return success(await ProductService(session).update_cost(product_id, payload, current.user_id))
 
 
-@router.post(
-    "/{product_id}/commands/disable", response_model=ApiResponse[ProductLifecycleResponse]
-)
+@router.post("/{product_id}/commands/disable", response_model=ApiResponse[ProductLifecycleResponse])
 async def disable_product(
     product_id: uuid.UUID,
     current: Annotated[CurrentUser, Depends(require_permission("product:disable"))],
@@ -281,9 +304,7 @@ async def disable_product(
     return success(await ProductService(session).disable(product_id, current.user_id))
 
 
-@router.post(
-    "/{product_id}/commands/enable", response_model=ApiResponse[ProductLifecycleResponse]
-)
+@router.post("/{product_id}/commands/enable", response_model=ApiResponse[ProductLifecycleResponse])
 async def enable_product(
     product_id: uuid.UUID,
     current: Annotated[CurrentUser, Depends(require_permission("product:disable"))],

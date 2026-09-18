@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import List
+from typing import List, Literal
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,11 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.contracts import AppError, PageParams, PageResult
 from app.core.transaction import transaction_scope
 from app.infrastructure.adapters import ObjectStorage, get_object_storage
+from app.modules.catalog.application.product_category_filter import (
+    parse_selection,
+    selection_key,
+)
 from app.modules.catalog.domain.lifecycle import ProductStatus
-from app.modules.catalog.infrastructure.models import Category, Product, ProductPurgeAudit
+from app.modules.catalog.infrastructure.models import Product, ProductPurgeAudit
 from app.modules.catalog.infrastructure.repository import ProductRepository
 from app.modules.catalog.schemas import (
-    CategoryResponse,
+    ProductCategoryFilterOptionPageResponse,
+    ProductCategoryFilterOptionResponse,
     ProductCostUpdateRequest,
     ProductDetailResponse,
     ProductLifecycleResponse,
@@ -49,8 +54,6 @@ class ProductService:
         source_supplier_id: uuid.UUID | None,
         category_level1_name: str | None,
         category_level2_name: str | None,
-        category_id: uuid.UUID | None,
-        category_ids: list[uuid.UUID],
         category_selections: List[str],
         cost_price_min: Decimal | None,
         cost_price_max: Decimal | None,
@@ -66,7 +69,7 @@ class ProductService:
         self._validate_range("agreement_price", agreement_price_min, agreement_price_max)
         self._validate_range("discount_rate", discount_rate_min, discount_rate_max)
         self._validate_range("sales_volume", sales_volume_min, sales_volume_max)
-        level1_names, level2_paths, selected_category_ids = await self._resolve_category_selections(
+        level1_names, level2_paths, level3_paths = self._resolve_category_selections(
             category_selections
         )
         products, total = await self.repository.list(
@@ -79,10 +82,9 @@ class ProductService:
             source_supplier_id=source_supplier_id,
             category_level1_name=category_level1_name,
             category_level2_name=category_level2_name,
-            category_id=category_id,
-            category_ids=set(category_ids) | selected_category_ids,
             category_level1_names=level1_names,
             category_level2_paths=level2_paths,
+            category_level3_paths=level3_paths,
             cost_price_min=cost_price_min,
             cost_price_max=cost_price_max,
             agreement_price_min=agreement_price_min,
@@ -108,45 +110,63 @@ class ProductService:
             page_size=page_params.page_size,
         )
 
-    async def _resolve_category_selections(
+    def _resolve_category_selections(
         self, selections: List[str]
-    ) -> tuple[set[str], set[tuple[str, str]], set[uuid.UUID]]:
-        parsed: List[tuple[str, uuid.UUID]] = []
+    ) -> tuple[set[str], set[tuple[str, str]], set[tuple[str, str, str]]]:
+        level1_names: set[str] = set()
+        level2_paths: set[tuple[str, str]] = set()
+        level3_paths: set[tuple[str, str, str]] = set()
         for selection in selections:
-            level, separator, raw_id = selection.partition(":")
-            if level not in {"LEVEL1", "LEVEL2", "LEVEL3"} or not separator:
-                raise AppError(
-                    "PRODUCT_CATEGORY_SELECTION_INVALID", "Invalid category selection", 422
-                )
             try:
-                parsed.append((level, uuid.UUID(raw_id)))
+                parsed = parse_selection(selection)
             except ValueError as exc:
                 raise AppError(
                     "PRODUCT_CATEGORY_SELECTION_INVALID", "Invalid category selection", 422
                 ) from exc
-        if not parsed:
-            return set(), set(), set()
-        categories = await self.repository.active_mall_categories_by_ids(
-            {category_id for _, category_id in parsed}
-        )
-        if len(categories) != len({category_id for _, category_id in parsed}):
-            raise AppError(
-                "PRODUCT_CATEGORY_SELECTION_INELIGIBLE",
-                "A selected category is no longer active",
-                422,
-            )
-        level1_names: set[str] = set()
-        level2_paths: set[tuple[str, str]] = set()
-        level3_ids: set[uuid.UUID] = set()
-        for level, category_id in parsed:
-            category = categories[category_id]
-            if level == "LEVEL1":
-                level1_names.add(category.level1_name)
-            elif level == "LEVEL2":
-                level2_paths.add((category.level1_name, category.level2_name))
+            if parsed.level == "LEVEL1":
+                level1_names.add(parsed.path[0])
+            elif parsed.level == "LEVEL2":
+                level2_paths.add((parsed.path[0], parsed.path[1]))
             else:
-                level3_ids.add(category.id)
-        return level1_names, level2_paths, level3_ids
+                level3_paths.add((parsed.path[0], parsed.path[1], parsed.path[2]))
+        return level1_names, level2_paths, level3_paths
+
+    async def category_filter_options(
+        self,
+        *,
+        level: Literal["LEVEL1", "LEVEL2", "LEVEL3"],
+        keyword: str | None,
+        offset: int,
+        limit: int,
+        category_selections: List[str],
+        status: ProductStatus,
+    ) -> ProductCategoryFilterOptionPageResponse:
+        level1_names, level2_paths, _ = self._resolve_category_selections(category_selections)
+        rows, has_more = await self.repository.category_filter_options(
+            level=level,
+            keyword=keyword.strip() if keyword else None,
+            offset=offset,
+            limit=limit,
+            level1_names=level1_names,
+            level2_paths=level2_paths,
+            status=status,
+        )
+        items: list[ProductCategoryFilterOptionResponse] = []
+        for path in rows:
+            level1_key = selection_key("LEVEL1", path[:1])
+            level2_key = selection_key("LEVEL2", path[:2]) if len(path) >= 2 else level1_key
+            items.append(
+                ProductCategoryFilterOptionResponse(
+                    selection_key=selection_key(level, path),
+                    label=" / ".join(path),
+                    level=level,
+                    level1_selection_key=level1_key,
+                    level2_selection_key=level2_key,
+                    level1_label=path[0],
+                    level2_label=" / ".join(path[:2]),
+                )
+            )
+        return ProductCategoryFilterOptionPageResponse(items=items, has_more=has_more)
 
     async def get(self, product_id: uuid.UUID) -> ProductDetailResponse:
         product = await self.repository.by_id(product_id)
@@ -176,22 +196,6 @@ class ProductService:
             update_values = payload.model_dump(exclude_unset=True)
             if "cost_price" in update_values and update_values["cost_price"] is None:
                 raise AppError("PRODUCT_COST_PRICE_REQUIRED", "Cost price is required", 422)
-            if "category_id" in update_values:
-                category_id = update_values.pop("category_id")
-                if category_id is None:
-                    raise AppError("PRODUCT_CATEGORY_REQUIRED", "Product category is required", 422)
-                category = await self.repository.active_category_by_id(category_id)
-                if category is None or category.source_type != "MALL_LEVEL3":
-                    raise AppError(
-                        "PRODUCT_CATEGORY_INELIGIBLE",
-                        "Only an active mall level-3 category may be selected",
-                        409,
-                    )
-                product.category_id = category.id
-                product.category_level1_name = category.level1_name
-                product.category_level2_name = category.level2_name
-                product.category_level3_name = category.level3_name
-                product.deduction_rate = category.deduction_rate
             for field, value in update_values.items():
                 setattr(product, field, value)
             product.updated_by = actor_id
@@ -280,9 +284,7 @@ class ProductService:
                 pass
         return response
 
-    async def disable(
-        self, product_id: uuid.UUID, actor_id: uuid.UUID
-    ) -> ProductLifecycleResponse:
+    async def disable(self, product_id: uuid.UUID, actor_id: uuid.UUID) -> ProductLifecycleResponse:
         async with transaction_scope(self.session):
             product = await self.repository.by_id_any_status_for_update(product_id)
             if product is None:
@@ -295,9 +297,7 @@ class ProductService:
             product.updated_by = actor_id
         return ProductLifecycleResponse(id=product.id, status=product.status)
 
-    async def enable(
-        self, product_id: uuid.UUID, actor_id: uuid.UUID
-    ) -> ProductLifecycleResponse:
+    async def enable(self, product_id: uuid.UUID, actor_id: uuid.UUID) -> ProductLifecycleResponse:
         async with transaction_scope(self.session):
             product = await self.repository.by_id_any_status_for_update(product_id)
             if product is None:
@@ -351,7 +351,6 @@ class ProductService:
     async def _list_item(
         self, product: Product, usernames: dict[uuid.UUID, str]
     ) -> ProductListItem:
-        category = await self._category(product.category_id)
         supplier = await self.supplier_repository.active_by_id(product.source_supplier_id)
         return ProductListItem(
             id=product.id,
@@ -364,8 +363,7 @@ class ProductService:
             product_name=product.product_name,
             item_number=product.item_number,
             jd_same_product_url=product.jd_same_product_url,
-            category_id=product.category_id,
-            category_path=self._category_path(product, category),
+            category_path=self._category_path(product),
             source_supplier_id=product.source_supplier_id,
             source_supplier_name=supplier.supplier_name if supplier else None,
             cost_price=product.cost_price,
@@ -411,10 +409,7 @@ class ProductService:
             updated_at=product.updated_at,
         )
 
-    async def _detail(
-        self, product: Product, *, category: Category | None = None
-    ) -> ProductDetailResponse:
-        category = category or await self._category(product.category_id)
+    async def _detail(self, product: Product) -> ProductDetailResponse:
         supplier = await self.supplier_repository.active_by_id(product.source_supplier_id)
         return ProductDetailResponse(
             id=product.id,
@@ -425,7 +420,6 @@ class ProductService:
             model=product.model,
             sku=product.sku,
             product_name=product.product_name,
-            category=CategoryResponse.model_validate(category) if category else None,
             category_level1_name=product.category_level1_name,
             category_level2_name=product.category_level2_name,
             category_level3_name=product.category_level3_name,
@@ -469,12 +463,6 @@ class ProductService:
             updated_at=product.updated_at,
         )
 
-    async def _category(self, category_id: uuid.UUID | None) -> Category | None:
-        if category_id is None:
-            return None
-        category = await self.repository.category_by_id(category_id)
-        return category
-
     @staticmethod
     def _source_supplier_is_eligible(supplier: Supplier) -> bool:
         return (
@@ -484,9 +472,7 @@ class ProductService:
         )
 
     @staticmethod
-    def _category_path(product: Product, category: Category | None) -> str:
-        if category is not None:
-            return " / ".join((category.level1_name, category.level2_name, category.level3_name))
+    def _category_path(product: Product) -> str:
         return " / ".join(
             value
             for value in (

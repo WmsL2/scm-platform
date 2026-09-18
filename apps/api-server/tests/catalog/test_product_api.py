@@ -123,7 +123,6 @@ async def create_product_fixture(
                 image_reference="local-media/product-images/test-product.png",
                 model="MODEL-1",
                 sku="SKU-1",
-                category_id=category_id,
                 category_level1_name="一级",
                 category_level2_name="二级",
                 category_level3_name="三级",
@@ -211,7 +210,9 @@ async def test_product_api_lists_details_and_updates_cost_independently() -> Non
 
             detail = await client.get(f"/api/v1/products/{product_id}", headers=headers)
             assert detail.status_code == 200
-            assert detail.json()["data"]["category"]["deduction_rate"] == "0.0500"
+            assert detail.json()["data"]["category_level1_name"] == "一级"
+            assert detail.json()["data"]["category_level2_name"] == "二级"
+            assert detail.json()["data"]["category_level3_name"] == "三级"
 
             updated = await client.patch(
                 f"/api/v1/products/{product_id}/cost-price",
@@ -270,7 +271,6 @@ async def test_product_api_filters_multiple_category_ids_as_a_union() -> None:
                         product_name="第二个类目商品",
                         sku="SKU-CATEGORY-SECOND",
                         source_supplier_id=supplier_id,
-                        category_id=second_category_id,
                         category_level1_name="另一一级",
                         category_level2_name="另一二级",
                         category_level3_name="另一三级",
@@ -281,38 +281,30 @@ async def test_product_api_filters_multiple_category_ids_as_a_union() -> None:
             await session.commit()
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            selected = await client.get(
-                "/api/v1/products",
+            level1_options = await client.get(
+                "/api/v1/products/category-filter-options",
                 headers=headers,
-                params=[
-                    ("category_ids", str(first_category_id)),
-                    ("category_ids", str(second_category_id)),
-                ],
+                params={"level": "LEVEL1", "keyword": "一级"},
             )
-            assert selected.status_code == 200
-            assert {str(first_product_id), str(second_product_id)}.issubset(
-                {item["id"] for item in selected.json()["data"]["items"]}
-            )
-
-            one_category = await client.get(
-                "/api/v1/products",
+            level3_options = await client.get(
+                "/api/v1/products/category-filter-options",
                 headers=headers,
-                params=[("category_ids", str(second_category_id))],
+                params={"level": "LEVEL3", "keyword": "另一三级"},
             )
-            assert one_category.status_code == 200
-            assert str(second_product_id) in {
-                item["id"] for item in one_category.json()["data"]["items"]
-            }
-            assert str(first_product_id) not in {
-                item["id"] for item in one_category.json()["data"]["items"]
-            }
-
+            assert level1_options.status_code == 200
+            assert level3_options.status_code == 200
+            first_level1_key = next(
+                item["selection_key"]
+                for item in level1_options.json()["data"]["items"]
+                if item["label"] == "一级"
+            )
+            second_level3_key = level3_options.json()["data"]["items"][0]["selection_key"]
             direct_selection = await client.get(
                 "/api/v1/products",
                 headers=headers,
                 params=[
-                    ("category_selections", f"LEVEL1:{first_category_id}"),
-                    ("category_selections", f"LEVEL3:{second_category_id}"),
+                    ("category_selections", first_level1_key),
+                    ("category_selections", second_level3_key),
                 ],
             )
             assert direct_selection.status_code == 200
@@ -323,7 +315,7 @@ async def test_product_api_filters_multiple_category_ids_as_a_union() -> None:
             invalid_selection = await client.get(
                 "/api/v1/products",
                 headers=headers,
-                params={"category_selections": "LEVEL3:not-a-uuid"},
+                params={"category_selections": "LEVEL3:not-a-selection-key"},
             )
             assert invalid_selection.status_code == 422
             assert invalid_selection.json()["code"] == "PRODUCT_CATEGORY_SELECTION_INVALID"
@@ -333,6 +325,53 @@ async def test_product_api_filters_multiple_category_ids_as_a_union() -> None:
             await session.execute(delete(Category).where(Category.id == second_category_id))
             await session.commit()
         await cleanup_fixture(supplier_id, first_category_id, first_product_id)
+        await cleanup_user(user_id)
+
+
+async def test_product_category_options_are_derived_from_product_master_data() -> None:
+    user_id, headers = await create_product_user(PRODUCT_PERMISSIONS)
+    supplier_id, category_id, product_id = await create_product_fixture()
+    master_only_product_id = uuid.uuid4()
+    try:
+        async with SessionLocal() as session:
+            session.add(
+                Product(
+                    id=master_only_product_id,
+                    product_name="只存在于商品主数据的类目商品",
+                    sku="SKU-MASTER-CATEGORY",
+                    source_supplier_id=supplier_id,
+                    category_level1_name="主数据一级",
+                    category_level2_name="主数据二级",
+                    category_level3_name="主数据三级",
+                    cost_price=Decimal("300.0000"),
+                )
+            )
+            await session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            options = await client.get(
+                "/api/v1/products/category-filter-options",
+                headers=headers,
+                params={"level": "LEVEL3", "keyword": "主数据三级"},
+            )
+            assert options.status_code == 200
+            option = options.json()["data"]["items"][0]
+            assert option["label"] == "主数据一级 / 主数据二级 / 主数据三级"
+
+            selected = await client.get(
+                "/api/v1/products",
+                headers=headers,
+                params=[("category_selections", option["selection_key"])],
+            )
+            assert selected.status_code == 200
+            assert str(master_only_product_id) in {
+                item["id"] for item in selected.json()["data"]["items"]
+            }
+    finally:
+        async with SessionLocal() as session:
+            await session.execute(delete(Product).where(Product.id == master_only_product_id))
+            await session.commit()
+        await cleanup_fixture(supplier_id, category_id, product_id)
         await cleanup_user(user_id)
 
 
@@ -372,9 +411,7 @@ async def test_product_image_upload_and_clear_use_controlled_storage(monkeypatch
             assert reference.startswith("local-media/product-images/manual/")
             assert "product-images/test-product.png" in storage.deleted
 
-            cleared = await client.delete(
-                f"/api/v1/products/{product_id}/image", headers=headers
-            )
+            cleared = await client.delete(f"/api/v1/products/{product_id}/image", headers=headers)
             assert cleared.status_code == 200
             assert cleared.json()["data"]["image_reference"] is None
             assert reference.removeprefix("local-media/") in storage.deleted
@@ -411,9 +448,7 @@ async def test_product_disable_enable_and_purge_follow_lifecycle_rules() -> None
             hidden_detail = await client.get(f"/api/v1/products/{product_id}", headers=headers)
             assert hidden_detail.status_code == 404
 
-            disabled_list = await client.get(
-                "/api/v1/products?status=DISABLED", headers=headers
-            )
+            disabled_list = await client.get("/api/v1/products?status=DISABLED", headers=headers)
             assert disabled_list.status_code == 200
             assert str(product_id) in {item["id"] for item in disabled_list.json()["data"]["items"]}
 
@@ -473,6 +508,9 @@ async def test_product_editing_and_supplier_lifecycle_visibility() -> None:
                 json={
                     "product_name": "已编辑商品",
                     "selling_points": "编辑后的卖点",
+                    "category_level1_name": "手工一级",
+                    "category_level2_name": "手工二级",
+                    "category_level3_name": "手工三级",
                 },
             )
             assert edited.status_code == 200
