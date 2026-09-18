@@ -157,7 +157,7 @@ async def cleanup_fixture(
         await session.commit()
 
 
-async def test_product_api_lists_details_and_recalculates_cost_atomically() -> None:
+async def test_product_api_lists_details_and_updates_cost_independently() -> None:
     importer_id, headers = await create_product_user(PRODUCT_PERMISSIONS)
     updater_id, updater_headers = await create_product_user(("product:cost:update",))
     supplier_id, category_id, product_id = await create_product_fixture(
@@ -221,11 +221,12 @@ async def test_product_api_lists_details_and_recalculates_cost_atomically() -> N
             assert updated.status_code == 200
             data = updated.json()["data"]
             assert data["cost_price"] == "120.0000"
-            assert data["market_price"] == "210.0000"
-            assert data["agreement_price"] == "144.0000"
-            assert data["agreement_purchase_price"] == "136.8000"
-            assert data["profit"] == "16.8000"
-            assert data["deduction_rate"] == "0.0500"
+            assert data["market_price"] is None
+            assert data["agreement_price"] == "160.0000"
+            assert data["agreement_purchase_price"] is None
+            assert data["profit"] is None
+            assert data["discount_rate"] == "0.8000"
+            assert data["deduction_rate"] is None
 
             refreshed_listing = await client.get("/api/v1/products?keyword=成本价", headers=headers)
             refreshed_product = next(

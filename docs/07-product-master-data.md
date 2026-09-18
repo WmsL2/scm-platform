@@ -72,9 +72,9 @@ Revision `20260911_0020` 将 Product 生命周期冻结为 `ACTIVE` / `DISABLED`
 
 `scm_product.cost_price` 是具体正式商品的当前成本价，也是业务确认的当前供应商报价。一期不建设 `scm_supplier_product_quote`，不保存独立报价历史、有效期、作废记录或多供应商比价结果。
 
-商品大表导入的成本价进入正式 Product。供应商给出新报价时，后续 Product Backend 直接更新目标 Product 的 `cost_price`，并在同一事务内按 Pricing Service 重新计算和保存派生价格与毛利；既有 `updated_by`、`updated_at` 记录更新审计。
+商品大表导入的成本价进入正式 Product。供应商给出新报价时，Product Backend 直接更新目标 Product 的 `cost_price`；成本价必须大于零，但不自动计算或覆盖其他价格、利润和比例，既有 `updated_by`、`updated_at` 记录更新审计。
 
-依据 ADR-0010，**固定商品大表导入本身不调用 Pricing Service**：Excel 的市场价、京东价、协议价、协议价采购价、利润、毛利、折扣率和价格虚高比例均作为已确认正式值直接保存。仅单独“更新当前成本价”操作仍须重算，因为该操作不同时提供整行完整价格数据。
+依据 ADR-0024，**固定商品大表导入和手工维护均不调用 Pricing Service**：Excel 的市场价、京东价、协议价、协议价采购价、利润、毛利、折扣率和价格虚高比例均作为已确认正式值直接保存；单独“修改当前成本价”也只改成本价。
 
 ## 受控类目绑定
 
