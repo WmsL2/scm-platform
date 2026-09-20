@@ -1,8 +1,8 @@
 # 商品大表导入
 
-状态：IMPLEMENTED / PRODUCT_MASTER_2026_43_COLUMNS / NULLABLE_NUMERIC_FIELDS
-Owner：feat/product-import-safety-concurrency
-Last Updated：2026-09-18
+状态：IMPLEMENTED / PRODUCT_MASTER_2026_43_COLUMNS / NULLABLE_NUMERIC_FIELDS / TEMPORARY_SOURCE_RETENTION
+Owner：feat/product-import-confirm-reupload
+Last Updated：2026-09-20
 
 ## Database
 - [x] `20260910_0013` 创建 `scm_product_import_task`、`scm_product_import_row`、`scm_product_import_supplier_match`
@@ -13,8 +13,8 @@ Last Updated：2026-09-18
 
 ## Backend
 - [x] 严格校验批准的 43 列 2026 模板；一级、二级、三级类目文本必填并直接保存到正式 Product，不再绑定类目维表外键；价格仍直接按 Excel 正式值保存，不重算价格
-- [x] 预览校验 WPS/Excel `DISPIMG` 引用和内嵌媒体元数据并受控保留临时源 Excel；公式引用缺图、类型不支持或单图超限时该行不通过；只有 Confirm 的通过行才逐张流式提取媒体至相对本地目录，正式 Product 仅保存站内相对图片引用
-- [x] 含 `DISPIMG` 的预览在写入临时源文件后显式异步加载暂存行和供应商匹配，避免延迟加载触发 `MissingGreenlet` 并造成预览 500
+- [x] 预览校验 WPS/Excel `DISPIMG` 引用和内嵌媒体元数据并临时保存源 Excel；公式引用缺图、类型不支持或单图超限时该行不通过；只有 Confirm 的通过行才逐张流式提取媒体至相对本地目录，正式 Product 仅保存站内相对图片引用
+- [x] Confirm 成功后立即删除临时源 Excel；关闭预览弹窗会调用 discard 接口将任务标记为 `EXPIRED` 并立即删除，异常关闭时保留 24 小时兜底清理
 - [x] 供应商仅按冻结的标准化精确匹配；支持从当前有效 Supplier Master 手动解析
 - [x] `POST /api/v1/products/imports/preview`、`GET /api/v1/products/imports/{task_id}`、`GET /api/v1/products/imports/supplier-candidates`、`POST /api/v1/products/imports/{task_id}/supplier-matches/{match_id}/resolve`、`POST /api/v1/products/imports/{task_id}/confirm`
 - [x] Confirm 锁定任务并重新校验有效来源供应商；当前通过且尚未导入的行作为一次单事务写入 `scm_product`
@@ -29,7 +29,7 @@ Last Updated：2026-09-18
 - [x] Confirm 不再使用 50MB 全工作簿图片累计上限；每次只解码和保存一张图片，浏览器不直接支持的 TIFF/EMF/BMP/WMF 转为 PNG，单图上限由 `PRODUCT_IMPORT_MAX_IMAGE_MB` 配置（默认 64MB）
 
 ## Frontend
-- [x] 商品主数据页提供模板下载、Excel 上传、通过/更新/不通过/已处理行预览筛选、供应商解析和“确认新增/更新”入口
+- [x] 商品主数据页可直接 Confirm；关闭预览弹窗会释放该任务的临时 Excel
 - [x] 导入行明细按状态服务端分页，每页 50 行，避免 4,000+ 行一次返回和渲染
 
 ## Permissions
@@ -43,7 +43,7 @@ Last Updated：2026-09-18
 ## Known Issues
 - 三级类目文本来自固定模板并直接保存到 Product；商品导入不再要求匹配类目维表。
 - 2026-09-10 对用户提供的 50 行模板进行了事务回滚预检：34 行通过，16 行因供应商为空或未解析而未通过；预检未保留任何暂存或正式数据。
-- `20260914_0023` 后，新预览不再生成商品图片文件；预览表显示“确认后保存”。临时源 Excel 在全量 Confirm 后立即删除；每次新预览会清理超过 `PRODUCT_IMPORT_UNCONFIRMED_RETENTION_DAYS`（默认 7 天）的未完成/部分确认任务的源文件和未导入行媒体，过期任务不可继续确认。已导入 Product 的图片绝不属于此清理范围。
+- 临时源 Excel 仅用于当前导入任务：Confirm 成功或用户关闭预览后立即删除；浏览器异常关闭、断网或进程中断时，超过 `PRODUCT_IMPORT_UNCONFIRMED_RETENTION_DAYS=1` 的任务在下一次导入操作中会过期并清理。已导入 Product 的图片绝不属于临时文件清理范围。
 - 本次图片流式修复不回填历史 Product，也不扫描或改写既有 `image_reference`；须重新上传并 Confirm 才应用新逻辑。
 - 升级到 `20260918_0033` 前已生成的未确认更新任务没有 Product 版本快照，必须重新上传预览后再确认。
 

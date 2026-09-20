@@ -421,6 +421,22 @@ async function confirmImport(): Promise<void> {
   }
 }
 
+async function discardImportPreview(): Promise<void> {
+  const taskId = importPreview.value?.id
+  importPreview.value = undefined
+  supplierCandidates.value = []
+  if (!taskId) return
+  try {
+    await productApi.discardImport(taskId)
+  } catch (error) {
+    ElMessage.warning(
+      error instanceof HttpError
+        ? `临时 Excel 未能立即删除：${error.response.message}`
+        : "临时 Excel 未能立即删除，系统将在 24 小时兜底清理",
+    )
+  }
+}
+
 async function disableProduct(product: ProductListItem): Promise<void> {
   try {
     await ElMessageBox.confirm(
@@ -683,6 +699,7 @@ onMounted(() => { void loadProducts() })
       title="商品主数据 Excel 导入预览"
       width="min(1120px, 96vw)"
       :close-on-click-modal="false"
+      @closed="discardImportPreview"
     >
       <template v-if="importPreview">
         <el-alert :type="importPreview.valid_rows > 0 ? 'success' : 'warning'" :closable="false" show-icon>

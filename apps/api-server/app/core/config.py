@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     task_mode: str = "inline"
     storage_mode: str = "local"
     local_storage_path: Path = Path("local-data/files")
-    product_import_unconfirmed_retention_days: int = 7
+    product_import_unconfirmed_retention_days: int = 1
     product_import_max_file_mb: int = 1024
     product_import_max_rows: int = 100_000
     product_import_max_concurrent_workbooks: int = 1

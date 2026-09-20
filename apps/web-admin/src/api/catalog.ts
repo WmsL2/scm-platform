@@ -132,4 +132,8 @@ export const productApi = {
       { timeoutMs: 900_000 },
     )
   },
+
+  discardImport(taskId: string): Promise<{ id: string; status: "EXPIRED" }> {
+    return http.post<{ id: string; status: "EXPIRED" }>(path(`/imports/${taskId}/discard`))
+  },
 }

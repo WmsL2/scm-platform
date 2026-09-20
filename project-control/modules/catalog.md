@@ -1,8 +1,8 @@
 # 商品主数据 / Catalog
 
-状态：IMPLEMENTED / PRODUCT_MASTER_CATEGORY_DECOUPLED / PRODUCT_IMPORT_SAFETY_CONCURRENCY
-Owner：feat/product-import-safety-concurrency
-Last Updated：2026-09-18
+状态：IMPLEMENTED / PRODUCT_MASTER_CATEGORY_DECOUPLED / PRODUCT_IMPORT_SAFETY_CONCURRENCY / TEMPORARY_SOURCE_RETENTION
+Owner：feat/product-import-confirm-reupload
+Last Updated：2026-09-20
 
 ## Database
 - [x] `20260909_0008` / `20260909_0009` 创建并对齐 `scm_category` 与 `scm_product`
@@ -34,7 +34,7 @@ Last Updated：2026-09-18
 - [x] 仅已停用 Product 可永久删除；删除前写入最小审计并依赖事务及外键保护，永久删除后同键可重新导入为新商品
 - [x] Product Import 对同来源供应商 + SKU 的正常商品标记为更新候选并在 Confirm 原子覆盖固定模板字段；停用商品仍报错并阻止 Confirm
 - [x] 同键更新保留供应商与 SKU，其他 41 列按 Excel 覆盖且空值清空；成功提交后清理被替换的旧本地图片
-- [x] 商品大表使用分块上传、临时文件和只读路径解析，默认允许 1GB / 100,000 行；`DISPIMG` 临时源文件保存与 Confirm 图片提取均避免整份工作簿读入内存；Confirm 逐张流式解码和落盘，不设全工作簿图片累计上限
+- [x] 商品大表使用分块上传、临时文件和只读路径解析，默认允许 1GB / 100,000 行；含图预览临时保存源 Excel，Confirm 逐张流式解码和落盘，不设全工作簿图片累计上限
 - [x] `DISPIMG` 引用缺图、不支持或单图超过 `PRODUCT_IMPORT_MAX_IMAGE_MB`（默认 64MB）时行校验失败；TIFF/EMF/BMP/WMF 在保存前转为 PNG，避免正式 Product 指向浏览器无法显示的媒体
 - [x] 商品导入表头校验兼容 Excel/WPS 末尾空白格式列；只允许批准的 43 个非空表头
 - [x] 商品导入在预览阶段完成 Decimal/Pydantic 标准化；Confirm 批量锁定引用并校验 Product 版本，阻止不同任务对同供应商 + SKU 的静默覆盖
@@ -45,6 +45,7 @@ Last Updated：2026-09-18
 - [x] 商品列表筛选支持一级、二级、三级类目直接搜索和多选；候选项来自可见 Product Master 路径，选择三级时自动回显对应一级、二级，选择二级时自动回显一级。页面首次进入不加载完整类目表，聚焦或搜索时远程获取每层最多 50 个选项；下拉滚动接近底部即自动继续读取下一批，并保留到底事件作为后备，更换关键词会重置结果。直接选择项按层级组成 OR 查询。商品编辑页使用三个必填、可输入且 Product Master 候选联动的类目文本字段。列表提供常用/高级可输入筛选和浏览器本地自定义列，详情和编辑覆盖 43 列业务字段，供应商/SKU 只读，图片通过文件上传维护
 - [x] 导入预览显示已导入、已更新、通过、新增更新候选和不通过行，支持“更新”筛选并展示更新字段；商品页可下载批准的原始 43 列模板
 - [x] 4,000+ 行导入预览使用每页 50 行的服务端分页，不再把全部行发送到浏览器
+- [x] 关闭商品导入预览会调用 discard 接口，立即删除临时源 Excel 并作废任务；未关闭但 24 小时未完成的任务由下一次导入操作兜底过期清理
 - [x] 商品列表支持正常/已停用状态筛选、停用/启用和 SKU/名称二次确认的永久删除；页面保留普通纵向滚动，左侧导航固定于视口左侧
 - [x] 统一 API 请求禁用浏览器缓存，商品导入 Confirm 后重新加载列表可立即读取最新商品数据
 - [x] 商品主数据增加“商品列表 / 操作记录”可切换页签；操作记录按商品展示图片、导入人、导入时间、最后更新人和最后更新时间，用户名从既有 `created_by` / `updated_by` 解析，未新增审计表

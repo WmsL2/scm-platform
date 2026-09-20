@@ -25,6 +25,8 @@ Sprint 1 — Auth/RBAC + Supplier
 
 商品导入数值安全、4,000+ 行分页与并发确认保护已在分支 `feat/product-import-safety-concurrency` 实现；Revision `20260918_0033` 为暂存行增加标准化值和 Product 版本快照，Revision `20260918_0034` 将六个正式价格字段扩展为 `DECIMAL(65,30)` 以无损保存 Excel 价格原值。Confirm 以供应商 + SKU 锁及版本冲突返回 409，重型工作簿操作默认每 API 进程并发 1。内嵌图片改为 Confirm 时逐张流式解码与保存，移除旧 50MB 累计截断；TIFF/EMF 等转 PNG，公式缺图或坏图按行阻止确认，单图默认上限 64MB（ADR-0029，无 Migration）。历史商品图片不自动回填，重新导入后生效。
 
+商品导入临时源 Excel 24 小时保留已在分支 `feat/product-import-confirm-reupload` 实现：含 `DISPIMG` 的预览暂存源文件，Confirm 成功后立即删除；关闭预览弹窗调用 discard 接口作废任务并立即删除。浏览器异常关闭、断网或进程中断时，未完成任务在后续导入操作中按 24 小时边界过期清理；无内嵌图片任务不保存源文件（ADR-0031，无 Migration）。
+
 真实 4,000+ 行 Confirm 的浏览器等待时间已设为 15 分钟；正式 Product 的供应商 + SKU 查询和锁定按稳定顺序每 500 组分批，避免 MySQL 默认 `range_optimizer_max_mem_size=8MB` 对超大复合 `IN` 查询的警告，仍保持单次 Confirm 的事务原子性和并发保护（无 Migration）。
 
 投标项目核心已在分支 `feat/bid-project-core` 实现：新增唯一 Migration `20260915_0024`，包含项目、模板、文件版本、需求行、事件、匹配和人工选品共享表，项目编号序列及投标权限。项目创建、ORIGINAL 保存、模板指纹识别、分页查询、文件下载、报价版本、提交和结果接口已完成；真实买家 Excel 尚未提供，因此当前不预置客户模板或报价列。2 号匹配和 3 号前端可在本结构上并行开发。

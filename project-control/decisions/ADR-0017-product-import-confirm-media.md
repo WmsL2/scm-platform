@@ -10,9 +10,9 @@
 ## Decision
 
 - 预览仅检测 `DISPIMG` 公式，不写入商品图片；前端显示“确认后保存”。
-- 有公式图片的预览任务仅保存受控的临时源 Excel 键 `source_file_storage_key`，用于供应商人工解析后继续 Confirm；它不是正式 Product 图片引用。
+- 有公式图片的预览任务保存受控的临时源 Excel 键 `source_file_storage_key`，用于供应商人工解析后继续 Confirm；它不是正式 Product 图片引用。
 - Confirm 通过所有业务复核后，只为本次实际写入 `scm_product` 的通过行提取并保存图片；正式 Product 继续只保存 `local-media/<storage-key>` 相对引用。
-- 全部行 Confirm 后立即删除临时源 Excel。每次新预览会清理超过 `PRODUCT_IMPORT_UNCONFIRMED_RETENTION_DAYS`（默认 7 天）的未完成或部分确认任务：任务改为 `EXPIRED`，只删除其临时源文件和未导入行媒体。
+- 全部行 Confirm 后立即删除临时源 Excel。关闭预览时作废任务并立即删除；异常关闭时，超过 `PRODUCT_IMPORT_UNCONFIRMED_RETENTION_DAYS`（默认 1 天）的未完成或部分确认任务在后续导入操作中改为 `EXPIRED`，清理临时源文件和未导入行媒体。
 - 清理不得按目录通配符执行；必须由 Task/Row 的精确 storage key 驱动。任何已导入行及其 `scm_product.image_reference` 对应媒体均不得删除。
 
 ## Consequences
