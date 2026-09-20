@@ -209,6 +209,24 @@ async def test_product_api_lists_details_and_updates_cost_independently() -> Non
             assert invalid_range.status_code == 422
             assert invalid_range.json()["code"] == "PRODUCT_FILTER_RANGE_INVALID"
 
+            assert (
+                await client.get(
+                    "/api/v1/products?discount_rate_min=1&discount_rate_max=2",
+                    headers=headers,
+                )
+            ).status_code == 200
+            assert (
+                await client.get(
+                    "/api/v1/products?discount_rate_min=-1&discount_rate_max=0",
+                    headers=headers,
+                )
+            ).status_code == 200
+            invalid_discount_range = await client.get(
+                "/api/v1/products?discount_rate_min=2&discount_rate_max=1", headers=headers
+            )
+            assert invalid_discount_range.status_code == 422
+            assert invalid_discount_range.json()["code"] == "PRODUCT_FILTER_RANGE_INVALID"
+
             supplier_products = await client.get(
                 f"/api/v1/products?source_supplier_id={supplier_id}", headers=headers
             )
@@ -528,6 +546,31 @@ async def test_product_editing_and_supplier_lifecycle_visibility() -> None:
             assert edited.json()["data"]["product_name"] == "已编辑商品"
             assert edited.json()["data"]["sku"] == "SKU-1"
             assert edited.json()["data"]["cost_price"] == "100.0000"
+
+            above_one = await client.patch(
+                f"/api/v1/products/{product_id}",
+                headers=headers,
+                json={
+                    "discount_rate": "1.2000",
+                    "category_level1_name": "手工一级",
+                    "category_level2_name": "手工二级",
+                    "category_level3_name": "手工三级",
+                },
+            )
+            assert above_one.status_code == 200
+            assert above_one.json()["data"]["discount_rate"] == "1.2000"
+            below_zero = await client.patch(
+                f"/api/v1/products/{product_id}",
+                headers=headers,
+                json={
+                    "discount_rate": "-0.2000",
+                    "category_level1_name": "手工一级",
+                    "category_level2_name": "手工二级",
+                    "category_level3_name": "手工三级",
+                },
+            )
+            assert below_zero.status_code == 200
+            assert below_zero.json()["data"]["discount_rate"] == "-0.2000"
 
             immutable_key_edit = await client.patch(
                 f"/api/v1/products/{product_id}",

@@ -18,6 +18,7 @@ Last Updated：2026-09-20
 - [x] `20260918_0031` 增加状态与三级类目路径的 Product Master 筛选索引（类目文本使用 128 字符索引前缀）
 - [x] `20260918_0033` 增加导入行标准化正式值及 Product 乐观并发快照
 - [x] `20260918_0034` 将六个正式价格字段扩展为 `DECIMAL(65,30)`，保留 Excel 价格原值；`20260920_0035` 将 `cost_price` 调整为可空
+- [x] `discount_rate` 取消 `0..1` 业务范围限制，仍为可空 `DECIMAL(9,4)`；好评率和 Category 扣点率范围保持不变（ADR-0032）
 - [x] 未创建独立 Supplier Product Quote 表或报价历史表
 
 ## Backend
