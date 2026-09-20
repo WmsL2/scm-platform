@@ -92,3 +92,28 @@ Last Updated：2026-09-20
 ## Current Gate
 
 `IMPLEMENTED / PRODUCT_MASTER_CATEGORY_DECOUPLED`：批准模板保持固定 43 列；仅 SKU 与合格供应商必填，其他 41 列可为空并覆盖清空旧值。组合筛选、Product Master 类目多选与父级回显已实现；类目候选按层级兼容部分路径。供应商空或不合格以及停用同键商品仍不得绕过导入校验；Category Master 的不存在、停用或重复不阻止商品入库。
+
+## 2026-09-20 Product Master 自选商品 / 自选字段 Excel 导出
+
+已完成：
+
+- 商品列表支持跨页选择商品
+- 支持选择固定 43 个商品主数据字段导出 Excel
+- 导出字段选择界面显示中文字段名，提交后端仍使用英文 canonical key
+- 导出 Excel 支持系统托管商品图片真实嵌入
+- 图片缺失或损坏不会导致整批导出失败
+- 导出继续复用 `product:list`
+- 单次最多导出 5000 个商品
+- 未新增 Migration
+- 未新增 Permission
+- Product Import 固定 43 列契约保持不变
+
+验证结果：
+
+- Backend full pytest: 200 passed
+- Catalog tests: 63 passed
+- Frontend tests: 93 passed
+- Ruff: passed
+- mypy: passed
+- Frontend typecheck: passed
+- Frontend build: passed
