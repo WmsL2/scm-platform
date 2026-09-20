@@ -6,6 +6,7 @@ vi.mock("../shared/http/runtime", () => ({ http }))
 describe("product import api", () => {
   afterEach(() => {
     http.get.mockReset()
+    http.getBlob.mockReset()
     http.post.mockReset()
     http.patch.mockReset()
     http.delete.mockReset()
@@ -23,6 +24,7 @@ describe("product import api", () => {
 
     await productApi.previewImport(file)
     await productApi.downloadImportTemplate()
+    await productApi.exportFailedImportRows("task-1")
     await productApi.getImportPreview("task-1", {
       page: 1,
       page_size: 50,
@@ -40,6 +42,10 @@ describe("product import api", () => {
     )
     expect(http.get).toHaveBeenCalledWith("/api/v1/products/imports/supplier-candidates")
     expect(http.getBlob).toHaveBeenCalledWith("/api/v1/products/imports/template")
+    expect(http.getBlob).toHaveBeenCalledWith(
+      "/api/v1/products/imports/task-1/failed-rows",
+      { timeoutMs: 900_000 },
+    )
     expect(http.get).toHaveBeenCalledWith(
       "/api/v1/products/imports/task-1?page=1&page_size=50&row_status=ALL",
     )

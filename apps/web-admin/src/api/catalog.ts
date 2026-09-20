@@ -99,6 +99,10 @@ export const productApi = {
     return http.getBlob(path("/imports/template"))
   },
 
+  exportFailedImportRows(taskId: string): Promise<Blob> {
+    return http.getBlob(path(`/imports/${taskId}/failed-rows`), { timeoutMs: 900_000 })
+  },
+
   getImportPreview(
     taskId: string,
     params: {
