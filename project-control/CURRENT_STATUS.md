@@ -82,4 +82,5 @@ Sprint 1 — Auth/RBAC + Supplier
 - Product Operator Display：商品主数据已增加“操作记录”页签，复用正式 Product 列表和分页，显示既有 `created_by` / `created_at` / `updated_by` / `updated_at` 所表达的导入人、导入时间、最后更新人和最后更新时间；接口批量解析历史用户名，不新增表或 Migration。
 - Bid Matching / Task 2-3：PR #46 已提供投标共享 Schema 后，匹配任务、候选持久化、Top 20 可解释候选、人工选品不可变快照、无报价与四个受权限保护的 API 已完成。Task 3 已实现 Web 项目列表、创建、详情、文件版本和服务端分页匹配工作台；候选按需加载且历史展示不可变快照。项目业务开始时间 `start_at` 与审计 `created_at` 已分离。基础信息可由 `bid:update` 在允许状态编辑；删除采用 `bid:void` 业务作废，`VOIDED` 为历史保留终态（Revisions `20260916_0025`、`20260916_0026`、`20260916_0027`）。真实 API 浏览器验收仍等待已识别 BidTemplate，Template Management 仍为后续任务。
 - Web Admin Data Refresh：统一 API 客户端已设置 `cache: no-store`；新增、编辑、删除和导入确认后的页面重新加载不会复用浏览器中的旧 GET 响应，前端测试、类型检查和生产构建已验证。
+- Web Admin LAN HTTP：统一 HTTP 客户端的请求 ID 在普通 HTTP 局域网 IP 的非安全浏览器上下文中可回退生成，避免 `crypto.randomUUID()` 不可用而在 `fetch` 前中断登录等 API 调用；该回退不用于认证或安全令牌。
 - Category Management：基于既有 `scm_category` 三级维表补齐列表、详情、新增、编辑、删除、启用选择和 Excel 导入；商品不再引用该表，删除不再因 Product 被阻止。

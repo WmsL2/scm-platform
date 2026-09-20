@@ -27,6 +27,8 @@
 - [x] 路由登录守卫、权限码守卫、401/403 统一处理。
 - [x] 企业后台 Layout、工作台、工作区 Tab、403、404。
 - [x] HTTP GET/POST/PATCH/DELETE、request ID、Bearer Token 和统一错误处理。
+- [x] 普通 HTTP 局域网 IP 访问时，request ID 在浏览器不提供 `crypto.randomUUID()`
+  的非安全上下文中使用受控回退；该 ID 仅用于请求/日志关联，不承担认证职责。
 - [x] 受保护请求 401 共享单次刷新并只重试一次；刷新失败才触发统一退出流程。
 - [x] 前端单元测试、typecheck 和 build。
 - [x] 开发环境显式设置 `VITE_USE_MOCK=false`，并验证真实 API 路径调用

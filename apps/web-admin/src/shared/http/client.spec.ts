@@ -14,6 +14,7 @@ function response(status: number, body: unknown): Response {
 describe("HttpClient", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it("adds authorization, request ID and serializes JSON", async () => {
@@ -64,6 +65,25 @@ describe("HttpClient", () => {
 
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit
     expect(requestInit.headers).not.toHaveProperty("Authorization")
+  })
+
+  it("falls back to a request ID when randomUUID is unavailable on a LAN HTTP page", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response(200, {
+      code: "OK",
+      message: "success",
+      data: { status: "ok" },
+    }))
+    vi.stubGlobal("fetch", fetchMock)
+    vi.stubGlobal("crypto", {})
+
+    await new HttpClient({ baseUrl: "http://192.168.2.250:8000" }).post(
+      "/public",
+      {},
+      { authenticated: false },
+    )
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(requestInit.headers).toHaveProperty("X-Request-ID", expect.stringMatching(/^request-/))
   })
 
   it("notifies the application and throws a typed error on 401", async () => {
