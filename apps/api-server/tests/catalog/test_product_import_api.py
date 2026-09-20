@@ -8,7 +8,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pytest
 from fastapi import UploadFile
 from httpx import ASGITransport, AsyncClient
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill
 from openpyxl.utils import get_column_letter
 from PIL import Image
@@ -18,6 +18,7 @@ from app.core.database import SessionLocal
 from app.main import app
 from app.modules.auth.security import create_token, hash_password
 from app.modules.catalog.api.router import (
+    PRODUCT_IMPORT_TEMPLATE_PATH,
     PRODUCT_IMPORT_UPLOAD_CHUNK_BYTES,
     _stage_product_import_upload,
 )
@@ -1474,6 +1475,120 @@ async def test_product_import_preview_rows_are_server_paginated() -> None:
             assert page_data["rows"][0]["source_row_number"] == 102
     finally:
         await _cleanup_import_data(supplier_id, user_id, (category_id,))
+        await _cleanup_import_user(user_id)
+
+
+async def test_product_import_exports_failed_rows_as_reusable_approved_workbook() -> None:
+    user_id, headers = await _create_import_user()
+    unused_supplier_id = uuid.uuid4()
+    workbook = _with_wps_cell_image(
+        _workbook_bytes(
+            "未知供应商",
+            "另一个未知供应商",
+            image_value='=_xlfn.DISPIMG("ID_PRODUCT",1)',
+        )
+    )
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "failed-products.xlsx",
+                        workbook,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert preview.status_code == 200
+            task_id = preview.json()["data"]["id"]
+            assert preview.json()["data"]["invalid_rows"] == 2
+
+            exported = await client.get(
+                f"/api/v1/products/imports/{task_id}/failed-rows",
+                headers=headers,
+            )
+            assert exported.status_code == 200
+            assert exported.headers["content-type"].startswith(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+            exported_workbook = load_workbook(BytesIO(exported.content), data_only=False)
+            exported_sheet = exported_workbook["Sheet1"]
+            template_workbook = load_workbook(PRODUCT_IMPORT_TEMPLATE_PATH, data_only=False)
+            template_sheet = template_workbook["Sheet1"]
+            assert tuple(cell.value for cell in exported_sheet[1]) == PRODUCT_IMPORT_HEADERS
+            assert exported_sheet.max_row == 3
+            assert (
+                exported_sheet.row_dimensions[1].height
+                == template_sheet.row_dimensions[1].height
+            )
+            assert (
+                exported_sheet.row_dimensions[2].height
+                == template_sheet.row_dimensions[2].height
+            )
+            for column in range(1, len(PRODUCT_IMPORT_HEADERS) + 1):
+                assert (
+                    exported_sheet.cell(1, column)._style
+                    == template_sheet.cell(1, column)._style
+                )
+                assert (
+                    exported_sheet.cell(2, column)._style
+                    == template_sheet.cell(2, column)._style
+                )
+                assert (
+                    exported_sheet.cell(3, column)._style
+                    == template_sheet.cell(2, column)._style
+                )
+                letter = get_column_letter(column)
+                assert exported_sheet.column_dimensions[letter].width == (
+                    template_sheet.column_dimensions[letter].width
+                )
+            assert exported_sheet.cell(2, PRODUCT_IMPORT_HEADERS.index("sku") + 1).value == (
+                "SKU-1"
+            )
+            assert exported_sheet.cell(2, PRODUCT_IMPORT_HEADERS.index("供应商") + 1).value == (
+                "未知供应商"
+            )
+            assert "DISPIMG" in str(
+                exported_sheet.cell(2, PRODUCT_IMPORT_HEADERS.index("图片") + 1).value
+            )
+            assert exported_workbook["错误说明"]["B2"].value == 2
+            assert "供应商" in str(exported_workbook["错误说明"]["C2"].value)
+            template_workbook.close()
+            exported_workbook.close()
+
+            with ZipFile(BytesIO(exported.content)) as archive:
+                assert "xl/cellimages.xml" in archive.namelist()
+                assert "xl/_rels/cellimages.xml.rels" in archive.namelist()
+                assert any(name.startswith("xl/media/") for name in archive.namelist())
+
+            repeated_preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "failed-products-retry.xlsx",
+                        exported.content,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert repeated_preview.status_code == 200
+            repeated_data = repeated_preview.json()["data"]
+            assert repeated_data["total_rows"] == 2
+            assert repeated_data["invalid_rows"] == 2
+            assert "图片" not in repeated_data["rows"][0]["error_message"]
+
+            for preview_id in (task_id, repeated_data["id"]):
+                discarded = await client.post(
+                    f"/api/v1/products/imports/{preview_id}/discard",
+                    headers=headers,
+                )
+                assert discarded.status_code == 200
+    finally:
+        await _cleanup_import_data(unused_supplier_id, user_id, ())
         await _cleanup_import_user(user_id)
 
 

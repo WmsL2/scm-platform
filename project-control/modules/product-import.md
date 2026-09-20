@@ -1,7 +1,7 @@
 # 商品大表导入
 
-状态：IMPLEMENTED / PRODUCT_MASTER_2026_43_COLUMNS / NULLABLE_NUMERIC_FIELDS / TEMPORARY_SOURCE_RETENTION
-Owner：feat/product-import-confirm-reupload
+状态：IMPLEMENTED / PRODUCT_MASTER_2026_43_COLUMNS / FAILED_ROWS_EXPORT
+Owner：feat/product-import-failed-rows-export
 Last Updated：2026-09-20
 
 ## Database
@@ -19,6 +19,8 @@ Last Updated：2026-09-20
 - [x] `POST /api/v1/products/imports/preview`、`GET /api/v1/products/imports/{task_id}`、`GET /api/v1/products/imports/supplier-candidates`、`POST /api/v1/products/imports/{task_id}/supplier-matches/{match_id}/resolve`、`POST /api/v1/products/imports/{task_id}/confirm`
 - [x] Confirm 锁定任务并重新校验有效来源供应商；当前通过且尚未导入的行作为一次单事务写入 `scm_product`
 - [x] `GET /api/v1/products/imports/template` 下载批准的原始 43 列模板
+- [x] `GET /api/v1/products/imports/{task_id}/failed-rows` 按上传者导出全部未处理的不通过行；直接加载商品主数据下载所用的正式模板并保留表头、字体、颜色、列宽、行高和单元格格式，从第 2 行填入原值；第二工作表记录原 Excel 行号与错误原因，可修正后直接重新上传
+- [x] 失败行导出会把公式随紧凑行号平移；对仍保留临时源文件的 `DISPIMG` 工作簿，只复制失败行实际引用的 WPS 内嵌图片，不把整本大表的无关媒体带入导出文件
 - [x] 同来源供应商 + SKU 命中停用 Product 时按行报错并阻止 Confirm；不隐式恢复或覆盖，永久删除后才可作为新商品导入
 - [x] 同来源供应商 + SKU 命中正常 Product 时按行标识为更新，并在 Confirm 保留 ID/创建审计/状态的前提下原子覆盖固定模板字段；记录变更字段供预览和确认后查看
 - [x] 供应商与 SKU 在同键更新中不可修改；其余 41 列全部覆盖，空单元格清空旧值，成功提交后删除被替换的旧本地图片
@@ -32,6 +34,7 @@ Last Updated：2026-09-20
 
 ## Frontend
 - [x] 商品主数据页可直接 Confirm；关闭预览弹窗会释放该任务的临时 Excel
+- [x] 预览存在不通过行时显示“导出不通过数据”按钮，并按失败行数量生成修正工作簿
 - [x] 导入行明细按状态服务端分页，每页 50 行，避免 4,000+ 行一次返回和渲染
 
 ## Permissions
@@ -40,6 +43,7 @@ Last Updated：2026-09-20
 
 ## Tests
 - [x] API 集成测试覆盖未匹配预览、精确匹配和 Confirm 写入 `source_supplier_id`
+- [x] 回归测试覆盖带 WPS `DISPIMG` 的失败行导出、43 列模板、错误说明及导出文件重新预览
 - [x] 全量后端测试、前端类型检查、单元测试与构建已执行
 
 ## Known Issues

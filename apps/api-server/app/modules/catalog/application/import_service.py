@@ -28,6 +28,7 @@ from app.modules.catalog.application.excel_images import (
     dispimg_image_id,
     inspect_dispimg_references,
 )
+from app.modules.catalog.application.failed_rows_export import export_failed_rows_workbook
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import (
     Product,
@@ -300,6 +301,60 @@ class ProductImportService:
             )
             for supplier in suppliers
         ]
+
+    async def export_failed_rows(
+        self,
+        task_id: uuid.UUID,
+        actor_id: uuid.UUID,
+    ) -> tuple[Path, str]:
+        task = await self.repository.import_task_summary_by_id(task_id)
+        if task is None:
+            raise AppError("PRODUCT_IMPORT_TASK_NOT_FOUND", "Import task not found", 404)
+        self._assert_viewable_task(task, actor_id)
+        rows = await self.repository.failed_import_rows(task_id)
+        if not rows:
+            raise AppError(
+                "PRODUCT_IMPORT_NO_FAILED_ROWS",
+                "There are no failed rows available to export",
+                409,
+            )
+
+        output_file = NamedTemporaryFile(
+            prefix="scm-product-import-failed-", suffix=".xlsx", delete=False
+        )
+        output_path = Path(output_file.name)
+        output_file.close()
+        source_path: Path | None = None
+        try:
+            failed_rows_have_embedded_images = any(
+                dispimg_image_id(row.source_data.get("图片")) is not None for row in rows
+            )
+            if task.source_file_storage_key and failed_rows_have_embedded_images:
+                source_file = NamedTemporaryFile(
+                    prefix="scm-product-import-source-", suffix=".xlsx", delete=False
+                )
+                source_path = Path(source_file.name)
+                source_file.close()
+                try:
+                    await self.storage.copy_to(task.source_file_storage_key, source_path)
+                except FileNotFoundError:
+                    source_path.unlink(missing_ok=True)
+                    source_path = None
+            await asyncio.to_thread(
+                export_failed_rows_workbook,
+                PRODUCT_IMPORT_HEADERS,
+                rows,
+                output_path,
+                source_path,
+            )
+            original_stem = Path(task.original_filename).stem[:160] or "商品大表"
+            return output_path, f"{original_stem}-不通过行.xlsx"
+        except Exception:
+            output_path.unlink(missing_ok=True)
+            raise
+        finally:
+            if source_path is not None:
+                source_path.unlink(missing_ok=True)
 
     async def resolve_supplier(
         self,
