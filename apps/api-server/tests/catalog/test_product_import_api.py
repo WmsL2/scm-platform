@@ -799,7 +799,7 @@ async def test_product_import_rejects_formula_when_embedded_image_is_missing() -
         ("京东价毛利（30-50）", "jd_margin", "0.17240000000000002", "0.1724"),
         ("扣点复核", "deduction_review", "0.05000000000000001", "0.0500"),
         ("毛利率", "gross_margin", "0.08630000000000002", "0.0863"),
-        ("折扣率", "discount_rate", "0.8887999999999999", "0.8888"),
+        ("折扣率", "discount_rate", "1.2000000000000002", "1.2000"),
         ("价格虚高比例", "price_inflation_rate", "-0.11120000000000001", "-0.1112"),
     ],
 )
@@ -1175,6 +1175,67 @@ async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_tex
             assert direct_tail_product is not None
             assert direct_tail_product.profit == Decimal("12.3457")
             assert direct_tail_product.market_price == Decimal("100.123456789012345")
+    finally:
+        await _cleanup_import_data(supplier_id, user_id, (category_id,))
+        await _cleanup_import_user(user_id)
+
+
+async def test_product_import_accepts_unbounded_discount_rates() -> None:
+    user_id, headers = await _create_import_user()
+    supplier_id, category_id = await _create_references()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            for sku, rate, expected in (
+                ("SKU-DISCOUNT-OVER", "120%", Decimal("1.2000")),
+                ("SKU-DISCOUNT-NEGATIVE", "-20%", Decimal("-0.2000")),
+                ("SKU-DISCOUNT-NULL", "暂无", None),
+            ):
+                preview = await client.post(
+                    "/api/v1/products/imports/preview",
+                    headers=headers,
+                    files={
+                        "file": (
+                            f"{sku}.xlsx",
+                            _workbook_bytes(
+                                "导入测试供应商",
+                                sku_override=sku,
+                                value_overrides={"折扣率": rate},
+                            ),
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+                    },
+                )
+                assert preview.status_code == 200
+                data = preview.json()["data"]
+                assert data["rows"][0]["is_valid"] is True
+                confirmed = await client.post(
+                    f"/api/v1/products/imports/{data['id']}/confirm", headers=headers
+                )
+                assert confirmed.status_code == 200
+                async with SessionLocal() as session:
+                    product = await session.scalar(select(Product).where(Product.sku == sku))
+                    assert product is not None
+                    assert product.discount_rate == expected
+
+            positive_rating_preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "invalid-positive-rating.xlsx",
+                        _workbook_bytes(
+                            "导入测试供应商",
+                            sku_override="SKU-POSITIVE-RATING-OVER",
+                            value_overrides={"好评率": "120%"},
+                        ),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert positive_rating_preview.status_code == 200
+            row = positive_rating_preview.json()["data"]["rows"][0]
+            assert row["is_valid"] is False
+            assert "好评率必须在0%到100%之间" in row["error_message"]
     finally:
         await _cleanup_import_data(supplier_id, user_id, (category_id,))
         await _cleanup_import_user(user_id)

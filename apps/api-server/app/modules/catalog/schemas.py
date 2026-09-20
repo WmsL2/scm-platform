@@ -290,7 +290,7 @@ class ProductUpdateRequest(BaseModel):
     packaging_list: str | None = None
     warranty_period: str | None = Field(default=None, max_length=255)
     remark: str | None = None
-    discount_rate: Decimal | None = Field(default=None, ge=0, le=1, max_digits=9, decimal_places=4)
+    discount_rate: Decimal | None = Field(default=None, max_digits=9, decimal_places=4)
     restricted_regions: str | None = None
     jd_self_operated_price: Decimal | None = Field(
         default=None, max_digits=65, decimal_places=30
