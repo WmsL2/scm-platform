@@ -54,7 +54,7 @@ Last Updated：2026-09-17
 | 33 | 参考链接 | `reference_url` | `VARCHAR(2048)` | 普通链接文本 |
 | 34 | 销量 | `sales_volume` | `BIGINT` | 可空；整数且大于等于 0 |
 | 35 | 好评率 | `positive_rating` | `DECIMAL(9,4)` | `0..1`；支持 `0.95` / `95%`，拒绝裸数字 `95` |
-| 36 | 折扣率 | `discount_rate` | `DECIMAL(9,4)` | `0..1`；支持 `0.95` / `95%`，拒绝裸数字 `95` |
+| 36 | 折扣率 | `discount_rate` | `DECIMAL(9,4)` | 不设业务范围限制；支持 `0.95` / `95%`，负值及大于 1 均允许，拒绝裸数字 `95` |
 | 37 | 价格虚高比例 | `price_inflation_rate` | `DECIMAL(9,4)` | 原“价格虚高比例（30%)”；支持 `0.4625` / `46.25%` |
 | 38 | 税收编码 | `tax_code` | `VARCHAR(255)` | 普通文本 |
 | 39 | 开票名称 | `invoice_name` | `VARCHAR(512)` | 普通文本 |

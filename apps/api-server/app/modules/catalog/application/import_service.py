@@ -790,12 +790,11 @@ class ProductImportService:
         for header in _DIRECT_DECIMAL_HEADERS:
             if header == "成本价":
                 continue
-        for header in ("好评率", "折扣率"):
-            rate_value = self._decimal_or_none(
-                self._import_value(row, header), percentage=True
-            )
-            if rate_value is not None and not Decimal("0") <= rate_value <= Decimal("1"):
-                errors.append(f"{header}必须在0%到100%之间，裸数字请填写0到1")
+        positive_rating = self._decimal_or_none(
+            self._import_value(row, "好评率"), percentage=True
+        )
+        if positive_rating is not None and not Decimal("0") <= positive_rating <= Decimal("1"):
+            errors.append("好评率必须在0%到100%之间，裸数字请填写0到1")
         sales_value = self._optional(self._import_value(row, "销量"))
         parsed_sales_value = self._integer_or_none(sales_value)
         if parsed_sales_value is not None and parsed_sales_value < 0:
