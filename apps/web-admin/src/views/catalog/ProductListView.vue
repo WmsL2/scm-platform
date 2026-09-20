@@ -124,6 +124,7 @@ const supplierCandidates = ref<ProductImportSupplierCandidate[]>([])
 const selections = reactive<Record<string, string>>({})
 const importRowFilter = ref<"ALL" | "PASSED" | "FAILED" | "UPDATE">("ALL")
 const importRowsLoading = ref(false)
+const failedRowsExporting = ref(false)
 const activeTab = ref<"products" | "audit">("products")
 const selectedProductIds = ref(new Set<string>())
 const exportDialogVisible = ref(false)
@@ -410,6 +411,25 @@ async function loadImportRows(targetPage = 1): Promise<void> {
     ElMessage.error(error instanceof HttpError ? error.response.message : "加载导入明细失败")
   } finally {
     importRowsLoading.value = false
+  }
+}
+
+async function exportFailedImportRows(): Promise<void> {
+  if (!importPreview.value || importPreview.value.invalid_rows === 0) return
+  failedRowsExporting.value = true
+  try {
+    const blob = await productApi.exportFailedImportRows(importPreview.value.id)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `${importPreview.value.original_filename.replace(/\.xlsx$/i, "")}-不通过行.xlsx`
+    link.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success(`已导出 ${importPreview.value.invalid_rows} 条不通过数据`)
+  } catch (error) {
+    ElMessage.error(error instanceof HttpError ? error.response.message : "导出不通过数据失败")
+  } finally {
+    failedRowsExporting.value = false
   }
 }
 
@@ -811,6 +831,17 @@ onMounted(() => { void loadProducts() })
       </template>
       <template #footer>
         <el-button :disabled="importing" @click="importDialogVisible = false">关闭</el-button>
+        <el-button
+          v-if="(importPreview?.invalid_rows ?? 0) > 0"
+          type="warning"
+          plain
+          :icon="Download"
+          :loading="failedRowsExporting"
+          :disabled="importing"
+          @click="exportFailedImportRows"
+        >
+          导出不通过数据（{{ importPreview?.invalid_rows ?? 0 }}）
+        </el-button>
         <el-button type="primary" :loading="importing" :disabled="!importPreview || importPreview.valid_rows + importPreview.update_rows === 0" @click="confirmImport">
           确认新增/更新 {{ (importPreview?.valid_rows ?? 0) + (importPreview?.update_rows ?? 0) }} 行
         </el-button>

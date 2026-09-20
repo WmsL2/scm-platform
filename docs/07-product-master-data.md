@@ -125,4 +125,6 @@ Excel“供应商”原值只写入 Staging 的 `supplier_name_raw`，用于审�
 预览后若另一任务已创建、更新或删除该商品，当前确认返回 `PRODUCT_IMPORT_STALE_PREVIEW`（409），
 要求重新上传预览；数据库 UNIQUE 约束继续兜底创建竞争。因此并发不会静默采用“后确认覆盖先确认”。
 
-已实现 API：`GET /api/v1/products/imports/template`、`POST /api/v1/products/imports/preview`、`GET /api/v1/products/imports/{task_id}`、`GET /api/v1/products/imports/supplier-candidates`、`POST /api/v1/products/imports/{task_id}/supplier-matches/{match_id}/resolve`、`POST /api/v1/products/imports/{task_id}/confirm`。模板下载与其他导入 API 均要求 `product:import`；人工解析请求只提交 `{ "supplier_id": "<UUID>" }`；Backend 必须再次验证该 UUID 当前有效，前端不得把 supplier_name 作为正式选择结果。
+已实现 API：`GET /api/v1/products/imports/template`、`POST /api/v1/products/imports/preview`、`GET /api/v1/products/imports/{task_id}`、`GET /api/v1/products/imports/{task_id}/failed-rows`、`GET /api/v1/products/imports/supplier-candidates`、`POST /api/v1/products/imports/{task_id}/supplier-matches/{match_id}/resolve`、`POST /api/v1/products/imports/{task_id}/confirm`。模板下载、失败行导出与其他导入 API 均要求 `product:import`；人工解析请求只提交 `{ "supplier_id": "<UUID>" }`；Backend 必须再次验证该 UUID 当前有效，前端不得把 supplier_name 作为正式选择结果。
+
+导入任务存在未处理的不通过行时，上传者可以导出修正工作簿。系统直接加载商品主数据下载使用的正式模板，保留表头、字体、颜色、列宽、行高和单元格格式，从第 2 行填入失败行原值；公式引用随紧凑后的行号平移。第二工作表记录导出行、原 Excel 行与校验错误。若任务仍保留含 `DISPIMG` 的临时源 Excel，系统只复制失败行实际引用的内嵌图片。运营修正首个工作表后可直接重新上传，不需要删除“错误说明”工作表。

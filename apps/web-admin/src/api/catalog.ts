@@ -103,6 +103,10 @@ export const productApi = {
     return http.postBlob(path("/export"), { product_ids: productIds, columns }, { timeoutMs: 60_000 })
   },
 
+  exportFailedImportRows(taskId: string): Promise<Blob> {
+    return http.getBlob(path(`/imports/${taskId}/failed-rows`), { timeoutMs: 900_000 })
+  },
+
   getImportPreview(
     taskId: string,
     params: {

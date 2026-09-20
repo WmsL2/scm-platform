@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.background import BackgroundTask
 
 from app.common.contracts import ApiResponse, AppError, PageParams, PageResult, success
 from app.core.config import get_settings
@@ -220,6 +221,24 @@ async def get_product_import(
             page_params,
             row_status=row_status,
         )
+    )
+
+
+@router.get("/imports/{task_id}/failed-rows", response_class=FileResponse)
+async def export_product_import_failed_rows(
+    task_id: uuid.UUID,
+    current: Annotated[CurrentUser, Depends(require_permission("product:import"))],
+    session: SessionDep,
+) -> FileResponse:
+    path, filename = await ProductImportService(session).export_failed_rows(
+        task_id,
+        current.user_id,
+    )
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=filename,
+        background=BackgroundTask(path.unlink, missing_ok=True),
     )
 
 

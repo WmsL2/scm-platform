@@ -199,6 +199,18 @@ class ProductRepository:
         total = cast(int, await self.session.scalar(count_statement))
         return rows, total
 
+    async def failed_import_rows(self, task_id: uuid.UUID) -> list[ProductImportRow]:
+        statement = (
+            select(ProductImportRow)
+            .where(
+                ProductImportRow.import_task_id == task_id,
+                ProductImportRow.is_valid.is_(False),
+                ProductImportRow.is_imported.is_(False),
+            )
+            .order_by(ProductImportRow.source_row_number, ProductImportRow.id)
+        )
+        return list((await self.session.scalars(statement)).all())
+
     async def import_task_by_id_for_update(self, task_id: uuid.UUID) -> ProductImportTask | None:
         statement = (
             select(ProductImportTask)
