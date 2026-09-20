@@ -7,6 +7,8 @@ import { useRoute, useRouter } from "vue-router"
 import { productApi } from "../../api/catalog"
 import { HttpError } from "../../shared/http"
 import { useAuthStore } from "../../stores/auth"
+import { PRODUCT_EXPORT_COLUMN_DEFINITIONS } from "../../types/catalog"
+import { mergePageSelection, restoreExportColumns } from "./productExportSelection"
 import {
   derivedLevel1Keys,
   derivedLevel2Keys,
@@ -18,6 +20,7 @@ import type {
   ProductImportSupplierCandidate,
   ProductCategoryFilterOption,
   ProductListItem,
+  ProductExportColumnKey,
 } from "../../types/catalog"
 
 type CategorySelectInstance = {
@@ -123,6 +126,31 @@ const importRowFilter = ref<"ALL" | "PASSED" | "FAILED" | "UPDATE">("ALL")
 const importRowsLoading = ref(false)
 const failedRowsExporting = ref(false)
 const activeTab = ref<"products" | "audit">("products")
+const selectedProductIds = ref(new Set<string>())
+const exportDialogVisible = ref(false)
+const exporting = ref(false)
+const exportColumnStorageKey = "scm.product-export.columns.v1"
+function initialExportColumns(): ProductExportColumnKey[] {
+  return restoreExportColumns(localStorage.getItem(exportColumnStorageKey))
+}
+const exportColumns = ref<ProductExportColumnKey[]>(initialExportColumns())
+function syncSelection(rows: ProductListItem[]): void {
+  selectedProductIds.value = mergePageSelection(
+    selectedProductIds.value,
+    products.value.map((item) => item.id),
+    rows.map((row) => row.id),
+  )
+}
+async function exportSelected(): Promise<void> {
+  exporting.value = true
+  try {
+    const blob = await productApi.exportSelected([...selectedProductIds.value], exportColumns.value)
+    const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "商品主数据导出.xlsx"; link.click(); URL.revokeObjectURL(link.href)
+    localStorage.setItem(exportColumnStorageKey, JSON.stringify(exportColumns.value))
+    exportDialogVisible.value = false
+  } catch (error) { ElMessage.error(error instanceof HttpError ? error.response.message : "导出失败") }
+  finally { exporting.value = false }
+}
 
 async function loadProducts(targetPage = page.value): Promise<void> {
   loading.value = true
@@ -158,6 +186,7 @@ async function loadProducts(targetPage = page.value): Promise<void> {
 }
 
 function reset(): void {
+  selectedProductIds.value.clear()
   Object.assign(filters, {
     keyword: "", source_supplier_id: "", company_name: "", purchasing_agent: "", brand: "",
     supplier_name: "", cost_price_min: "", cost_price_max: "", agreement_price_min: "",
@@ -607,6 +636,7 @@ onMounted(() => { void loadProducts() })
       <template #header>
         <div class="table-heading">
           <strong>{{ activeTab === "products" ? "商品列表" : "商品操作记录" }}</strong>
+          <el-button v-if="activeTab === 'products'" type="primary" :icon="Download" :disabled="selectedProductIds.size === 0" @click="exportDialogVisible = true">导出 Excel（{{ selectedProductIds.size }}）</el-button>
           <el-popover v-if="activeTab === 'products'" placement="bottom-end" :width="260" trigger="click">
             <template #reference><el-button :icon="Setting">自定义显示列</el-button></template>
             <el-checkbox-group v-model="visibleColumns" class="column-picker" @change="saveVisibleColumns">
@@ -615,7 +645,8 @@ onMounted(() => { void loadProducts() })
           </el-popover>
         </div>
       </template>
-      <el-table v-if="activeTab === 'products'" v-loading="loading" :data="products" empty-text="暂无正式商品数据">
+      <el-table v-if="activeTab === 'products'" v-loading="loading" :data="products" row-key="id" @selection-change="syncSelection" empty-text="暂无正式商品数据">
+        <el-table-column type="selection" width="48" reserve-selection />
         <el-table-column v-if="isVisible('image')" label="商品图片" width="108" fixed="left">
           <template #default="{ row }">
             <el-image
@@ -713,6 +744,14 @@ onMounted(() => { void loadProducts() })
         />
       </div>
     </el-card>
+
+    <el-dialog v-model="exportDialogVisible" title="选择导出字段" width="680px">
+      <div class="table-heading"><p>已选择 {{ selectedProductIds.size }} 条商品</p><el-button text @click="exportColumns = []">清空字段</el-button></div>
+      <el-checkbox-group v-model="exportColumns" class="column-picker">
+        <el-checkbox v-for="column in PRODUCT_EXPORT_COLUMN_DEFINITIONS" :key="column.key" :label="column.key">{{ column.label }}</el-checkbox>
+      </el-checkbox-group>
+      <template #footer><el-button @click="exportDialogVisible = false">取消</el-button><el-button type="primary" :disabled="exportColumns.length === 0" :loading="exporting" @click="exportSelected">确认导出</el-button></template>
+    </el-dialog>
 
     <el-dialog
       v-model="importDialogVisible"

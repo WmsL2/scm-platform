@@ -1,6 +1,11 @@
 # ADR-0033：商品导入仅 SKU 与供应商必填
 
+状态：ACCEPTED
 日期：2026-09-20
+
+## Supersedes
+
+本 ADR 仅替代 ADR-0026 中 Product Import 的一级、二级、三级类目必须非空，以及 Product 手工编辑三级类目必须全部非空的规则。ADR-0026 关于 Product 与 Category Master 解耦、不保存 `category_id`、Import 不依赖 Category Master、Product 保存类目文本和 Category Master 独立维护的决定继续有效。
 
 ## Context
 

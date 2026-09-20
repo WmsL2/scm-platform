@@ -1,12 +1,17 @@
+# ruff: noqa: E501
 import uuid
 from decimal import Decimal
+from io import BytesIO
 
 from httpx import ASGITransport, AsyncClient
+from openpyxl import load_workbook
+from PIL import Image
 from sqlalchemy import delete, select
 
 from app.core.database import SessionLocal
 from app.main import app
 from app.modules.auth.security import create_token, hash_password
+from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Category, Product, ProductPurgeAudit
 from app.modules.catalog.schemas import _serialize_product_price
 from app.modules.supplier.infrastructure.models import Supplier
@@ -49,6 +54,24 @@ class RecordingStorage:
 
     async def delete(self, key: str) -> None:
         self.deleted.append(key)
+
+
+class ExportImageStorage:
+    def __init__(self, images: dict[str, bytes]) -> None:
+        self.images = images
+        self.read_keys: list[str] = []
+
+    async def read(self, key: str) -> bytes:
+        self.read_keys.append(key)
+        if key not in self.images:
+            raise FileNotFoundError(key)
+        return self.images[key]
+
+
+def png_bytes() -> bytes:
+    content = BytesIO()
+    Image.new("RGB", (10, 10), color="red").save(content, format="PNG")
+    return content.getvalue()
 
 
 async def create_product_user(
@@ -524,6 +547,156 @@ async def test_product_disable_enable_and_purge_follow_lifecycle_rules() -> None
             )
             assert audit is not None
             assert audit.purged_by == user_id
+    finally:
+        await cleanup_fixture(supplier_id, category_id, product_id)
+        await cleanup_user(user_id)
+
+
+async def test_product_export_validates_selection_and_preserves_values() -> None:
+    user_id, headers = await create_product_user(("product:list",))
+    supplier_id, category_id, product_id = await create_product_fixture()
+    second_product_id = uuid.uuid4()
+    try:
+        async with SessionLocal() as session:
+            product = await session.get(Product, product_id)
+            assert product is not None
+            product.market_price = Decimal("100.123456789012345678901234567890")
+            product.positive_rating = Decimal("0.9500")
+            product.discount_rate = Decimal("1.2000")
+            product.price_inflation_rate = Decimal("-0.2000")
+            product.sku = "000123"
+            product.barcode_text = "0000123456789"
+            session.add(Product(id=second_product_id, sku="SKU-B", product_name="商品 B", source_supplier_id=supplier_id, cost_price=Decimal("2")))
+            await session.commit()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            assert (await client.post("/api/v1/products/export", json={"product_ids": [], "columns": ["sku"]}, headers=headers)).status_code == 422
+            assert (await client.post("/api/v1/products/export", json={"product_ids": [str(product_id)], "columns": []}, headers=headers)).status_code == 422
+            assert (await client.post("/api/v1/products/export", json={"product_ids": [str(product_id)], "columns": ["sku", "password"]}, headers=headers)).status_code == 422
+            assert (await client.post("/api/v1/products/export", json={"product_ids": [str(product_id)], "columns": ["sku", "sku"]}, headers=headers)).status_code == 422
+            base = await client.post("/api/v1/products/export", json={"product_ids": [str(second_product_id), str(product_id)], "columns": ["sku", "product_name", "cost_price"]}, headers=headers)
+            base_sheet = load_workbook(BytesIO(base.content)).active
+            assert base.status_code == 200 and base_sheet.max_column == 3 and base_sheet.max_row == 3
+            assert [cell.value for cell in base_sheet[1]] == ["sku", "商品名称", "成本价"]
+            assert [base_sheet.cell(row, 1).value for row in (2, 3)] == ["SKU-B", "000123"]
+            response = await client.post("/api/v1/products/export", json={"product_ids": [str(product_id)], "columns": ["discount_rate", "sku", "brand", "market_price", "positive_rating", "price_inflation_rate", "barcode_text"]}, headers=headers)
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            sheet = load_workbook(BytesIO(response.content)).active
+            assert [cell.value for cell in sheet[1]] == ["品牌", "sku", "市场价", "69码", "好评率", "折扣率", "价格虚高比例"]
+            assert [cell.value for cell in sheet[2]][1:] == ["000123", "100.123456789012345678901234567890", "0000123456789", "95%", "120%", "-20%"]
+            null_export = await client.post("/api/v1/products/export", json={"product_ids": [str(second_product_id)], "columns": ["sku", "category_level1_name", "market_price", "discount_rate", "supplier_name"]}, headers=headers)
+            null_sheet = load_workbook(BytesIO(null_export.content)).active
+            assert [cell.value for cell in null_sheet[2]] == ["SKU-B", None, None, "商品测试来源供应商-" + str(supplier_id), None]
+            partial = await client.post("/api/v1/products/export", json={"product_ids": [str(product_id)], "columns": ["discount_rate", "category_level1_name"]}, headers=headers)
+            assert [cell.value for cell in load_workbook(BytesIO(partial.content)).active[1]] == ["一级类目", "折扣率"]
+            stale = await client.post("/api/v1/products/export", json={"product_ids": [str(product_id), str(uuid.uuid4())], "columns": ["sku"]}, headers=headers)
+            assert stale.status_code == 409 and stale.json()["code"] == "PRODUCT_EXPORT_SELECTION_STALE"
+    finally:
+        async with SessionLocal() as session:
+            await session.execute(delete(Product).where(Product.id == second_product_id))
+            await session.commit()
+        await cleanup_fixture(supplier_id, category_id, product_id)
+        await cleanup_user(user_id)
+
+
+async def test_product_export_requires_list_permission_and_enforces_selection_limit() -> None:
+    user_id, headers = await create_product_user(("product:detail",))
+    list_user_id, list_headers = await create_product_user(("product:list",))
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            forbidden = await client.post(
+                "/api/v1/products/export",
+                headers=headers,
+                json={"product_ids": [str(uuid.uuid4())], "columns": ["sku"]},
+            )
+            assert forbidden.status_code == 403
+            too_many = await client.post(
+                "/api/v1/products/export",
+                headers=list_headers,
+                json={"product_ids": [str(uuid.uuid4()) for _ in range(5001)], "columns": ["sku"]},
+            )
+            assert too_many.status_code == 422
+    finally:
+        await cleanup_user(user_id)
+        await cleanup_user(list_user_id)
+
+
+async def test_product_export_disabled_visibility_requires_disable_permission() -> None:
+    list_user_id, list_headers = await create_product_user(("product:list",))
+    disabled_user_id, disabled_headers = await create_product_user(("product:list", "product:disable"))
+    supplier_id, category_id, product_id = await create_product_fixture()
+    try:
+        async with SessionLocal() as session:
+            product = await session.get(Product, product_id)
+            assert product is not None
+            product.status = ProductStatus.DISABLED
+            await session.commit()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            hidden = await client.post("/api/v1/products/export", headers=list_headers, json={"product_ids": [str(product_id)], "columns": ["sku"]})
+            assert hidden.status_code == 409
+            assert hidden.json()["code"] == "PRODUCT_EXPORT_SELECTION_STALE"
+            allowed = await client.post("/api/v1/products/export", headers=disabled_headers, json={"product_ids": [str(product_id)], "columns": ["sku"]})
+            assert allowed.status_code == 200
+            assert load_workbook(BytesIO(allowed.content)).active["A2"].value == "SKU-1"
+    finally:
+        await cleanup_fixture(supplier_id, category_id, product_id)
+        await cleanup_user(list_user_id)
+        await cleanup_user(disabled_user_id)
+
+
+async def test_product_export_embeds_managed_local_media_image(monkeypatch) -> None:
+    storage = ExportImageStorage({"product-images/test-product.png": png_bytes()})
+    monkeypatch.setattr("app.modules.catalog.application.export_service.get_object_storage", lambda: storage)
+    user_id, headers = await create_product_user(("product:list",))
+    supplier_id, category_id, product_id = await create_product_fixture()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/v1/products/export", headers=headers, json={"product_ids": [str(product_id)], "columns": ["sku", "image_reference"]})
+        assert response.status_code == 200
+        sheet = load_workbook(BytesIO(response.content)).active
+        assert [cell.value for cell in sheet[1]] == ["图片", "sku"]
+        assert sheet["A2"].value is None
+        assert all("local-media/" not in str(cell.value) for row in sheet.iter_rows() for cell in row if cell.value is not None)
+        assert len(sheet._images) == 1
+        assert sheet._images[0].anchor._from.col == 0
+        assert sheet._images[0].anchor._from.row == 1
+        assert storage.read_keys == ["product-images/test-product.png"]
+    finally:
+        await cleanup_fixture(supplier_id, category_id, product_id)
+        await cleanup_user(user_id)
+
+
+async def test_product_export_keeps_missing_managed_image_blank(monkeypatch) -> None:
+    storage = ExportImageStorage({})
+    monkeypatch.setattr("app.modules.catalog.application.export_service.get_object_storage", lambda: storage)
+    user_id, headers = await create_product_user(("product:list",))
+    supplier_id, category_id, product_id = await create_product_fixture()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/v1/products/export", headers=headers, json={"product_ids": [str(product_id)], "columns": ["sku", "image_reference"]})
+        assert response.status_code == 200
+        sheet = load_workbook(BytesIO(response.content)).active
+        assert sheet["A2"].value is None
+        assert sheet["B2"].value == "SKU-1"
+        assert sheet._images == []
+    finally:
+        await cleanup_fixture(supplier_id, category_id, product_id)
+        await cleanup_user(user_id)
+
+
+async def test_product_export_keeps_invalid_managed_image_blank(monkeypatch) -> None:
+    storage = ExportImageStorage({"product-images/test-product.png": b"not-an-image"})
+    monkeypatch.setattr("app.modules.catalog.application.export_service.get_object_storage", lambda: storage)
+    user_id, headers = await create_product_user(("product:list",))
+    supplier_id, category_id, product_id = await create_product_fixture()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/v1/products/export", headers=headers, json={"product_ids": [str(product_id)], "columns": ["sku", "image_reference"]})
+        assert response.status_code == 200
+        sheet = load_workbook(BytesIO(response.content)).active
+        assert sheet["A2"].value is None
+        assert sheet["B2"].value == "SKU-1"
+        assert sheet._images == []
     finally:
         await cleanup_fixture(supplier_id, category_id, product_id)
         await cleanup_user(user_id)

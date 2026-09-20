@@ -1,11 +1,13 @@
+# ruff: noqa: E501
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
@@ -14,6 +16,7 @@ from app.core.config import get_settings
 from app.core.database import get_db_session
 from app.modules.auth.dependencies import require_permission
 from app.modules.auth.schemas import CurrentUser
+from app.modules.catalog.application.export_service import ProductExportService
 from app.modules.catalog.application.import_service import ProductImportService
 from app.modules.catalog.application.service import ProductService
 from app.modules.catalog.domain.lifecycle import ProductStatus
@@ -21,6 +24,7 @@ from app.modules.catalog.schemas import (
     ProductCategoryFilterOptionPageResponse,
     ProductCostUpdateRequest,
     ProductDetailResponse,
+    ProductExportRequest,
     ProductImportConfirmResponse,
     ProductImportDiscardResponse,
     ProductImportPreviewResponse,
@@ -148,6 +152,11 @@ async def product_category_filter_options(
             status=status,
         )
     )
+
+@router.post("/export")
+async def export_products(payload: ProductExportRequest, current: Annotated[CurrentUser, Depends(require_permission("product:list"))], session: SessionDep) -> Response:
+    content = await ProductExportService(session).export(payload.product_ids, payload.columns, "product:disable" in current.permissions)
+    return Response(content, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="product-export-{datetime.now():%Y%m%d_%H%M%S}.xlsx"'})
 
 
 @router.post("/imports/preview", response_model=ApiResponse[ProductImportPreviewResponse])

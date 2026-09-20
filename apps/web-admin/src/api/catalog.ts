@@ -3,6 +3,7 @@ import type {
   ProductCategoryFilterOption,
   ProductCategoryFilterOptionPage,
   ProductDetail,
+  ProductExportColumnKey,
   ProductImportConfirmResult,
   ProductImportPreview,
   ProductImportSupplierCandidate,
@@ -97,6 +98,9 @@ export const productApi = {
 
   downloadImportTemplate(): Promise<Blob> {
     return http.getBlob(path("/imports/template"))
+  },
+  exportSelected(productIds: string[], columns: ProductExportColumnKey[]): Promise<Blob> {
+    return http.postBlob(path("/export"), { product_ids: productIds, columns }, { timeoutMs: 60_000 })
   },
 
   exportFailedImportRows(taskId: string): Promise<Blob> {

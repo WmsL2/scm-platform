@@ -3,7 +3,7 @@
 状态：PARTIALLY SUPERSEDED BY ADR-0010 / ADR-0024 / ADR-0026
 范围：类目来源、扣点规则、价格公式与计算责任；本文件不创建 Category 或 Product Schema。
 
-> ADR-0026 已取消 Product 与 Category 的关联：Excel 一级、二级、三级类目作为 Product 自有必填文本直接保存，Confirm 不再写入 `category_id` 或校验 Category。ADR-0024 冻结价格独立维护：固定大表导入和单独成本价更新均不按类目扣点或公式重算价格、毛利、折扣率和价格虚高比例。
+> ADR-0026 已取消 Product 与 Category 的关联；ADR-0033 进一步明确固定 43 列中仅 SKU 与供应商必填，Excel 一级、二级、三级类目作为 Product 自有可空文本保存。Confirm 不写入 `category_id` 或校验 Category。ADR-0024 冻结价格独立维护：固定大表导入和单独成本价更新均不按类目扣点或公式重算价格、毛利、折扣率和价格虚高比例。
 
 ## 类目来源与扣点
 

@@ -217,6 +217,59 @@ export interface ProductUpdatePayload {
   after_sales_policy: string | null
 }
 
+export const PRODUCT_EXPORT_COLUMN_DEFINITIONS = [
+  { key: "company_name", label: "所属公司" },
+  { key: "listed_at", label: "上架日期" },
+  { key: "brand", label: "品牌" },
+  { key: "image_reference", label: "图片" },
+  { key: "model", label: "型号" },
+  { key: "sku", label: "sku" },
+  { key: "product_name", label: "商品名称" },
+  { key: "category_level1_name", label: "一级类目" },
+  { key: "category_level2_name", label: "二级类目" },
+  { key: "category_level3_name", label: "三级类目" },
+  { key: "item_number", label: "货号" },
+  { key: "jd_same_product_url", label: "链接" },
+  { key: "cost_price", label: "成本价" },
+  { key: "market_price", label: "市场价" },
+  { key: "jd_price", label: "京东价" },
+  { key: "agreement_price", label: "协议价" },
+  { key: "agreement_purchase_price", label: "协议价采购价" },
+  { key: "profit", label: "利润" },
+  { key: "jd_margin", label: "京东价毛利（30-50）" },
+  { key: "deduction_review", label: "扣点复核" },
+  { key: "gross_margin", label: "毛利率" },
+  { key: "purchasing_agent", label: "采销员" },
+  { key: "supplier_name", label: "供应商" },
+  { key: "barcode_text", label: "69码" },
+  { key: "certification_3c_code", label: "3c编码" },
+  { key: "product_specification", label: "产品规格" },
+  { key: "selling_points", label: "卖点" },
+  { key: "packaging_list", label: "包装清单" },
+  { key: "warranty_period", label: "质保期" },
+  { key: "restricted_regions", label: "限售区域" },
+  { key: "jd_self_operated_price", label: "京东自营前台价" },
+  { key: "storefront_type", label: "自营旗舰店/官方旗舰店" },
+  { key: "reference_url", label: "参考链接" },
+  { key: "sales_volume", label: "销量" },
+  { key: "positive_rating", label: "好评率" },
+  { key: "discount_rate", label: "折扣率" },
+  { key: "price_inflation_rate", label: "价格虚高比例" },
+  { key: "tax_code", label: "税收编码" },
+  { key: "invoice_name", label: "开票名称" },
+  { key: "tax_category", label: "税收分类" },
+  { key: "shipping_courier", label: "发货快递" },
+  { key: "after_sales_policy", label: "售后政策" },
+  { key: "remark", label: "备注" },
+] as const
+
+export type ProductExportColumnKey = typeof PRODUCT_EXPORT_COLUMN_DEFINITIONS[number]["key"]
+export type ProductExportColumnDefinition = {
+  key: ProductExportColumnKey
+  label: string
+}
+export const PRODUCT_EXPORT_COLUMNS: readonly ProductExportColumnKey[] = PRODUCT_EXPORT_COLUMN_DEFINITIONS.map(({ key }) => key)
+
 export interface ProductImportConfirmResult {
   id: string
   status: "PARTIALLY_CONFIRMED" | "CONFIRMED"
