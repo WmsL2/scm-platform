@@ -580,6 +580,114 @@ async def test_product_import_accepts_category_paths_without_category_master_bin
         await _cleanup_import_user(user_id)
 
 
+async def test_product_import_requires_only_sku_and_supplier() -> None:
+    user_id, headers = await _create_import_user()
+    supplier_id, category_id = await _create_references()
+    blank_fields = {
+        header: "" for header in PRODUCT_IMPORT_HEADERS if header not in {"sku", "供应商"}
+    }
+    category_cases = (
+        ("SKU-CATEGORY-L1-NULL", ("", "二级", "三级")),
+        ("SKU-CATEGORY-L2-NULL", ("一级", "", "三级")),
+        ("SKU-CATEGORY-L3-NULL", ("一级", "二级", "")),
+        ("SKU-CATEGORY-ALL-NULL", ("", "", "")),
+    )
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            minimal_preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "minimal-product.xlsx",
+                        _workbook_bytes(
+                            "导入测试供应商",
+                            sku_override="SKU-ONLY-001",
+                            value_overrides=blank_fields,
+                        ),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert minimal_preview.status_code == 200
+            minimal_data = minimal_preview.json()["data"]
+            assert minimal_data["valid_rows"] == 1
+            assert minimal_data["rows"][0]["is_valid"] is True
+            assert (
+                await client.post(
+                    f"/api/v1/products/imports/{minimal_data['id']}/confirm", headers=headers
+                )
+            ).status_code == 200
+
+            for sku, category_path in category_cases:
+                preview = await client.post(
+                    "/api/v1/products/imports/preview",
+                    headers=headers,
+                    files={
+                        "file": (
+                            f"{sku}.xlsx",
+                            _workbook_bytes(
+                                "导入测试供应商",
+                                sku_override=sku,
+                                category_path=category_path,
+                            ),
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+                    },
+                )
+                assert preview.status_code == 200
+                data = preview.json()["data"]
+                assert data["rows"][0]["is_valid"] is True
+                assert (
+                    await client.post(
+                        f"/api/v1/products/imports/{data['id']}/confirm", headers=headers
+                    )
+                ).status_code == 200
+
+        async with SessionLocal() as session:
+            minimal = await session.scalar(select(Product).where(Product.sku == "SKU-ONLY-001"))
+            assert minimal is not None
+            assert minimal.source_supplier_id == supplier_id
+            for field in (
+                "company_name",
+                "listed_at",
+                "brand",
+                "image_reference",
+                "model",
+                "product_name",
+                "category_level1_name",
+                "category_level2_name",
+                "category_level3_name",
+                "item_number",
+                "jd_same_product_url",
+                "cost_price",
+                "market_price",
+                "jd_price",
+                "agreement_price",
+                "agreement_purchase_price",
+                "profit",
+                "jd_margin",
+                "deduction_review",
+                "gross_margin",
+                "sales_volume",
+                "positive_rating",
+                "discount_rate",
+                "price_inflation_rate",
+            ):
+                assert getattr(minimal, field) is None
+            for sku, category_path in category_cases:
+                product = await session.scalar(select(Product).where(Product.sku == sku))
+                assert product is not None
+                assert (
+                    product.category_level1_name,
+                    product.category_level2_name,
+                    product.category_level3_name,
+                ) == tuple(value or None for value in category_path)
+    finally:
+        await _cleanup_import_data(supplier_id, user_id, (category_id,))
+        await _cleanup_import_user(user_id)
+
+
 async def test_product_import_confirms_valid_rows_and_retains_failed_rows() -> None:
     user_id, headers = await _create_import_user()
     supplier_id, category_id = await _create_references()

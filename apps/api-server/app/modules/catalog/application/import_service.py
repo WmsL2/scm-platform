@@ -781,9 +781,6 @@ class ProductImportService:
         cost_price = self._decimal_or_none(self._import_value(row, "成本价"))
         if cost_price is not None and cost_price <= 0:
             errors.append("成本价必须大于0")
-        for header in ("一级类目", "二级类目", "三级类目"):
-            if self._optional(self._import_value(row, header)) is None:
-                errors.append(f"{header}不能为空")
         sku = self._optional(values["sku"])
         if sku is None:
             errors.append("SKU不能为空")
@@ -902,9 +899,9 @@ class ProductImportService:
             "brand": self._optional(values["品牌"]),
             "model": self._optional(values["型号"]),
             "product_name": self._optional(values["商品名称"]),
-            "category_level1_name": self._required_text(row, "一级类目"),
-            "category_level2_name": self._required_text(row, "二级类目"),
-            "category_level3_name": self._required_text(row, "三级类目"),
+            "category_level1_name": self._optional(values["一级类目"]),
+            "category_level2_name": self._optional(values["二级类目"]),
+            "category_level3_name": self._optional(values["三级类目"]),
             "item_number": self._optional(values["货号"]),
             "jd_same_product_url": self._optional(values["链接"]),
             "cost_price": self._import_decimal_value(row, "成本价"),
@@ -1325,12 +1322,6 @@ class ProductImportService:
     def _optional(value: str | None) -> str | None:
         if value is None or not value.strip():
             return None
-        return value
-
-    def _required_text(self, row: ProductImportRow, header: str) -> str:
-        value = self._optional(self._import_value(row, header))
-        if value is None:
-            raise RuntimeError(f"A ready Product Import row is missing {header}")
         return value
 
     @staticmethod

@@ -361,19 +361,29 @@ async def test_product_category_options_are_derived_from_product_master_data() -
     user_id, headers = await create_product_user(PRODUCT_PERMISSIONS)
     supplier_id, category_id, product_id = await create_product_fixture()
     master_only_product_id = uuid.uuid4()
+    partial_path_product_id = uuid.uuid4()
     try:
         async with SessionLocal() as session:
-            session.add(
-                Product(
-                    id=master_only_product_id,
-                    product_name="只存在于商品主数据的类目商品",
-                    sku="SKU-MASTER-CATEGORY",
-                    source_supplier_id=supplier_id,
-                    category_level1_name="主数据一级",
-                    category_level2_name="主数据二级",
-                    category_level3_name="主数据三级",
-                    cost_price=Decimal("300.0000"),
-                )
+            session.add_all(
+                [
+                    Product(
+                        id=master_only_product_id,
+                        product_name="只存在于商品主数据的类目商品",
+                        sku="SKU-MASTER-CATEGORY",
+                        source_supplier_id=supplier_id,
+                        category_level1_name="主数据一级",
+                        category_level2_name="主数据二级",
+                        category_level3_name="主数据三级",
+                        cost_price=Decimal("300.0000"),
+                    ),
+                    Product(
+                        id=partial_path_product_id,
+                        product_name="只有一级类目的商品",
+                        sku="SKU-PARTIAL-CATEGORY",
+                        source_supplier_id=supplier_id,
+                        category_level1_name="仅一级",
+                    ),
+                ]
             )
             await session.commit()
 
@@ -396,9 +406,21 @@ async def test_product_category_options_are_derived_from_product_master_data() -
             assert str(master_only_product_id) in {
                 item["id"] for item in selected.json()["data"]["items"]
             }
+
+            level1 = await client.get(
+                "/api/v1/products/category-filter-options",
+                headers=headers,
+                params={"level": "LEVEL1", "keyword": "仅一级"},
+            )
+            assert level1.status_code == 200
+            assert [item["label"] for item in level1.json()["data"]["items"]] == ["仅一级"]
     finally:
         async with SessionLocal() as session:
-            await session.execute(delete(Product).where(Product.id == master_only_product_id))
+            await session.execute(
+                delete(Product).where(
+                    Product.id.in_((master_only_product_id, partial_path_product_id))
+                )
+            )
             await session.commit()
         await cleanup_fixture(supplier_id, category_id, product_id)
         await cleanup_user(user_id)
@@ -571,6 +593,20 @@ async def test_product_editing_and_supplier_lifecycle_visibility() -> None:
             )
             assert below_zero.status_code == 200
             assert below_zero.json()["data"]["discount_rate"] == "-0.2000"
+
+            nullable_categories = await client.patch(
+                f"/api/v1/products/{product_id}",
+                headers=headers,
+                json={
+                    "category_level1_name": None,
+                    "category_level2_name": None,
+                    "category_level3_name": None,
+                },
+            )
+            assert nullable_categories.status_code == 200
+            assert nullable_categories.json()["data"]["category_level1_name"] is None
+            assert nullable_categories.json()["data"]["category_level2_name"] is None
+            assert nullable_categories.json()["data"]["category_level3_name"] is None
 
             immutable_key_edit = await client.patch(
                 f"/api/v1/products/{product_id}",

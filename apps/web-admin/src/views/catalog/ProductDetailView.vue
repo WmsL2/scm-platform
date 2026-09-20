@@ -188,19 +188,15 @@ async function openEdit(): Promise<void> {
 }
 
 async function updateProduct(): Promise<void> {
-  if (!categoryLevel1.value.trim() || !categoryLevel2.value.trim() || !categoryLevel3.value.trim()) {
-    ElMessage.warning("请填写三级类目")
-    return
-  }
   const payload: ProductUpdatePayload = {
     company_name: nullable(editForm.company_name),
     listed_at: nullable(editForm.listed_at),
     brand: nullable(editForm.brand),
     model: nullable(editForm.model),
     product_name: nullable(editForm.product_name),
-    category_level1_name: categoryLevel1.value.trim(),
-    category_level2_name: categoryLevel2.value.trim(),
-    category_level3_name: categoryLevel3.value.trim(),
+    category_level1_name: nullable(categoryLevel1.value),
+    category_level2_name: nullable(categoryLevel2.value),
+    category_level3_name: nullable(categoryLevel3.value),
     item_number: nullable(editForm.item_number),
     jd_same_product_url: nullable(editForm.jd_same_product_url),
     cost_price: nullable(editForm.cost_price),

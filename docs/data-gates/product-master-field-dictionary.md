@@ -8,14 +8,14 @@ Last Updated：2026-09-17
 - 整理后的商品大表一行等于 `scm_product` 一条正式商品；系统 UUID `id` 是主键。
 - `source_supplier_id + sku` 是数据库防重业务键，也是重新导入定位键；供应商和 SKU 必填且创建后不可修改。
 - 供应商名称只在 Staging 中用于匹配现有 `ARCHIVED + NORMAL + not deleted` Supplier；导入不创建供应商。
-- 一级、二级、三级类目是正式 Product 的必填文本；不关联、创建或校验 `MALL_LEVEL3` Category。
+- 固定 43 个表头仍必须完整且有序；单元格值仅 SKU 和供应商必填。一级、二级、三级类目可为空，不关联、创建或校验 `MALL_LEVEL3` Category。
 - `cost_price` 可为空；模板中的金额、毛利和比例均作为正式值直接保存，导入不调用 Pricing Service。数值文本无法解析时标准化为 `NULL`；专用成本价维护接口仍要求大于 0。
 - 同键重新导入覆盖其余 41 个模板字段；空单元格清空旧值。若图片替换或清空，数据库事务成功后删除旧本地图片。
 - 单独的“修改成本价”操作仅更新成本价；价格、利润和比例均是独立正式值，不自动重算。
 
 ## 2026 正式 43 列模板
 
-列顺序必须完全一致；除供应商、SKU、成本价和三级类目绑定外，新增字段均允许为空。
+列顺序必须完全一致；仅供应商和 SKU 必填，其余 41 列均允许为空并保存为 `NULL`。
 
 | # | Excel 表头 | 正式字段 / 处理目标 | MySQL 类型 | 规则 |
 |---:|---|---|---|---|
@@ -26,9 +26,9 @@ Last Updated：2026-09-17
 | 5 | 型号 | `model` | `VARCHAR(255)` | 非唯一 |
 | 6 | sku | `sku` | `VARCHAR(255)` | 必填；与供应商组成 UNIQUE；不可修改 |
 | 7 | 商品名称 | `product_name` | `VARCHAR(512)` | 非唯一 |
-| 8 | 一级类目 | `category_level1_name` | `VARCHAR(255)` | 必填文本 |
-| 9 | 二级类目 | `category_level2_name` | `VARCHAR(255)` | 必填文本 |
-| 10 | 三级类目 | `category_level3_name` | `VARCHAR(255)` | 必填文本 |
+| 8 | 一级类目 | `category_level1_name` | `VARCHAR(255)` | 可为空文本 |
+| 9 | 二级类目 | `category_level2_name` | `VARCHAR(255)` | 可为空文本 |
+| 10 | 三级类目 | `category_level3_name` | `VARCHAR(255)` | 可为空文本 |
 | 11 | 货号 | `item_number` | `VARCHAR(255)` | 非唯一 |
 | 12 | 链接 | `jd_same_product_url` | `VARCHAR(2048)` | 普通链接文本 |
 | 13 | 成本价 | `cost_price` | `DECIMAL(65,30) NULL` | Excel 可为空；非数值、无效公式结果标准化为 NULL；可解析正数保留 Excel 底层原值，不按显示格式四舍五入。专用成本价维护接口仍要求大于 0。 |
