@@ -130,6 +130,17 @@ _PERCENT_HEADERS = {
 }
 _DISPLAY_FORMAT_DECIMAL_HEADERS = _PERCENT_HEADERS | {"利润"}
 _DATABASE_DECIMAL_QUANTUM = Decimal("0.0001")
+_FORMULA_RESULT_QUANTUM_HEADERS = {
+    "市场价",
+    "协议价",
+    "协议价采购价",
+    "利润",
+    "京东价毛利（30-50）",
+    "扣点复核",
+    "毛利率",
+    "折扣率",
+    "价格虚高比例",
+}
 PRODUCT_IMPORT_DB_BATCH_SIZE = 500
 PRODUCT_IMPORT_DEFAULT_PAGE_SIZE = 50
 _WORKBOOK_SEMAPHORES: dict[int, asyncio.Semaphore] = {}
@@ -897,23 +908,17 @@ class ProductImportService:
             "category_level3_name": self._required_text(row, "三级类目"),
             "item_number": self._optional(values["货号"]),
             "jd_same_product_url": self._optional(values["链接"]),
-            "cost_price": self._decimal_or_none(self._import_value(row, "成本价")),
-            "market_price": self._decimal_or_none(self._import_value(row, "市场价")),
-            "jd_price": self._decimal_or_none(self._import_value(row, "京东价")),
-            "agreement_price": self._decimal_or_none(self._import_value(row, "协议价")),
-            "agreement_purchase_price": self._decimal_or_none(
-                self._import_value(row, "协议价采购价")
+            "cost_price": self._import_decimal_value(row, "成本价"),
+            "market_price": self._import_decimal_value(row, "市场价"),
+            "jd_price": self._import_decimal_value(row, "京东价"),
+            "agreement_price": self._import_decimal_value(row, "协议价"),
+            "agreement_purchase_price": self._import_decimal_value(row, "协议价采购价"),
+            "profit": self._import_decimal_value(row, "利润"),
+            "jd_margin": self._import_decimal_value(
+                row, "京东价毛利（30-50）", percentage=True
             ),
-            "profit": self._decimal_or_none(self._import_value(row, "利润")),
-            "jd_margin": self._decimal_or_none(
-                self._import_value(row, "京东价毛利（30-50）"), percentage=True
-            ),
-            "deduction_review": self._decimal_or_none(
-                self._import_value(row, "扣点复核"), percentage=True
-            ),
-            "gross_margin": self._decimal_or_none(
-                self._import_value(row, "毛利率"), percentage=True
-            ),
+            "deduction_review": self._import_decimal_value(row, "扣点复核", percentage=True),
+            "gross_margin": self._import_decimal_value(row, "毛利率", percentage=True),
             "purchasing_agent": self._optional(values["采销员"]),
             "barcode_text": self._optional(values["69码"]),
             "certification_3c_code": self._optional(values["3c编码"]),
@@ -922,21 +927,15 @@ class ProductImportService:
             "packaging_list": self._optional(values["包装清单"]),
             "warranty_period": self._optional(values["质保期"]),
             "remark": self._optional(values["备注"]),
-            "discount_rate": self._decimal_or_none(
-                self._import_value(row, "折扣率"), percentage=True
-            ),
+            "discount_rate": self._import_decimal_value(row, "折扣率", percentage=True),
             "restricted_regions": self._optional(values["限售区域"]),
-            "jd_self_operated_price": self._decimal_or_none(
-                self._import_value(row, "京东自营前台价")
-            ),
+            "jd_self_operated_price": self._import_decimal_value(row, "京东自营前台价"),
             "reference_url": self._optional(values["参考链接"]),
             "storefront_type": self._optional(values["自营旗舰店/官方旗舰店"]),
             "sales_volume": self._integer_or_none(self._import_value(row, "销量")),
-            "positive_rating": self._decimal_or_none(
-                self._import_value(row, "好评率"), percentage=True
-            ),
-            "price_inflation_rate": self._decimal_or_none(
-                self._import_value(row, "价格虚高比例"), percentage=True
+            "positive_rating": self._import_decimal_value(row, "好评率", percentage=True),
+            "price_inflation_rate": self._import_decimal_value(
+                row, "价格虚高比例", percentage=True
             ),
             "tax_code": self._optional(values["税收编码"]),
             "invoice_name": self._optional(values["开票名称"]),
@@ -1336,7 +1335,12 @@ class ProductImportService:
         return value
 
     @staticmethod
-    def _decimal_or_none(value: str | None, *, percentage: bool = False) -> Decimal | None:
+    def _decimal_or_none(
+        value: str | None,
+        *,
+        percentage: bool = False,
+        quantum: Decimal | None = None,
+    ) -> Decimal | None:
         if value is None or not value.strip() or value.startswith("="):
             return None
         try:
@@ -1347,11 +1351,27 @@ class ProductImportService:
                 parsed = Decimal(normalized)
             if not parsed.is_finite():
                 return None
-            if percentage:
-                return parsed.quantize(_DATABASE_DECIMAL_QUANTUM, rounding=ROUND_HALF_UP)
+            if percentage or quantum is not None:
+                return parsed.quantize(
+                    quantum or _DATABASE_DECIMAL_QUANTUM, rounding=ROUND_HALF_UP
+                )
             return parsed
         except (InvalidOperation, ValueError):
             return None
+
+    def _import_decimal_value(
+        self, row: ProductImportRow, header: str, *, percentage: bool = False
+    ) -> Decimal | None:
+        source_value = row.source_data.get(header)
+        is_formula = bool(source_value and source_value.startswith("="))
+        quantum = (
+            _DATABASE_DECIMAL_QUANTUM
+            if header == "利润" or (is_formula and header in _FORMULA_RESULT_QUANTUM_HEADERS)
+            else None
+        )
+        return self._decimal_or_none(
+            self._import_value(row, header), percentage=percentage, quantum=quantum
+        )
 
     @staticmethod
     def _integer_or_none(value: str | None) -> int | None:
