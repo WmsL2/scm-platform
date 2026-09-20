@@ -10,6 +10,7 @@ from fastapi import UploadFile
 from httpx import ASGITransport, AsyncClient
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
+from openpyxl.utils import get_column_letter
 from PIL import Image
 from sqlalchemy import delete, select
 
@@ -788,6 +789,70 @@ async def test_product_import_rejects_formula_when_embedded_image_is_missing() -
         await _cleanup_import_user(user_id)
 
 
+@pytest.mark.parametrize(
+    ("header", "field", "cached_result", "expected"),
+    [
+        ("市场价", "market_price", "1859.0000000000002", "1859.0000"),
+        ("协议价", "agreement_price", "1620.0000000000002", "1620.0000"),
+        ("协议价采购价", "agreement_purchase_price", "1538.9999999999998", "1539.0000"),
+        ("利润", "profit", "134.85000000000002", "134.8500"),
+        ("京东价毛利（30-50）", "jd_margin", "0.17240000000000002", "0.1724"),
+        ("扣点复核", "deduction_review", "0.05000000000000001", "0.0500"),
+        ("毛利率", "gross_margin", "0.08630000000000002", "0.0863"),
+        ("折扣率", "discount_rate", "0.8887999999999999", "0.8888"),
+        ("价格虚高比例", "price_inflation_rate", "-0.11120000000000001", "-0.1112"),
+    ],
+)
+async def test_product_import_normalizes_formula_result_decimal_tails(
+    header: str, field: str, cached_result: str, expected: str
+) -> None:
+    user_id, headers = await _create_import_user()
+    supplier_id, category_id = await _create_references()
+    try:
+        formula_cell = f"{get_column_letter(PRODUCT_IMPORT_HEADERS.index(header) + 1)}2"
+        workbook = _with_cached_formula_results(
+            _workbook_bytes(
+                "导入测试供应商",
+                sku_override=f"SKU-FORMULA-{field}",
+                value_overrides={header: "=1+1"},
+                number_formats={header: "General"},
+            ),
+            {formula_cell: ("n", cached_result)},
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        f"formula-{field}.xlsx",
+                        workbook,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert preview.status_code == 200
+            data = preview.json()["data"]
+            assert data["rows"][0]["is_valid"] is True
+            async with SessionLocal() as session:
+                staged = await session.scalar(
+                    select(ProductImportRow).where(ProductImportRow.import_task_id == data["id"])
+                )
+                assert staged is not None and staged.normalized_data is not None
+                assert staged.normalized_data[field] == expected
+            confirmed = await client.post(
+                f"/api/v1/products/imports/{data['id']}/confirm", headers=headers
+            )
+            assert confirmed.status_code == 200
+        async with SessionLocal() as session:
+            product = await session.scalar(select(Product).where(Product.created_by == user_id))
+            assert product is not None
+            assert getattr(product, field) == Decimal(expected)
+    finally:
+        await _cleanup_import_data(supplier_id, user_id, (category_id,))
+        await _cleanup_import_user(user_id)
+
+
 async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_text() -> None:
     user_id, headers = await _create_import_user()
     supplier_id, category_id = await _create_references()
@@ -887,7 +952,7 @@ async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_tex
                 )
                 assert display_row is not None
                 assert display_row.normalized_data is not None
-                assert display_row.normalized_data["profit"] == "4.40"
+                assert display_row.normalized_data["profit"] == "4.4000"
                 assert display_row.normalized_data["jd_margin"] == "0.2904"
                 assert display_row.normalized_data["gross_margin"] == "0.1606"
                 assert display_row.normalized_data["discount_rate"] == "0.7500"
@@ -1031,6 +1096,66 @@ async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_tex
             formula_row = formula_preview.json()["data"]["rows"][0]
             assert formula_row["is_valid"] is True
 
+            profit_tail_workbook = _workbook_bytes(
+                "导入测试供应商",
+                sku_override="SKU-PROFIT-FORMULA-TAIL",
+                value_overrides={"利润": "=1+1"},
+                number_formats={"利润": "General"},
+            )
+            profit_tail_workbook = _with_cached_formula_results(
+                profit_tail_workbook, {"R2": ("n", "134.85000000000002")}
+            )
+            profit_tail_preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "profit-formula-tail.xlsx",
+                        profit_tail_workbook,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert profit_tail_preview.status_code == 200
+            profit_tail_data = profit_tail_preview.json()["data"]
+            assert profit_tail_data["rows"][0]["is_valid"] is True
+            async with SessionLocal() as session:
+                staged = await session.scalar(
+                    select(ProductImportRow).where(
+                        ProductImportRow.import_task_id == profit_tail_data["id"]
+                    )
+                )
+                assert staged is not None and staged.normalized_data is not None
+                assert staged.normalized_data["profit"] == "134.8500"
+            confirmed_tail = await client.post(
+                f"/api/v1/products/imports/{profit_tail_data['id']}/confirm", headers=headers
+            )
+            assert confirmed_tail.status_code == 200
+
+            direct_profit_preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "profit-direct-tail.xlsx",
+                        _workbook_bytes(
+                            "导入测试供应商",
+                            sku_override="SKU-PROFIT-DIRECT-TAIL",
+                            value_overrides={"利润": 12.34567, "市场价": "100.123456789012345"},
+                            number_formats={"利润": "General", "市场价": "General"},
+                        ),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert direct_profit_preview.status_code == 200
+            direct_profit_data = direct_profit_preview.json()["data"]
+            assert direct_profit_data["rows"][0]["is_valid"] is True
+            confirmed_direct = await client.post(
+                f"/api/v1/products/imports/{direct_profit_data['id']}/confirm", headers=headers
+            )
+            assert confirmed_direct.status_code == 200
+
         async with SessionLocal() as session:
             product = await session.scalar(select(Product).where(Product.sku == "SKU-1"))
             assert product is not None
@@ -1039,6 +1164,17 @@ async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_tex
             assert product.gross_margin == Decimal("0.2778")
             assert product.discount_rate is None
             assert product.profit is None
+            formula_tail_product = await session.scalar(
+                select(Product).where(Product.sku == "SKU-PROFIT-FORMULA-TAIL")
+            )
+            assert formula_tail_product is not None
+            assert formula_tail_product.profit == Decimal("134.8500")
+            direct_tail_product = await session.scalar(
+                select(Product).where(Product.sku == "SKU-PROFIT-DIRECT-TAIL")
+            )
+            assert direct_tail_product is not None
+            assert direct_tail_product.profit == Decimal("12.3457")
+            assert direct_tail_product.market_price == Decimal("100.123456789012345")
     finally:
         await _cleanup_import_data(supplier_id, user_id, (category_id,))
         await _cleanup_import_user(user_id)
