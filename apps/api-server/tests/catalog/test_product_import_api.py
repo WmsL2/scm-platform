@@ -667,6 +667,12 @@ async def test_product_import_defers_formula_image_storage_until_confirm() -> No
     user_id, headers = await _create_import_user()
     supplier_id, category_id = await _create_references()
     try:
+        workbook = _with_wps_cell_image(
+            _workbook_bytes(
+                "导入测试供应商",
+                image_value='=_xlfn.DISPIMG("ID_PRODUCT",1)',
+            )
+        )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             preview = await client.post(
                 "/api/v1/products/imports/preview",
@@ -674,12 +680,7 @@ async def test_product_import_defers_formula_image_storage_until_confirm() -> No
                 files={
                     "file": (
                         "formula-image-products.xlsx",
-                        _with_wps_cell_image(
-                            _workbook_bytes(
-                                "导入测试供应商",
-                                image_value='=_xlfn.DISPIMG("ID_PRODUCT",1)',
-                            )
-                        ),
+                        workbook,
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
                 },
@@ -706,6 +707,47 @@ async def test_product_import_defers_formula_image_storage_until_confirm() -> No
             async with SessionLocal() as session:
                 task = await session.get(ProductImportTask, data["id"])
                 assert task is not None and task.source_file_storage_key is None
+    finally:
+        await _cleanup_import_data(supplier_id, user_id, (category_id,))
+        await _cleanup_import_user(user_id)
+
+
+async def test_product_import_discard_deletes_temporary_workbook() -> None:
+    user_id, headers = await _create_import_user()
+    supplier_id, category_id = await _create_references()
+    try:
+        workbook = _with_wps_cell_image(
+            _workbook_bytes(
+                "导入测试供应商",
+                image_value='=_xlfn.DISPIMG("ID_PRODUCT",1)',
+            )
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "formula-image-products.xlsx",
+                        workbook,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+            assert preview.status_code == 200
+            task_id = preview.json()["data"]["id"]
+
+            discarded = await client.post(
+                f"/api/v1/products/imports/{task_id}/discard", headers=headers
+            )
+            assert discarded.status_code == 200
+            assert discarded.json()["data"]["status"] == "EXPIRED"
+
+            async with SessionLocal() as session:
+                task = await session.get(ProductImportTask, task_id)
+                assert task is not None
+                assert task.status == "EXPIRED"
+                assert task.source_file_storage_key is None
     finally:
         await _cleanup_import_data(supplier_id, user_id, (category_id,))
         await _cleanup_import_user(user_id)

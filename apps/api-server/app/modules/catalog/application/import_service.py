@@ -38,6 +38,7 @@ from app.modules.catalog.infrastructure.models import (
 from app.modules.catalog.infrastructure.repository import ProductRepository
 from app.modules.catalog.schemas import (
     ProductImportConfirmResponse,
+    ProductImportDiscardResponse,
     ProductImportPreviewResponse,
     ProductImportResolveSupplierRequest,
     ProductImportRowResponse,
@@ -191,7 +192,11 @@ class ProductImportService:
         self.supplier_repository = SupplierRepository(session)
 
     async def preview(
-        self, filename: str, file_path: Path, file_size: int, actor_id: uuid.UUID
+        self,
+        filename: str,
+        file_path: Path,
+        file_size: int,
+        actor_id: uuid.UUID,
     ) -> ProductImportPreviewResponse:
         async with _workbook_semaphore():
             await self._cleanup_expired_temp_media()
@@ -316,12 +321,15 @@ class ProductImportService:
         return response
 
     async def confirm(
-        self, task_id: uuid.UUID, actor_id: uuid.UUID
+        self,
+        task_id: uuid.UUID,
+        actor_id: uuid.UUID,
     ) -> ProductImportConfirmResponse:
         staged_image_keys: list[str] = []
         retired_image_keys: set[str] = set()
         completed_source: tuple[uuid.UUID, str] | None = None
         try:
+            await self._cleanup_expired_temp_media()
             async with transaction_scope(self.session):
                 task = await self.repository.import_task_by_id_for_update(task_id)
                 self._assert_editable_task(task, actor_id)
@@ -489,6 +497,32 @@ class ProductImportService:
                 await self.storage.delete(key)
             except Exception:
                 pass
+        return response
+
+    async def discard(
+        self, task_id: uuid.UUID, actor_id: uuid.UUID
+    ) -> ProductImportDiscardResponse:
+        source_key: str | None = None
+        image_keys: list[str] = []
+        async with transaction_scope(self.session):
+            task = await self.repository.import_task_by_id_for_update(task_id)
+            self._assert_viewable_task(task, actor_id)
+            assert task is not None
+            if task.status == "CONFIRMED":
+                raise AppError(
+                    "PRODUCT_IMPORT_TASK_ALREADY_CONFIRMED",
+                    "A confirmed import cannot be discarded",
+                    409,
+                )
+            source_key = task.source_file_storage_key
+            image_keys = [
+                row.image_storage_key
+                for row in task.rows
+                if row.image_storage_key is not None and not row.is_imported
+            ]
+            task.status = "EXPIRED"
+            response = ProductImportDiscardResponse(id=task.id, status="EXPIRED")
+        await self._delete_task_temp_media(task_id, source_key, image_keys)
         return response
 
     def _validate_upload(self, filename: str, file_size: int) -> None:

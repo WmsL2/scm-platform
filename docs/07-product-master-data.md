@@ -82,9 +82,9 @@ Revision `20260911_0020` 将 Product 生命周期冻结为 `ACTIVE` / `DISABLED`
 
 ## 商品图片本地保存
 
-预览校验固定大表的 WPS/Excel `DISPIMG` 引用及内嵌媒体元数据，并在有公式图片时受控保留临时源 Excel；预览不提取或保存商品图片。Confirm 时仅当前实际写入正式 Product 的通过行才从临时源文件逐张流式解码并保存到项目相对目录 `local-data/files/product-images/<import-task-id>/`，不再把整批图片读入内存，也不再使用旧的 50MB 全工作簿累计上限。实际媒体文件受 `.gitignore` 隔离；数据库不保存本机绝对路径，只保存形如 `local-media/product-images/...` 的站内相对引用。后端通过 `/local-media/` 提供该本地开发媒体。
+预览校验固定大表的 WPS/Excel `DISPIMG` 引用及内嵌媒体元数据，临时保存源 Excel，但不提取或保存商品图片。Confirm 时仅当前实际写入正式 Product 的通过行才从临时源文件逐张流式解码并保存到项目相对目录 `local-data/files/product-images/<import-task-id>/`。Confirm 成功或用户关闭预览弹窗时立即删除该临时 Excel；异常关闭时按 24 小时兜底过期清理。不再把整批图片读入内存，也不再使用旧的 50MB 全工作簿累计上限。实际媒体文件受 `.gitignore` 隔离；数据库不保存本机绝对路径，只保存形如 `local-media/product-images/...` 的站内相对引用。后端通过 `/local-media/` 提供该本地开发媒体。
 
-图片列为空仍允许导入；但只要存在 `DISPIMG` 公式，其引用的内嵌媒体缺失、类型不支持、单图超过 `PRODUCT_IMPORT_MAX_IMAGE_MB`（默认 64MB）或 Confirm 时无法安全解码，该行就必须失败，不允许静默写成无图商品。PNG/JPEG/GIF/WebP 保持原格式，TIFF/EMF/BMP/WMF 保存前转换为 PNG，确保浏览器可显示。非公式图片列仍按原始 URL/文本保存。重新导入替换或清空图片时，先成功提交 Product 更新事务，再删除被替代的旧本地图片。全量 Confirm 后临时源 Excel 立即删除；每次新预览会将超过 `PRODUCT_IMPORT_UNCONFIRMED_RETENTION_DAYS`（默认 7 天）的未完成或部分确认任务标记为 `EXPIRED`，仅删除其临时源文件与未导入行媒体。普通编辑使用 `POST /api/v1/products/{product_id}/image` 上传图片、`DELETE /api/v1/products/{product_id}/image` 清除图片，均要求 `product:update`。本规则不自动回填或改写历史 Product；历史数据需重新上传并 Confirm 才应用新逻辑。
+图片列为空仍允许导入；但只要存在 `DISPIMG` 公式，其引用的内嵌媒体缺失、类型不支持、单图超过 `PRODUCT_IMPORT_MAX_IMAGE_MB`（默认 64MB）或 Confirm 时无法安全解码，该行就必须失败，不允许静默写成无图商品。PNG/JPEG/GIF/WebP 保持原格式，TIFF/EMF/BMP/WMF 保存前转换为 PNG，确保浏览器可显示。非公式图片列仍按原始 URL/文本保存。重新导入替换或清空图片时，先成功提交 Product 更新事务，再删除被替代的旧本地图片。关闭预览会调用 `POST /api/v1/products/imports/{task_id}/discard` 删除临时源 Excel；未关闭任务以 24 小时为兜底清理边界。普通编辑使用 `POST /api/v1/products/{product_id}/image` 上传图片、`DELETE /api/v1/products/{product_id}/image` 清除图片，均要求 `product:update`。本规则不自动回填或改写历史 Product；历史数据需重新上传并 Confirm 才应用新逻辑。
 
 ## 大文件导入边界
 

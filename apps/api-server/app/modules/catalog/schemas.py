@@ -409,3 +409,8 @@ class ProductImportConfirmResponse(BaseModel):
     valid_rows: int
     update_rows: int
     invalid_rows: int
+
+
+class ProductImportDiscardResponse(BaseModel):
+    id: uuid.UUID
+    status: Literal["EXPIRED"]

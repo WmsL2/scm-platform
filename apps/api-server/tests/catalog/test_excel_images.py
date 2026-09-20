@@ -169,10 +169,6 @@ async def test_confirm_reads_temporary_workbook_before_staging_embedded_image() 
         def __init__(self) -> None:
             self.saved: list[tuple[str, bytes]] = []
 
-        async def read(self, key: str) -> bytes:
-            assert key == "product-import-sources/task.xlsx"
-            return _workbook_with_wps_cell_image()
-
         async def copy_to(self, key: str, destination: Path) -> None:
             assert key == "product-import-sources/task.xlsx"
             destination.write_bytes(_workbook_with_wps_cell_image())

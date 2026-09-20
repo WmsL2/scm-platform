@@ -21,6 +21,7 @@ from app.modules.catalog.schemas import (
     ProductCostUpdateRequest,
     ProductDetailResponse,
     ProductImportConfirmResponse,
+    ProductImportDiscardResponse,
     ProductImportPreviewResponse,
     ProductImportResolveSupplierRequest,
     ProductImportSupplierCandidateResponse,
@@ -159,7 +160,10 @@ async def preview_product_import(
         upload_path, file_size = await _stage_product_import_upload(file)
         return success(
             await ProductImportService(session).preview(
-                file.filename or "product-import.xlsx", upload_path, file_size, current.user_id
+                file.filename or "product-import.xlsx",
+                upload_path,
+                file_size,
+                current.user_id,
             )
         )
     finally:
@@ -235,6 +239,15 @@ async def confirm_product_import(
     session: SessionDep,
 ) -> ApiResponse[ProductImportConfirmResponse]:
     return success(await ProductImportService(session).confirm(task_id, current.user_id))
+
+
+@router.post("/imports/{task_id}/discard", response_model=ApiResponse[ProductImportDiscardResponse])
+async def discard_product_import(
+    task_id: uuid.UUID,
+    current: Annotated[CurrentUser, Depends(require_permission("product:import"))],
+    session: SessionDep,
+) -> ApiResponse[ProductImportDiscardResponse]:
+    return success(await ProductImportService(session).discard(task_id, current.user_id))
 
 
 @router.get(

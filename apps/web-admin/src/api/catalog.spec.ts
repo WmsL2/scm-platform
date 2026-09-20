@@ -57,6 +57,17 @@ describe("product import api", () => {
     expect(confirmed).toMatchObject({ imported_count: 1 })
   })
 
+  it("discards a closed import preview and its temporary workbook", async () => {
+    http.post.mockResolvedValue({ id: "task-1", status: "EXPIRED" })
+    const { productApi } = await import("./catalog")
+
+    await productApi.discardImport("task-1")
+
+    expect(http.post).toHaveBeenCalledWith(
+      "/api/v1/products/imports/task-1/discard",
+    )
+  })
+
   it("passes the related supplier filter to the product list API", async () => {
     http.get.mockResolvedValue({ items: [] })
     const { productApi } = await import("./catalog")
