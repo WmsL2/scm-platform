@@ -357,7 +357,7 @@ class MatchingService:
     @staticmethod
     def _price_snapshot(product: Product, selected_unit_price: Decimal) -> dict[str, object]:
         return {
-            "cost_price": str(product.cost_price),
+            "cost_price": str(product.cost_price) if product.cost_price is not None else None,
             "jd_price": str(product.jd_price) if product.jd_price is not None else None,
             "agreement_price": str(product.agreement_price)
             if product.agreement_price is not None

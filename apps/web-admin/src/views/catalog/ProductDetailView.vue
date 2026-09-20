@@ -94,7 +94,7 @@ async function loadProduct(): Promise<void> {
   loading.value = true
   try {
     product.value = await productApi.get(productId.value)
-    form.cost_price = product.value.cost_price
+    form.cost_price = product.value.cost_price ?? ""
   } catch (error) {
     ElMessage.error(error instanceof HttpError ? error.response.message : "加载商品详情失败")
   } finally {
@@ -142,7 +142,7 @@ function populateEditForm(item: ProductDetail): void {
   editForm.restricted_regions = item.restricted_regions ?? ""
   editForm.reference_url = item.reference_url ?? ""
   editForm.storefront_type = item.storefront_type ?? ""
-  editForm.cost_price = item.cost_price
+  editForm.cost_price = item.cost_price ?? ""
   editForm.market_price = item.market_price ?? ""
   editForm.jd_price = item.jd_price ?? ""
   editForm.agreement_price = item.agreement_price ?? ""
@@ -188,8 +188,8 @@ async function openEdit(): Promise<void> {
 }
 
 async function updateProduct(): Promise<void> {
-  if (!categoryLevel1.value.trim() || !categoryLevel2.value.trim() || !categoryLevel3.value.trim() || !editForm.cost_price.trim() || Number(editForm.cost_price) <= 0) {
-    ElMessage.warning("请填写三级类目并填写大于0的成本价")
+  if (!categoryLevel1.value.trim() || !categoryLevel2.value.trim() || !categoryLevel3.value.trim()) {
+    ElMessage.warning("请填写三级类目")
     return
   }
   const payload: ProductUpdatePayload = {
@@ -203,7 +203,7 @@ async function updateProduct(): Promise<void> {
     category_level3_name: categoryLevel3.value.trim(),
     item_number: nullable(editForm.item_number),
     jd_same_product_url: nullable(editForm.jd_same_product_url),
-    cost_price: editForm.cost_price.trim(),
+    cost_price: nullable(editForm.cost_price),
     market_price: nullable(editForm.market_price),
     jd_price: nullable(editForm.jd_price),
     agreement_price: nullable(editForm.agreement_price),

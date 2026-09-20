@@ -34,7 +34,7 @@ class BidItemCandidateResponse(BaseModel):
     product_specification: str | None
     supplier_code: str
     supplier_name: str
-    cost_price: Decimal
+    cost_price: Decimal | None
     jd_price: Decimal | None
     agreement_price: Decimal | None
     score: Decimal = Field(ge=0)

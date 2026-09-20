@@ -194,8 +194,6 @@ class ProductService:
                 raise AppError("PRODUCT_NOT_FOUND", "Product not found", 404)
 
             update_values = payload.model_dump(exclude_unset=True)
-            if "cost_price" in update_values and update_values["cost_price"] is None:
-                raise AppError("PRODUCT_COST_PRICE_REQUIRED", "Cost price is required", 422)
             for field, value in update_values.items():
                 setattr(product, field, value)
             product.updated_by = actor_id

@@ -733,11 +733,7 @@ class ProductImportService:
         image_validation_error = row.calculated_data.get(_IMAGE_VALIDATION_ERROR_KEY)
         if image_validation_error:
             errors.append(image_validation_error)
-        if self._formula_result_missing(row, "成本价"):
-            errors.append("成本价公式没有可用计算结果，请用Excel/WPS重新计算并保存")
-            cost_price = None
-        else:
-            cost_price = self._required_decimal(row, "成本价", errors)
+        cost_price = self._decimal_or_none(self._import_value(row, "成本价"))
         if cost_price is not None and cost_price <= 0:
             errors.append("成本价必须大于0")
         for header in ("一级类目", "二级类目", "三级类目"):
@@ -749,14 +745,6 @@ class ProductImportService:
         for header in _DIRECT_DECIMAL_HEADERS:
             if header == "成本价":
                 continue
-            if self._formula_result_missing(row, header):
-                errors.append(f"{header}公式没有可用计算结果，请用Excel/WPS重新计算并保存")
-                continue
-            value = self._import_value(row, header)
-            if value and self._decimal_or_none(
-                value, percentage=header in _PERCENT_HEADERS
-            ) is None:
-                errors.append(f"{header}必须是数字")
         for header in ("好评率", "折扣率"):
             rate_value = self._decimal_or_none(
                 self._import_value(row, header), percentage=True
@@ -764,7 +752,8 @@ class ProductImportService:
             if rate_value is not None and not Decimal("0") <= rate_value <= Decimal("1"):
                 errors.append(f"{header}必须在0%到100%之间，裸数字请填写0到1")
         sales_value = self._optional(self._import_value(row, "销量"))
-        if sales_value is not None and self._integer_or_none(sales_value) is None:
+        parsed_sales_value = self._integer_or_none(sales_value)
+        if parsed_sales_value is not None and parsed_sales_value < 0:
             errors.append("销量必须是大于等于0的整数")
         match = matches.get(row.supplier_match_id) if row.supplier_match_id is not None else None
         if not row.supplier_name_raw:
@@ -845,8 +834,6 @@ class ProductImportService:
         payload = ProductUpdateRequest.model_validate(
             {name: data.get(name) for name in ProductUpdateRequest.model_fields}
         )
-        if payload.cost_price is None:
-            raise RuntimeError("A ready Product Import row is missing a cost price")
         sku = data.get("sku")
         if not isinstance(sku, str) or not sku:
             raise RuntimeError("A ready Product Import row is missing an SKU")
@@ -924,8 +911,6 @@ class ProductImportService:
             "after_sales_policy": self._optional(values["售后政策"]),
         }
         payload = ProductUpdateRequest.model_validate(candidate)
-        if payload.cost_price is None:
-            raise RuntimeError("Validated Product Import values are missing cost price")
         normalized = payload.model_dump(mode="json")
         normalized.update(
             {
@@ -1342,18 +1327,9 @@ class ProductImportService:
             parsed = Decimal(value.strip())
         except (InvalidOperation, ValueError):
             return None
-        if parsed != parsed.to_integral_value() or parsed < 0:
+        if parsed != parsed.to_integral_value():
             return None
         return int(parsed)
-
-    def _required_decimal(
-        self, row: ProductImportRow, header: str, errors: list[str]
-    ) -> Decimal | None:
-        value = self._decimal_or_none(self._import_value(row, header))
-        if value is None:
-            errors.append(f"{header}必须是数字")
-            return None
-        return value
 
     @staticmethod
     def _import_value(row: ProductImportRow, header: str) -> str | None:
@@ -1361,14 +1337,6 @@ class ProductImportService:
         if source and source.startswith("="):
             return row.calculated_data.get(header)
         return source
-
-    @staticmethod
-    def _formula_result_missing(row: ProductImportRow, header: str) -> bool:
-        source = row.source_data.get(header)
-        if not source or not source.startswith("="):
-            return False
-        calculated = row.calculated_data.get(header)
-        return calculated is None or not calculated.strip()
 
     @staticmethod
     def _optional_date(value: str | None) -> date | None:

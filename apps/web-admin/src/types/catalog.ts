@@ -14,7 +14,7 @@ export interface ProductListItem {
   category_path: string
   source_supplier_id: string
   source_supplier_name: string | null
-  cost_price: string
+  cost_price: string | null
   agreement_price: string | null
   jd_price: string | null
   market_price: string | null
@@ -185,7 +185,7 @@ export interface ProductUpdatePayload {
   category_level3_name: string
   item_number: string | null
   jd_same_product_url: string | null
-  cost_price: string
+  cost_price: string | null
   market_price: string | null
   jd_price: string | null
   agreement_price: string | null

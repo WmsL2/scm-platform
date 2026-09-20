@@ -124,7 +124,7 @@ class Product(Base):
     category_level3_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     item_number: Mapped[str | None] = mapped_column(String(255), nullable=True)
     jd_same_product_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
-    cost_price: Mapped[Decimal] = mapped_column(Numeric(65, 30), nullable=False)
+    cost_price: Mapped[Decimal | None] = mapped_column(Numeric(65, 30), nullable=True)
     market_price: Mapped[Decimal | None] = mapped_column(Numeric(65, 30), nullable=True)
     jd_price: Mapped[Decimal | None] = mapped_column(Numeric(65, 30), nullable=True)
     agreement_price: Mapped[Decimal | None] = mapped_column(Numeric(65, 30), nullable=True)
