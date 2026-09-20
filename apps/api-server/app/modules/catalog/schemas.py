@@ -144,7 +144,7 @@ class ProductListItem(_ProductPriceResponseMixin):
     category_path: str
     source_supplier_id: uuid.UUID
     source_supplier_name: str | None
-    cost_price: Decimal
+    cost_price: Decimal | None
     agreement_price: Decimal | None
     jd_price: Decimal | None
     market_price: Decimal | None
@@ -197,7 +197,7 @@ class ProductDetailResponse(_ProductPriceResponseMixin):
     category_level3_name: str | None
     item_number: str | None
     jd_same_product_url: str | None
-    cost_price: Decimal
+    cost_price: Decimal | None
     market_price: Decimal | None
     jd_price: Decimal | None
     agreement_price: Decimal | None

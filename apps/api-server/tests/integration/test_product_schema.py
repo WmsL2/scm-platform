@@ -57,7 +57,7 @@ async def test_product_schema_and_permission_directory() -> None:
         }
         decimal_columns = await session.execute(
             text(
-                "SELECT table_name, column_name, numeric_precision, numeric_scale "
+                "SELECT table_name, column_name, numeric_precision, numeric_scale, is_nullable "
                 "FROM information_schema.columns "
                 "WHERE table_schema = DATABASE() "
                 "AND ((table_name = 'scm_category' AND column_name = 'deduction_rate') "
@@ -67,15 +67,15 @@ async def test_product_schema_and_permission_directory() -> None:
             )
         )
         assert {
-            (row[0], row[1], row[2], row[3]) for row in decimal_columns
+            (row[0], row[1], row[2], row[3], row[4]) for row in decimal_columns
         } == {
-            ("scm_category", "deduction_rate", 9, 4),
-            ("scm_product", "cost_price", 65, 30),
-            ("scm_product", "market_price", 65, 30),
-            ("scm_product", "jd_price", 65, 30),
-            ("scm_product", "agreement_price", 65, 30),
-            ("scm_product", "agreement_purchase_price", 65, 30),
-            ("scm_product", "jd_self_operated_price", 65, 30),
+            ("scm_category", "deduction_rate", 9, 4, "NO"),
+            ("scm_product", "cost_price", 65, 30, "YES"),
+            ("scm_product", "market_price", 65, 30, "YES"),
+            ("scm_product", "jd_price", 65, 30, "YES"),
+            ("scm_product", "agreement_price", 65, 30, "YES"),
+            ("scm_product", "agreement_purchase_price", 65, 30, "YES"),
+            ("scm_product", "jd_self_operated_price", 65, 30, "YES"),
         }
         permissions = await session.execute(
             text(

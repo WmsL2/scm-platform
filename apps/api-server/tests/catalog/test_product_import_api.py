@@ -746,7 +746,7 @@ async def test_product_import_rejects_formula_when_embedded_image_is_missing() -
         await _cleanup_import_user(user_id)
 
 
-async def test_product_import_normalizes_rates_and_rejects_invalid_numeric_text() -> None:
+async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_text() -> None:
     user_id, headers = await _create_import_user()
     supplier_id, category_id = await _create_references()
     try:
@@ -873,8 +873,7 @@ async def test_product_import_normalizes_rates_and_rejects_invalid_numeric_text(
             )
             assert div_zero_preview.status_code == 200
             div_zero_row = div_zero_preview.json()["data"]["rows"][0]
-            assert div_zero_row["is_valid"] is False
-            assert "毛利率必须是数字" in div_zero_row["error_message"]
+            assert div_zero_row["is_valid"] is True
 
             price_precision_workbook = _workbook_bytes(
                 "导入测试供应商",
@@ -970,9 +969,7 @@ async def test_product_import_normalizes_rates_and_rejects_invalid_numeric_text(
                 },
             )
             invalid_row = invalid_preview.json()["data"]["rows"][0]
-            assert invalid_row["is_valid"] is False
-            assert "利润必须是数字" in invalid_row["error_message"]
-            assert "价格虚高比例必须是数字" in invalid_row["error_message"]
+            assert invalid_row["is_valid"] is True
 
             formula_preview = await client.post(
                 "/api/v1/products/imports/preview",
@@ -990,8 +987,7 @@ async def test_product_import_normalizes_rates_and_rejects_invalid_numeric_text(
                 },
             )
             formula_row = formula_preview.json()["data"]["rows"][0]
-            assert formula_row["is_valid"] is False
-            assert "成本价公式没有可用计算结果" in formula_row["error_message"]
+            assert formula_row["is_valid"] is True
 
         async with SessionLocal() as session:
             product = await session.scalar(select(Product).where(Product.sku == "SKU-1"))
@@ -1001,6 +997,94 @@ async def test_product_import_normalizes_rates_and_rejects_invalid_numeric_text(
             assert product.gross_margin == Decimal("0.2778")
             assert product.discount_rate is None
             assert product.profit is None
+    finally:
+        await _cleanup_import_data(supplier_id, user_id, (category_id,))
+        await _cleanup_import_user(user_id)
+
+
+async def test_product_import_stores_unparseable_numeric_values_as_null() -> None:
+    user_id, headers = await _create_import_user()
+    supplier_id, category_id = await _create_references()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            async def preview_and_confirm(
+                sku: str, *, cost_price: object, overrides: dict[str, object] | None = None
+            ) -> None:
+                preview = await client.post(
+                    "/api/v1/products/imports/preview",
+                    headers=headers,
+                    files={
+                        "file": (
+                            f"{sku}.xlsx",
+                            _workbook_bytes(
+                                "导入测试供应商",
+                                sku_override=sku,
+                                cost_price=cost_price,  # type: ignore[arg-type]
+                                value_overrides=overrides,
+                            ),
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+                    },
+                )
+                assert preview.status_code == 200
+                data = preview.json()["data"]
+                assert data["valid_rows"] + data["update_rows"] == 1, data["rows"]
+                confirmed = await client.post(
+                    f"/api/v1/products/imports/{data['id']}/confirm", headers=headers
+                )
+                assert confirmed.status_code == 200
+
+            await preview_and_confirm("SKU-NULL-TEXT", cost_price="暂无")
+            await preview_and_confirm("SKU-NULL-BLANK", cost_price="")
+            await preview_and_confirm(
+                "SKU-NULL-NUMBERS",
+                cost_price="100.123456789012345",
+                overrides={
+                    "市场价": "暂无", "京东价": "abc", "协议价": "--", "利润": "N/A",
+                    "毛利率": "暂无", "好评率": "abc", "折扣率": "--", "销量": "10.5",
+                },
+            )
+
+            async with SessionLocal() as session:
+                products = {
+                    product.sku: product
+                    for product in (
+                        await session.scalars(
+                            select(Product).where(Product.created_by == user_id)
+                        )
+                    ).all()
+                }
+                assert products["SKU-NULL-TEXT"].cost_price is None
+                assert products["SKU-NULL-BLANK"].cost_price is None
+                numeric_product = products["SKU-NULL-NUMBERS"]
+                assert numeric_product.cost_price == Decimal("100.123456789012345")
+                assert numeric_product.market_price is None
+                assert numeric_product.jd_price is None
+                assert numeric_product.agreement_price is None
+                assert numeric_product.profit is None
+                assert numeric_product.gross_margin is None
+                assert numeric_product.positive_rating is None
+                assert numeric_product.discount_rate is None
+                assert numeric_product.sales_volume is None
+
+            await preview_and_confirm(
+                "SKU-REIMPORT-NULL",
+                cost_price="80",
+                overrides={"市场价": "100", "京东价": "90"},
+            )
+            await preview_and_confirm(
+                "SKU-REIMPORT-NULL",
+                cost_price="暂无",
+                overrides={"市场价": "暂无", "京东价": "abc"},
+            )
+            async with SessionLocal() as session:
+                updated = await session.scalar(
+                    select(Product).where(Product.sku == "SKU-REIMPORT-NULL")
+                )
+                assert updated is not None
+                assert updated.cost_price is None
+                assert updated.market_price is None
+                assert updated.jd_price is None
     finally:
         await _cleanup_import_data(supplier_id, user_id, (category_id,))
         await _cleanup_import_user(user_id)

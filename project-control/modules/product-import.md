@@ -1,6 +1,6 @@
 # 商品大表导入
 
-状态：IMPLEMENTED / PRODUCT_MASTER_2026_43_COLUMNS
+状态：IMPLEMENTED / PRODUCT_MASTER_2026_43_COLUMNS / NULLABLE_NUMERIC_FIELDS
 Owner：feat/product-import-safety-concurrency
 Last Updated：2026-09-18
 
@@ -22,7 +22,7 @@ Last Updated：2026-09-18
 - [x] 同来源供应商 + SKU 命中停用 Product 时按行报错并阻止 Confirm；不隐式恢复或覆盖，永久删除后才可作为新商品导入
 - [x] 同来源供应商 + SKU 命中正常 Product 时按行标识为更新，并在 Confirm 保留 ID/创建审计/状态的前提下原子覆盖固定模板字段；记录变更字段供预览和确认后查看
 - [x] 供应商与 SKU 在同键更新中不可修改；其余 41 列全部覆盖，空单元格清空旧值，成功提交后删除被替换的旧本地图片
-- [x] 比例、金额和销量在预览阶段统一 Decimal/Pydantic 校验；比例数值及公式结果按单元格显示精度取值并四舍五入到数据库 4 位小数，`46.25%` 标准化为 `0.4625`；利润公式按显示精度消除浮点尾差；六个价格字段以 `DECIMAL(65,30)` 保留 Excel 底层原值且不按显示格式四舍五入；空值为 `NULL`，非法文本、无缓存公式结果和 `#DIV/0!` 等公式错误阻止确认
+- [x] 比例、金额和销量在预览阶段统一 Decimal/Pydantic 标准化；可解析比例及公式结果按既有精度规则保存，六个价格字段以 `DECIMAL(65,30)` 保留 Excel 底层原值；空值、非法文本、无缓存公式结果和 `#DIV/0!` 等数值无效值均为 `NULL`，不单独阻止确认（ADR-0030）
 - [x] Confirm 批量锁定有效供应商和正式商品，并以预览时 Product ID / `updated_at` 检测并发创建、更新或删除；冲突返回 409，不静默覆盖
 - [x] 工作簿预览与 Confirm 图片提取共用可配置的进程内并发闸门，默认每进程 1 个重任务
 - [x] Confirm 浏览器请求允许等待 15 分钟；正式 Product 的供应商 + SKU 查询与锁定按稳定顺序每 500 组分批执行，避免 MySQL 超大复合 `IN` 的范围优化内存告警，同时保持事务原子性和并发冲突保护
