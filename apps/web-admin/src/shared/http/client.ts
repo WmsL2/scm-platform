@@ -121,7 +121,9 @@ export class HttpClient {
   }
 
   private async requestBlob(
+    method: "GET" | "POST",
     path: string,
+    body: unknown,
     requestOptions: RequestOptions,
     allowRefresh: boolean,
   ): Promise<Blob> {
@@ -135,13 +137,16 @@ export class HttpClient {
         : this.options.getAuthorization?.()
       const baseUrl = (this.options.baseUrl ?? import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")
       const response = await fetch(`${baseUrl}${path}`, {
+        method,
         credentials: "include",
         headers: {
           Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
           ...(authorization ? { Authorization: authorization } : {}),
           "X-Request-ID": requestOptions.requestId ?? createRequestId(),
           ...requestOptions.headers,
         },
+        body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
       })
       if (
@@ -150,7 +155,7 @@ export class HttpClient {
         && allowRefresh
         && await this.options.refreshAuthorization?.()
       ) {
-        return this.requestBlob(path, requestOptions, false)
+        return this.requestBlob(method, path, body, requestOptions, false)
       }
       if (response.status === 401 && requestOptions.authenticated !== false) {
         this.options.onUnauthorized?.()
@@ -173,7 +178,11 @@ export class HttpClient {
   }
 
   getBlob(path: string, requestOptions: RequestOptions = {}): Promise<Blob> {
-    return this.requestBlob(path, requestOptions, true)
+    return this.requestBlob("GET", path, undefined, requestOptions, true)
+  }
+
+  postBlob<TBody = unknown>(path: string, body: TBody, requestOptions: RequestOptions = {}): Promise<Blob> {
+    return this.requestBlob("POST", path, body, requestOptions, true)
   }
 
   post<T, TBody = unknown>(path: string, body?: TBody, options?: RequestOptions): Promise<T> {

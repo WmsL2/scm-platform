@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
+from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMN_KEYS
 from app.modules.catalog.domain.lifecycle import ProductStatus
 
 
@@ -254,6 +255,23 @@ class ProductPurgeResponse(BaseModel):
 class ProductCostUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cost_price: Decimal = Field(gt=0, max_digits=65, decimal_places=30)
+
+class ProductExportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    product_ids: list[uuid.UUID] = Field(min_length=1, max_length=5000)
+    columns: list[str] = Field(min_length=1, max_length=43)
+    @field_validator("product_ids")
+    @classmethod
+    def unique_product_ids(cls, value: list[uuid.UUID]) -> list[uuid.UUID]:
+        if len(set(value)) != len(value):
+            raise ValueError("product_ids must not contain duplicates")
+        return value
+    @field_validator("columns")
+    @classmethod
+    def valid_columns(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value) or set(value) - set(PRODUCT_EXPORT_COLUMN_KEYS):
+            raise ValueError("columns contains duplicate or unsupported export fields")
+        return value
 
 
 class ProductUpdateRequest(BaseModel):

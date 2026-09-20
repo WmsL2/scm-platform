@@ -1223,8 +1223,9 @@ class ProductImportService:
                         and dispimg_image_id(row.source_data.get("图片")) is not None
                     ),
                     category_path=" / ".join(
-                        self._normalized(row.source_data[name])
+                        value
                         for name in ("一级类目", "二级类目", "三级类目")
+                        if (value := self._normalized(row.source_data[name]))
                     ),
                     supplier_match_id=row.supplier_match_id,
                     is_valid=row.is_valid,

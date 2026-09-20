@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.contracts import AppError, PageParams, PageResult
 from app.core.transaction import transaction_scope
 from app.infrastructure.adapters import ObjectStorage, get_object_storage
+from app.modules.catalog.application.media import local_media_storage_key
 from app.modules.catalog.application.product_category_filter import (
     parse_selection,
     selection_key,
@@ -494,7 +495,4 @@ class ProductService:
 
     @staticmethod
     def _local_media_key(image_reference: str | None) -> str | None:
-        prefix = "local-media/"
-        if image_reference and image_reference.startswith(prefix):
-            return image_reference[len(prefix) :]
-        return None
+        return local_media_storage_key(image_reference)

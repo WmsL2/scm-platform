@@ -305,6 +305,28 @@ async def test_product_import_accepts_blank_styled_columns_after_approved_header
         await _cleanup_import_user(user_id)
 
 
+async def test_product_import_preview_omits_blank_category_levels() -> None:
+    user_id, headers = await _create_import_user()
+    supplier_id, category_id = await _create_references()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            for sku, path, expected in (
+                ("SKU-CATEGORY-BLANK", ("", "", ""), ""),
+                ("SKU-CATEGORY-LEADING", ("", "办公耗材", "打印纸"), "办公耗材 / 打印纸"),
+                ("SKU-CATEGORY-MIDDLE", ("办公", "", "打印纸"), "办公 / 打印纸"),
+            ):
+                preview = await client.post(
+                    "/api/v1/products/imports/preview",
+                    headers=headers,
+                files={"file": (f"{sku}.xlsx", _workbook_bytes("导入测试供应商", sku_override=sku, category_path=path), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},  # noqa: E501
+                )
+                assert preview.status_code == 200
+                assert preview.json()["data"]["rows"][0]["category_path"] == expected
+    finally:
+        await _cleanup_import_data(supplier_id, user_id, (category_id,))
+        await _cleanup_import_user(user_id)
+
+
 async def _cleanup_import_data(
     supplier_id: uuid.UUID, user_id: uuid.UUID, category_ids: tuple[uuid.UUID, ...]
 ) -> None:

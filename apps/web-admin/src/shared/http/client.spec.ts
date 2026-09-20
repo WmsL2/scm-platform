@@ -10,6 +10,9 @@ function response(status: number, body: unknown): Response {
     text: vi.fn().mockResolvedValue(JSON.stringify(body)),
   } as unknown as Response
 }
+function blobResponse(status: number): Response {
+  return { ok: status >= 200 && status < 300, status, statusText: "OK", text: vi.fn().mockResolvedValue(""), blob: vi.fn().mockResolvedValue(new Blob(["xlsx"])) } as unknown as Response
+}
 
 describe("HttpClient", () => {
   beforeEach(() => {
@@ -150,5 +153,16 @@ describe("HttpClient", () => {
     expect(refreshAuthorization).toHaveBeenCalledOnce()
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(onUnauthorized).toHaveBeenCalledOnce()
+  })
+
+  it("refreshes postBlob and preserves its original POST body", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(blobResponse(401)).mockResolvedValueOnce(blobResponse(200))
+    vi.stubGlobal("fetch", fetchMock)
+    let authorization = "Bearer expired-token"
+    const client = new HttpClient({ getAuthorization: () => authorization, refreshAuthorization: async () => { authorization = "Bearer refreshed-token"; return true } })
+    await expect(client.postBlob("/api/v1/products/export", { product_ids: ["product-a"], columns: ["sku", "cost_price"] }, { requestId: "export-request-1" })).resolves.toBeInstanceOf(Blob)
+    const retried = fetchMock.mock.calls[1]?.[1] as RequestInit
+    expect(retried).toMatchObject({ method: "POST", body: JSON.stringify({ product_ids: ["product-a"], columns: ["sku", "cost_price"] }) })
+    expect(retried.headers).toMatchObject({ Authorization: "Bearer refreshed-token", "Content-Type": "application/json", Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "X-Request-ID": "export-request-1" })
   })
 })
