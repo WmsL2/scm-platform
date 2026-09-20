@@ -86,15 +86,18 @@ class ProductRepository:
             if status == ProductStatus.ACTIVE
             else ()
         )
+        category_criteria = [Product.category_level1_name.is_not(None)]
+        if level in {"LEVEL2", "LEVEL3"}:
+            category_criteria.append(Product.category_level2_name.is_not(None))
+        if level == "LEVEL3":
+            category_criteria.append(Product.category_level3_name.is_not(None))
         statement = (
             select(*columns)
             .select_from(Product)
             .join(Supplier)
             .where(
                 Product.status == status,
-                Product.category_level1_name.is_not(None),
-                Product.category_level2_name.is_not(None),
-                Product.category_level3_name.is_not(None),
+                *category_criteria,
                 *supplier_criteria,
             )
         )

@@ -180,9 +180,9 @@ export interface ProductUpdatePayload {
   brand: string | null
   model: string | null
   product_name: string | null
-  category_level1_name: string
-  category_level2_name: string
-  category_level3_name: string
+  category_level1_name: string | null
+  category_level2_name: string | null
+  category_level3_name: string | null
   item_number: string | null
   jd_same_product_url: string | null
   cost_price: string | null
