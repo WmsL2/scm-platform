@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from "vue"
 import { Delete, Download, Edit, Plus, Refresh, Search, Upload } from "@element-plus/icons-vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { categoryApi } from "../../api/category"
+import { useExcelImportNavigationLock } from "../../shared/import/excelImportNavigationLock"
 import { useAuthStore } from "../../stores/auth"
 import {
   deductionRateToPurchaseCoefficient,
@@ -19,6 +20,7 @@ const total = ref(0)
 const loading = ref(false)
 const saving = ref(false)
 const importing = ref(false)
+const importNavigationLock = useExcelImportNavigationLock()
 const importVisible = ref(false)
 const formVisible = ref(false)
 const editingId = ref<string | null>(null)
@@ -196,6 +198,7 @@ async function submitImport() {
   }
 
   importing.value = true
+  importNavigationLock.start()
   try {
     importResult.value = await categoryApi.import(importFile.value, deductionRatePercent)
     if (importResult.value.failed === 0) {
@@ -206,6 +209,7 @@ async function submitImport() {
   } catch {
     ElMessage.error("导入失败，请检查文件和采购价系数")
   } finally {
+    importNavigationLock.stop()
     importing.value = false
   }
 }
