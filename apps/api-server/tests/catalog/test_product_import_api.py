@@ -12,7 +12,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill
 from openpyxl.utils import get_column_letter
 from PIL import Image
-from sqlalchemy import delete, select
+from sqlalchemy import delete, inspect, select
 
 from app.core.database import SessionLocal
 from app.main import app
@@ -22,7 +22,10 @@ from app.modules.catalog.api.router import (
     PRODUCT_IMPORT_UPLOAD_CHUNK_BYTES,
     _stage_product_import_upload,
 )
-from app.modules.catalog.application.import_service import PRODUCT_IMPORT_HEADERS
+from app.modules.catalog.application.import_service import (
+    PRODUCT_IMPORT_HEADERS,
+    ProductImportService,
+)
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import (
     Category,
@@ -35,6 +38,32 @@ from app.modules.supplier.infrastructure.models import Supplier
 from app.modules.system.models import Permission, Role, RolePermission, User, UserRole
 
 IMPORT_PERMISSIONS = ("product:import", "product:import:resolve")
+
+
+def test_product_import_initializes_empty_supplier_match_collection() -> None:
+    row = ProductImportRow(
+        source_data={},
+        calculated_data={},
+        supplier_name_raw=None,
+        is_valid=False,
+    )
+    supplier_matches = ProductImportService._build_supplier_matches([], [row])
+    task = ProductImportTask(
+        id=uuid.uuid4(),
+        original_filename="blank-suppliers.xlsx",
+        status="VALIDATED",
+        total_rows=1,
+        valid_rows=0,
+        update_rows=0,
+        invalid_rows=1,
+        imported_rows=0,
+        created_by=uuid.uuid4(),
+        supplier_matches=supplier_matches,
+    )
+
+    assert supplier_matches == []
+    assert task.supplier_matches == []
+    assert inspect(task).attrs.supplier_matches.loaded_value == []
 
 
 async def test_product_import_upload_is_staged_in_chunks() -> None:
@@ -303,6 +332,37 @@ async def test_product_import_accepts_blank_styled_columns_after_approved_header
             assert preview.json()["data"]["total_rows"] == 1
     finally:
         await _cleanup_import_data(supplier_id, user_id, (category_id,))
+        await _cleanup_import_user(user_id)
+
+
+async def test_product_import_preview_handles_all_blank_suppliers() -> None:
+    user_id, headers = await _create_import_user()
+    unused_supplier_id = uuid.uuid4()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            preview = await client.post(
+                "/api/v1/products/imports/preview",
+                headers=headers,
+                files={
+                    "file": (
+                        "blank-suppliers.xlsx",
+                        _workbook_bytes("", ""),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+
+        assert preview.status_code == 200
+        data = preview.json()["data"]
+        assert data["status"] == "VALIDATED"
+        assert data["total_rows"] == 2
+        assert data["valid_rows"] == 0
+        assert data["invalid_rows"] == 2
+        assert data["supplier_matches"] == []
+        assert all(row["is_valid"] is False for row in data["rows"])
+        assert all("供应商不能为空" in row["error_message"] for row in data["rows"])
+    finally:
+        await _cleanup_import_data(unused_supplier_id, user_id, ())
         await _cleanup_import_user(user_id)
 
 
