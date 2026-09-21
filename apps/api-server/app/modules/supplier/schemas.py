@@ -35,32 +35,42 @@ class SupplierCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     supplier_name: str = Field(min_length=1, max_length=255)
-    main_brands: str = Field(min_length=1)
-    advantage: str = Field(min_length=1)
+    main_brands: str | None = None
+    advantage: str | None = None
     archive_status: ArchiveStatus = ArchiveStatus.DRAFT
     contacts: list[SupplierContactInput] = Field(default_factory=list, max_length=100)
 
-    @field_validator("supplier_name", "main_brands", "advantage")
+    @field_validator("supplier_name")
     @classmethod
-    def validate_required_text(cls, value: str) -> str:
+    def validate_supplier_name(cls, value: str) -> str:
         return _normalize_required_text(value)
+
+    @field_validator("main_brands", "advantage")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value)
 
 
 class SupplierUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     supplier_name: str | None = Field(default=None, min_length=1, max_length=255)
-    main_brands: str | None = Field(default=None, min_length=1)
-    advantage: str | None = Field(default=None, min_length=1)
+    main_brands: str | None = None
+    advantage: str | None = None
     archive_status: ArchiveStatus | None = None
     contacts: list[SupplierContactInput] | None = Field(default=None, max_length=100)
 
-    @field_validator("supplier_name", "main_brands", "advantage")
+    @field_validator("supplier_name")
     @classmethod
-    def validate_required_text(cls, value: str | None) -> str | None:
+    def validate_supplier_name(cls, value: str | None) -> str | None:
         if value is None:
             return None
         return _normalize_required_text(value)
+
+    @field_validator("main_brands", "advantage")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value)
 
 
 class CooperationCommand(BaseModel):
@@ -136,3 +146,10 @@ def _normalize_required_text(value: str) -> str:
     if not normalized:
         raise ValueError("must not be blank")
     return normalized
+
+
+def _normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None

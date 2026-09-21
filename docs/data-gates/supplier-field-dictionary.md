@@ -24,8 +24,8 @@
 - `supplier_code` 由后端系统自动生成，示例格式 `SUP00000001`；全局唯一、创建后不可修改、永久不回收，前端不得填写或修改。
 - 归档状态 `archive_status`：`DRAFT`、`PENDING`、`ARCHIVED`。
 - 合作状态 `cooperation_status`：`NORMAL`、`STOPPED`、`BLACKLIST`。
-- 新建供应商可选择 `DRAFT`、`PENDING` 或 `ARCHIVED`，未传时默认 `DRAFT`；Excel 导入确认也可为整批选择这三种初始归档状态，未传时默认 `ARCHIVED`，合作状态固定为 `NORMAL`。Excel 导入模板中仅“供应商名称”必填；主营品牌、主要优势、联系人和联系电话可以为空，前两项为空时以空字符串写入现有非空正式列。
-- 编辑供应商可调整 `archive_status`；选择 `ARCHIVED` 时必须记录当前操作人的归档审计，选择 `DRAFT` 或 `PENDING` 时不保留归档审计。`supplier_code` 与 `cooperation_status` 仍不能通过通用编辑修改。
+- 新建供应商可选择 `DRAFT`、`PENDING` 或 `ARCHIVED`，未传时默认 `DRAFT`；Excel 导入确认也可为整批选择这三种初始归档状态，未传时默认 `ARCHIVED`，合作状态固定为 `NORMAL`。手工新增和 Excel 导入均仅要求“供应商名称”；主营品牌、主要优势、联系人和联系电话可以为空，前两项为空时以空字符串写入现有非空正式列。
+- 编辑供应商可调整 `archive_status`，也允许主营品牌和主要优势留空；选择 `ARCHIVED` 时必须记录当前操作人的归档审计，选择 `DRAFT` 或 `PENDING` 时不保留归档审计。`supplier_code` 与 `cooperation_status` 仍不能通过通用编辑修改。
 - Supplier Master 与 Product Master 是独立领域；正式关联使用系统 `supplier_id`，不用供应商名称作业务外键。一期不建设 Supplier Product Quote 领域。
 
 ## Supplier Gate

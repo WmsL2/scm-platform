@@ -15,7 +15,7 @@ Supplier code is generated only through BusinessSequence with key SUPPLIER, form
 
 ## Field Gate
 
-真实供应商来源资料已确认，详见 `docs/data-gates/supplier-field-dictionary.md`。`supplier_name`、`main_brands`、`advantage`、`contact_name`、`contact_phone` 的来源语义与已确认规则可用于 Schema Design；联系人与电话为 nullable。Excel 导入时仅 `supplier_name` 必填，其他四列允许空；手工新增/编辑的 `main_brands`、`advantage` 必填契约保持不变。`supplier_code` 继续仅由系统生成，来源旧编码不能作为正式系统编码。
+真实供应商来源资料已确认，详见 `docs/data-gates/supplier-field-dictionary.md`。`supplier_name`、`main_brands`、`advantage`、`contact_name`、`contact_phone` 的来源语义与已确认规则可用于 Schema Design；手工新增、编辑和 Excel 导入均仅要求 `supplier_name`，其余四项允许为空。现有 `main_brands`、`advantage` 非空数据库列在业务留空时保存空字符串。`supplier_code` 继续仅由系统生成，来源旧编码不能作为正式系统编码。
 
 未在资料中确认的企业、税务、地址、银行、资质及合作等级字段仍为 GATED：不得自行添加，也不得由样例推断 nullable 或 UNIQUE 规则。后端 Migration 只能使用本文件和字段字典已确认的字段；资质业务字段仍不得设计或暴露 API。
 
