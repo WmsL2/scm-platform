@@ -87,6 +87,9 @@ class Product(Base):
         Index("ix_scm_product_status", "status"),
         Index("ix_scm_product_cost_price", "cost_price"),
         Index("ix_scm_product_agreement_price", "agreement_price"),
+        Index("ix_scm_product_status_jd_price", "status", "jd_price"),
+        Index("ix_scm_product_status_profit", "status", "profit"),
+        Index("ix_scm_product_status_company_name", "status", "company_name"),
         Index("ix_scm_product_discount_rate", "discount_rate"),
         Index("ix_scm_product_sales_volume", "sales_volume"),
         Index(

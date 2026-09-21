@@ -11,6 +11,13 @@ import { useAuthStore } from "../../stores/auth"
 import { PRODUCT_EXPORT_COLUMN_DEFINITIONS } from "../../types/catalog"
 import { mergePageSelection, restoreExportColumns } from "./productExportSelection"
 import {
+  PRODUCT_LIST_OPTIONAL_COLUMNS,
+  restoreProductListOptionalColumns,
+  updateProductListOptionalColumns,
+  type ProductListOptionalColumn,
+  type ProductListOptionalColumnKey,
+} from "./productListColumns"
+import {
   derivedLevel1Keys,
   derivedLevel2Keys,
   updateExplicitSelection,
@@ -20,6 +27,8 @@ import type {
   ProductImportPreview,
   ProductImportSupplierCandidate,
   ProductCategoryFilterOption,
+  ProductFilterOption,
+  ProductFilterOptionField,
   ProductListItem,
   ProductExportColumnKey,
 } from "../../types/catalog"
@@ -64,34 +73,54 @@ const categoryLevel1SelectRef = ref<CategorySelectInstance>()
 const categoryLevel2SelectRef = ref<CategorySelectInstance>()
 const categoryLevel3SelectRef = ref<CategorySelectInstance>()
 const categorySearchSequence = { LEVEL1: 0, LEVEL2: 0, LEVEL3: 0 }
+const productFilterSelections = reactive<Record<ProductFilterOptionField, string[]>>({
+  COMPANY: [], PURCHASING_AGENT: [], BRAND: [], SUPPLIER: [],
+})
+const productFilterOptions = reactive<Record<ProductFilterOptionField, ProductFilterOption[]>>({
+  COMPANY: [], PURCHASING_AGENT: [], BRAND: [], SUPPLIER: [],
+})
+const productFilterOptionLoading = reactive<Record<ProductFilterOptionField, boolean>>({
+  COMPANY: false, PURCHASING_AGENT: false, BRAND: false, SUPPLIER: false,
+})
+const productFilterOptionNextOffset = reactive<Record<ProductFilterOptionField, number>>({
+  COMPANY: 0, PURCHASING_AGENT: 0, BRAND: 0, SUPPLIER: 0,
+})
+const productFilterOptionHasMore = reactive<Record<ProductFilterOptionField, boolean>>({
+  COMPANY: true, PURCHASING_AGENT: true, BRAND: true, SUPPLIER: true,
+})
+const productFilterOptionKeyword = reactive<Record<ProductFilterOptionField, string>>({
+  COMPANY: "", PURCHASING_AGENT: "", BRAND: "", SUPPLIER: "",
+})
+const productFilterSelectRefs = reactive<Record<ProductFilterOptionField, CategorySelectInstance | undefined>>({
+  COMPANY: undefined, PURCHASING_AGENT: undefined, BRAND: undefined, SUPPLIER: undefined,
+})
+const productFilterOptionCache = new Map<string, ProductFilterOption>()
+const productFilterSearchSequence = { COMPANY: 0, PURCHASING_AGENT: 0, BRAND: 0, SUPPLIER: 0 }
 const filters = reactive({
   keyword: "",
   source_supplier_id: typeof route.query.source_supplier_id === "string" ? route.query.source_supplier_id : "",
-  company_name: "",
-  purchasing_agent: "",
-  brand: "",
-  supplier_name: "",
   cost_price_min: "",
   cost_price_max: "",
   agreement_price_min: "",
   agreement_price_max: "",
+  jd_price_min: "",
+  jd_price_max: "",
+  profit_min: "",
+  profit_max: "",
   discount_rate_min: "",
   discount_rate_max: "",
   sales_volume_min: "",
   sales_volume_max: "",
   status: "ACTIVE" as "ACTIVE" | "DISABLED",
 })
-const columnStorageKey = "scm.product-list.visible-columns.v1"
-const defaultColumns = ["image", "sku", "product_name", "brand", "company_name", "purchasing_agent", "category", "supplier", "cost_price", "agreement_price", "discount_rate", "sales_volume", "status", "updated_at"]
-const columnOptions = [
-  ["image", "商品图片"], ["sku", "SKU"], ["product_name", "商品名称"], ["brand", "品牌"],
-  ["company_name", "所属公司"], ["purchasing_agent", "采销员"], ["model", "型号"], ["category", "三级类目"],
-  ["supplier", "供应商"], ["cost_price", "成本价"], ["market_price", "市场价"], ["jd_price", "京东价"],
-  ["agreement_price", "协议价"], ["discount_rate", "折扣率"], ["sales_volume", "销量"], ["positive_rating", "好评率"],
-  ["status", "状态"], ["updated_at", "最后更新时间"],
-] as const
-const storedColumns = localStorage.getItem(columnStorageKey)
-const visibleColumns = ref<string[]>(storedColumns ? JSON.parse(storedColumns) : defaultColumns)
+const columnStorageKey = "scm.product-list.visible-columns.v2"
+const legacyColumnStorageKey = "scm.product-list.visible-columns.v1"
+const selectedOptionalColumns = ref<ProductListOptionalColumnKey[]>(
+  restoreProductListOptionalColumns(localStorage.getItem(columnStorageKey) ?? localStorage.getItem(legacyColumnStorageKey)),
+)
+const selectedColumnOptions = computed(() => selectedOptionalColumns.value
+  .map((key) => PRODUCT_LIST_OPTIONAL_COLUMNS.find((column) => column.key === key))
+  .filter((column): column is ProductListOptionalColumn => column !== undefined))
 const level1Options = computed(() => optionsFor("LEVEL1", selectedCategoryLevel1Names.value))
 const level2Options = computed(() => optionsFor("LEVEL2", selectedCategoryLevel2Keys.value))
 const level3Options = computed(() => optionsFor("LEVEL3", directCategoryLevel3Ids.value))
@@ -159,16 +188,20 @@ async function loadProducts(targetPage = page.value): Promise<void> {
   try {
     const result = await productApi.list({
       keyword: filters.keyword,
-      company_name: filters.company_name,
-      purchasing_agent: filters.purchasing_agent,
-      brand: filters.brand,
-      supplier_name: filters.supplier_name,
+      company_names: productFilterSelections.COMPANY,
+      purchasing_agents: productFilterSelections.PURCHASING_AGENT,
+      brands: productFilterSelections.BRAND,
+      source_supplier_ids: productFilterSelections.SUPPLIER,
       category_selections: categorySelections.value,
       source_supplier_id: filters.source_supplier_id || undefined,
       cost_price_min: filters.cost_price_min,
       cost_price_max: filters.cost_price_max,
       agreement_price_min: filters.agreement_price_min,
       agreement_price_max: filters.agreement_price_max,
+      jd_price_min: filters.jd_price_min,
+      jd_price_max: filters.jd_price_max,
+      profit_min: filters.profit_min,
+      profit_max: filters.profit_max,
       discount_rate_min: percentQuery(filters.discount_rate_min),
       discount_rate_max: percentQuery(filters.discount_rate_max),
       sales_volume_min: filters.sales_volume_min,
@@ -190,11 +223,14 @@ async function loadProducts(targetPage = page.value): Promise<void> {
 function reset(): void {
   selectedProductIds.value.clear()
   Object.assign(filters, {
-    keyword: "", source_supplier_id: "", company_name: "", purchasing_agent: "", brand: "",
-    supplier_name: "", cost_price_min: "", cost_price_max: "", agreement_price_min: "",
-    agreement_price_max: "", discount_rate_min: "", discount_rate_max: "", sales_volume_min: "",
+    keyword: "", source_supplier_id: "", cost_price_min: "", cost_price_max: "", agreement_price_min: "",
+    agreement_price_max: "", jd_price_min: "", jd_price_max: "", profit_min: "", profit_max: "", discount_rate_min: "", discount_rate_max: "", sales_volume_min: "",
     sales_volume_max: "", status: "ACTIVE",
   })
+  productFilterSelections.COMPANY = []
+  productFilterSelections.PURCHASING_AGENT = []
+  productFilterSelections.BRAND = []
+  productFilterSelections.SUPPLIER = []
   clearCategoryFilters()
   void router.replace({ name: "product-list" })
   void loadProducts(1)
@@ -204,6 +240,81 @@ function clearCategoryFilters(): void {
   directCategoryLevel1Names.value = []
   directCategoryLevel2Keys.value = []
   directCategoryLevel3Ids.value = []
+}
+
+function productFilterOptionsFor(field: ProductFilterOptionField): ProductFilterOption[] {
+  const options = new Map(productFilterOptions[field].map((item) => [item.value, item]))
+  for (const value of productFilterSelections[field]) {
+    const cached = productFilterOptionCache.get(`${field}:${value}`)
+    if (cached) options.set(value, cached)
+  }
+  return [...options.values()]
+}
+
+async function searchProductFilterOptions(
+  field: ProductFilterOptionField, keyword = "",
+): Promise<void> {
+  const sequence = ++productFilterSearchSequence[field]
+  productFilterOptionKeyword[field] = keyword.trim()
+  productFilterOptionNextOffset[field] = 0
+  productFilterOptionHasMore[field] = true
+  await loadProductFilterOptions(field, sequence, false)
+}
+
+async function loadNextProductFilterOptions(field: ProductFilterOptionField): Promise<void> {
+  if (productFilterOptionLoading[field] || !productFilterOptionHasMore[field]) return
+  await loadProductFilterOptions(field, productFilterSearchSequence[field], true)
+}
+
+async function loadProductFilterOptions(
+  field: ProductFilterOptionField, sequence: number, append: boolean,
+): Promise<void> {
+  productFilterOptionLoading[field] = true
+  try {
+    const offset = append ? productFilterOptionNextOffset[field] : 0
+    const page = await productApi.filterOptions(
+      field,
+      productFilterOptionKeyword[field],
+      offset,
+      filters.status,
+    )
+    if (sequence !== productFilterSearchSequence[field]) return
+    const options = append
+      ? [...productFilterOptions[field], ...page.items]
+      : page.items
+    productFilterOptions[field] = [...new Map(options.map((item) => [item.value, item])).values()]
+    productFilterOptionNextOffset[field] = offset + page.items.length
+    productFilterOptionHasMore[field] = page.has_more
+    for (const option of page.items) productFilterOptionCache.set(`${field}:${option.value}`, option)
+  } catch (error) {
+    if (sequence === productFilterSearchSequence[field]) {
+      ElMessage.error(error instanceof HttpError ? error.response.message : "加载筛选候选失败")
+    }
+  } finally {
+    if (sequence === productFilterSearchSequence[field]) productFilterOptionLoading[field] = false
+  }
+}
+
+function setProductFilterSelectRef(field: ProductFilterOptionField, instance: unknown): void {
+  productFilterSelectRefs[field] = instance as CategorySelectInstance | undefined
+}
+
+function productFilterSelectScrollWrap(field: ProductFilterOptionField): HTMLElement | undefined {
+  return productFilterSelectRefs[field]?.scrollbarRef?.wrapRef
+}
+
+function onProductFilterPopupScroll(
+  field: ProductFilterOptionField, position: CategoryPopupPosition,
+): void {
+  const wrap = productFilterSelectScrollWrap(field)
+  if (!wrap || position.scrollTop + wrap.clientHeight < wrap.scrollHeight - 24) return
+  void loadNextProductFilterOptions(field)
+}
+
+function onProductFilterEndReached(
+  field: ProductFilterOptionField, direction: "top" | "bottom" | "left" | "right",
+): void {
+  if (direction === "bottom") void loadNextProductFilterOptions(field)
 }
 
 function updateCategoryLevel1(nextValues: string[]): void {
@@ -336,8 +447,18 @@ function percent(value: string | null): string {
   return value === null ? "—" : `${(Number(value) * 100).toFixed(2).replace(/\.00$/, "")}%`
 }
 
-function isVisible(key: string): boolean { return visibleColumns.value.includes(key) }
-function saveVisibleColumns(): void { localStorage.setItem(columnStorageKey, JSON.stringify(visibleColumns.value)) }
+function isOptionalColumnSelected(key: ProductListOptionalColumnKey): boolean {
+  return selectedOptionalColumns.value.includes(key)
+}
+
+function updateColumnSelection(key: ProductListOptionalColumnKey, checked: unknown): void {
+  selectedOptionalColumns.value = updateProductListOptionalColumns(
+    selectedOptionalColumns.value,
+    key,
+    Boolean(checked),
+  )
+  localStorage.setItem(columnStorageKey, JSON.stringify(selectedOptionalColumns.value))
+}
 
 function money(value: string | null): string {
   return value === null ? "—" : `¥ ${value}`
@@ -346,6 +467,15 @@ function money(value: string | null): string {
 function formatDateTime(value: string): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false })
+}
+
+function formatProductColumnValue(row: ProductListItem, column: ProductListOptionalColumn): string {
+  const value = row[column.prop]
+  if (value === null || value === undefined || value === "") return "—"
+  if (column.format === "money") return money(String(value))
+  if (column.format === "percent") return percent(String(value))
+  if (column.format === "datetime") return formatDateTime(String(value))
+  return String(value)
 }
 
 function productImageUrl(reference: string | null): string | undefined {
@@ -611,10 +741,26 @@ onMounted(() => { void loadProducts() })
           <el-button @click="advancedVisible = !advancedVisible">{{ advancedVisible ? "收起" : "更多筛选" }}</el-button>
         </el-form-item>
         <div v-show="advancedVisible" class="advanced-filters">
-          <el-form-item label="所属公司"><el-input v-model="filters.company_name" clearable placeholder="输入所属公司" /></el-form-item>
-          <el-form-item label="采销员"><el-input v-model="filters.purchasing_agent" clearable placeholder="输入采销员" /></el-form-item>
-          <el-form-item label="品牌"><el-input v-model="filters.brand" clearable placeholder="输入品牌" /></el-form-item>
-          <el-form-item label="供应商"><el-input v-model="filters.supplier_name" clearable placeholder="输入供应商名称" /></el-form-item>
+          <el-form-item label="所属公司">
+            <el-select :ref="(instance: unknown) => setProductFilterSelectRef('COMPANY', instance)" v-model="productFilterSelections.COMPANY" multiple filterable remote reserve-keyword clearable collapse-tags collapse-tags-tooltip :loading="productFilterOptionLoading.COMPANY" placeholder="搜索并选择所属公司" style="width: 240px" :remote-method="(keyword: string) => searchProductFilterOptions('COMPANY', keyword)" @focus="searchProductFilterOptions('COMPANY')" @popup-scroll="(position: CategoryPopupPosition) => onProductFilterPopupScroll('COMPANY', position)" @end-reached="(direction: 'top' | 'bottom' | 'left' | 'right') => onProductFilterEndReached('COMPANY', direction)">
+              <el-option v-for="item in productFilterOptionsFor('COMPANY')" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="采销员">
+            <el-select :ref="(instance: unknown) => setProductFilterSelectRef('PURCHASING_AGENT', instance)" v-model="productFilterSelections.PURCHASING_AGENT" multiple filterable remote reserve-keyword clearable collapse-tags collapse-tags-tooltip :loading="productFilterOptionLoading.PURCHASING_AGENT" placeholder="搜索并选择采销员" style="width: 240px" :remote-method="(keyword: string) => searchProductFilterOptions('PURCHASING_AGENT', keyword)" @focus="searchProductFilterOptions('PURCHASING_AGENT')" @popup-scroll="(position: CategoryPopupPosition) => onProductFilterPopupScroll('PURCHASING_AGENT', position)" @end-reached="(direction: 'top' | 'bottom' | 'left' | 'right') => onProductFilterEndReached('PURCHASING_AGENT', direction)">
+              <el-option v-for="item in productFilterOptionsFor('PURCHASING_AGENT')" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="品牌">
+            <el-select :ref="(instance: unknown) => setProductFilterSelectRef('BRAND', instance)" v-model="productFilterSelections.BRAND" multiple filterable remote reserve-keyword clearable collapse-tags collapse-tags-tooltip :loading="productFilterOptionLoading.BRAND" placeholder="搜索并选择品牌" style="width: 240px" :remote-method="(keyword: string) => searchProductFilterOptions('BRAND', keyword)" @focus="searchProductFilterOptions('BRAND')" @popup-scroll="(position: CategoryPopupPosition) => onProductFilterPopupScroll('BRAND', position)" @end-reached="(direction: 'top' | 'bottom' | 'left' | 'right') => onProductFilterEndReached('BRAND', direction)">
+              <el-option v-for="item in productFilterOptionsFor('BRAND')" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="!filters.source_supplier_id" label="供应商">
+            <el-select :ref="(instance: unknown) => setProductFilterSelectRef('SUPPLIER', instance)" v-model="productFilterSelections.SUPPLIER" multiple filterable remote reserve-keyword clearable collapse-tags collapse-tags-tooltip :loading="productFilterOptionLoading.SUPPLIER" placeholder="搜索并选择供应商" style="width: 260px" :remote-method="(keyword: string) => searchProductFilterOptions('SUPPLIER', keyword)" @focus="searchProductFilterOptions('SUPPLIER')" @popup-scroll="(position: CategoryPopupPosition) => onProductFilterPopupScroll('SUPPLIER', position)" @end-reached="(direction: 'top' | 'bottom' | 'left' | 'right') => onProductFilterEndReached('SUPPLIER', direction)">
+              <el-option v-for="item in productFilterOptionsFor('SUPPLIER')" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="一级类目">
             <el-select ref="categoryLevel1SelectRef" :model-value="selectedCategoryLevel1Names" multiple filterable remote reserve-keyword clearable collapse-tags collapse-tags-tooltip :loading="categoryOptionLoading.LEVEL1" placeholder="搜索一级类目" style="width: 240px" :remote-method="(keyword: string) => searchCategoryOptions('LEVEL1', keyword)" @focus="searchCategoryOptions('LEVEL1')" @popup-scroll="(position: CategoryPopupPosition) => onCategoryPopupScroll('LEVEL1', position)" @end-reached="(direction: 'top' | 'bottom' | 'left' | 'right') => onCategoryEndReached('LEVEL1', direction)" @update:model-value="updateCategoryLevel1">
               <el-option v-for="item in level1Options" :key="item.selection_key" :label="item.label" :value="item.selection_key" />
@@ -632,6 +778,8 @@ onMounted(() => { void loadProducts() })
           </el-form-item>
           <el-form-item label="成本价区间"><div class="range-input"><el-input v-model="filters.cost_price_min" inputmode="decimal" placeholder="大于等于" /><span>—</span><el-input v-model="filters.cost_price_max" inputmode="decimal" placeholder="小于等于" /></div></el-form-item>
           <el-form-item label="协议价区间"><div class="range-input"><el-input v-model="filters.agreement_price_min" inputmode="decimal" placeholder="大于等于" /><span>—</span><el-input v-model="filters.agreement_price_max" inputmode="decimal" placeholder="小于等于" /></div></el-form-item>
+          <el-form-item label="京东价区间"><div class="range-input"><el-input v-model="filters.jd_price_min" inputmode="decimal" placeholder="大于等于" /><span>—</span><el-input v-model="filters.jd_price_max" inputmode="decimal" placeholder="小于等于" /></div></el-form-item>
+          <el-form-item label="利润区间"><div class="range-input"><el-input v-model="filters.profit_min" inputmode="decimal" placeholder="大于等于" /><span>—</span><el-input v-model="filters.profit_max" inputmode="decimal" placeholder="小于等于" /></div></el-form-item>
           <el-form-item label="折扣率区间（%）"><div class="range-input"><el-input v-model="filters.discount_rate_min" inputmode="decimal" placeholder="例如 80" /><span>—</span><el-input v-model="filters.discount_rate_max" inputmode="decimal" placeholder="例如 95" /></div></el-form-item>
           <el-form-item label="销量区间"><div class="range-input"><el-input v-model="filters.sales_volume_min" inputmode="numeric" placeholder="大于等于" /><span>—</span><el-input v-model="filters.sales_volume_max" inputmode="numeric" placeholder="小于等于" /></div></el-form-item>
         </div>
@@ -643,17 +791,18 @@ onMounted(() => { void loadProducts() })
         <div class="table-heading">
           <strong>{{ activeTab === "products" ? "商品列表" : "商品操作记录" }}</strong>
           <el-button v-if="activeTab === 'products'" type="primary" :icon="Download" :disabled="selectedProductIds.size === 0" @click="exportDialogVisible = true">导出 Excel（{{ selectedProductIds.size }}）</el-button>
-          <el-popover v-if="activeTab === 'products'" placement="bottom-end" :width="260" trigger="click">
+          <el-popover v-if="activeTab === 'products'" placement="bottom-end" :width="340" trigger="click">
             <template #reference><el-button :icon="Setting">自定义显示列</el-button></template>
-            <el-checkbox-group v-model="visibleColumns" class="column-picker" @change="saveVisibleColumns">
-              <el-checkbox v-for="option in columnOptions" :key="option[0]" :label="option[0]">{{ option[1] }}</el-checkbox>
-            </el-checkbox-group>
+            <p class="column-picker-hint">商品图片、SKU、商品名称固定为前 3 列；其余列按勾选先后依次显示。</p>
+            <div class="column-picker">
+              <el-checkbox v-for="option in PRODUCT_LIST_OPTIONAL_COLUMNS" :key="option.key" :model-value="isOptionalColumnSelected(option.key)" @change="(checked: unknown) => updateColumnSelection(option.key, checked)">{{ option.label }}</el-checkbox>
+            </div>
           </el-popover>
         </div>
       </template>
       <el-table v-if="activeTab === 'products'" v-loading="loading" :data="products" row-key="id" @selection-change="syncSelection" empty-text="暂无正式商品数据">
         <el-table-column type="selection" width="48" reserve-selection />
-        <el-table-column v-if="isVisible('image')" label="商品图片" width="108" fixed="left">
+        <el-table-column label="商品图片" width="108" fixed="left">
           <template #default="{ row }">
             <el-image
               v-if="productImageUrl(row.image_reference)"
@@ -668,29 +817,14 @@ onMounted(() => { void loadProducts() })
             <div v-else class="image-placeholder">暂无图片</div>
           </template>
         </el-table-column>
-        <el-table-column v-if="isVisible('sku')" prop="sku" label="SKU" min-width="130" />
-        <el-table-column v-if="isVisible('product_name')" prop="product_name" label="商品名称" min-width="200" show-overflow-tooltip />
-        <el-table-column v-if="isVisible('brand')" prop="brand" label="品牌" min-width="120" />
-        <el-table-column v-if="isVisible('company_name')" prop="company_name" label="所属公司" min-width="150" />
-        <el-table-column v-if="isVisible('purchasing_agent')" prop="purchasing_agent" label="采销员" min-width="120" />
-        <el-table-column v-if="isVisible('model')" prop="model" label="型号" min-width="150" />
-        <el-table-column v-if="isVisible('category')" prop="category_path" label="三级类目" min-width="220" show-overflow-tooltip />
-        <el-table-column v-if="isVisible('supplier')" prop="source_supplier_name" label="供应商" min-width="160" />
-        <el-table-column v-if="isVisible('cost_price')" label="成本价" min-width="125">
-          <template #default="{ row }">{{ money(row.cost_price) }}</template>
+        <el-table-column prop="sku" label="SKU" min-width="130" fixed="left" />
+        <el-table-column prop="product_name" label="商品名称" min-width="200" show-overflow-tooltip fixed="left" />
+        <el-table-column v-for="column in selectedColumnOptions" :key="column.key" :prop="column.prop" :label="column.label" :min-width="column.minWidth" :show-overflow-tooltip="column.format === 'text'">
+          <template #default="{ row }">
+            <el-tag v-if="column.format === 'status'" :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status === 'ACTIVE' ? '正常' : '已停用' }}</el-tag>
+            <span v-else>{{ formatProductColumnValue(row, column) }}</span>
+          </template>
         </el-table-column>
-        <el-table-column v-if="isVisible('market_price')" label="市场价" min-width="125"><template #default="{ row }">{{ money(row.market_price) }}</template></el-table-column>
-        <el-table-column v-if="isVisible('jd_price')" label="京东价" min-width="125"><template #default="{ row }">{{ money(row.jd_price) }}</template></el-table-column>
-        <el-table-column v-if="isVisible('agreement_price')" label="协议价" min-width="125">
-          <template #default="{ row }">{{ money(row.agreement_price) }}</template>
-        </el-table-column>
-        <el-table-column v-if="isVisible('discount_rate')" label="折扣率" min-width="105"><template #default="{ row }">{{ percent(row.discount_rate) }}</template></el-table-column>
-        <el-table-column v-if="isVisible('sales_volume')" prop="sales_volume" label="销量" min-width="100" />
-        <el-table-column v-if="isVisible('positive_rating')" label="好评率" min-width="105"><template #default="{ row }">{{ percent(row.positive_rating) }}</template></el-table-column>
-        <el-table-column v-if="isVisible('status')" label="状态" width="100">
-          <template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status === 'ACTIVE' ? '正常' : '已停用' }}</el-tag></template>
-        </el-table-column>
-        <el-table-column v-if="isVisible('updated_at')" label="最后更新时间" min-width="180"><template #default="{ row }">{{ formatDateTime(row.updated_at) }}</template></el-table-column>
         <el-table-column label="操作" width="270" fixed="right">
           <template #default="{ row }">
             <RouterLink v-if="row.status === 'ACTIVE'" :to="`/products/${row.id}`"><el-button link type="primary">详情</el-button></RouterLink>
@@ -869,6 +1003,7 @@ onMounted(() => { void loadProducts() })
 .range-input { display: flex; align-items: center; gap: 8px; width: 310px; }
 .table-heading { display: flex; align-items: center; justify-content: space-between; }
 .column-picker { display: grid; grid-template-columns: 1fr 1fr; }
+.column-picker-hint { margin: 0 0 10px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 .table-card strong { color: #344054; }
 .pagination { display: flex; justify-content: flex-end; margin-top: 16px; }
 .header-actions { display: flex; align-items: flex-start; }

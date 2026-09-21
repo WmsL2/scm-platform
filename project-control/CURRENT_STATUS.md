@@ -3,7 +3,7 @@
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
-日期：2026-09-18
+日期：2026-09-21
 
 ## Repository
 
@@ -81,7 +81,7 @@ Sprint 1 — Auth/RBAC + Supplier
   注册审批、`/login` 与 `/register` 兼容入口保持不变。
 - Role Management：自定义角色创建 IMPLEMENTED（Revision `20260908_0007`）；安全删除 IMPLEMENTED（Revision `20260911_0018`）。仅未分配给有效用户的自定义角色可逻辑删除；内置角色、仍关联有效用户的角色一律拒绝删除。权限配置页按权限码前缀动态分组，支持模块折叠、模块全选/半选和单项勾选。角色编辑与停用仍属未来范围。
 - Post-Merge Hardening：Request transaction ownership、Service caller-owned transaction participation、Account association ID 幂等去重与 Supplier UUID Router validation 已验证；ADR-0007 冻结事务规则，无 Migration 变化。
-- Catalog：`IMPLEMENTED / PRODUCT_MASTER_CATEGORY_DECOUPLED`；固定商品大表仅要求 SKU 与供应商，三级类目及其他 41 列可为空，且不匹配或写入 Category ID，Excel 价格直接保存。正常同键商品可覆盖更新，停用同键商品仍阻止；空 Excel 单元格清空旧值。Product 列表提供综合搜索、文本包含、类目和价格/比例/销量闭区间筛选及本地自定义列；详情/编辑覆盖全部业务字段，供应商与 SKU 只读，图片仅通过受控上传/清除维护。
+- Catalog：`IMPLEMENTED / PRODUCT_MASTER_CATEGORY_DECOUPLED`；固定商品大表仅要求 SKU 与供应商，三级类目及其他 41 列可为空，且不匹配或写入 Category ID，Excel 价格直接保存。正常同键商品可覆盖更新，停用同键商品仍阻止；空 Excel 单元格清空旧值。Product 列表提供综合搜索、类目筛选、京东价／利润等闭区间筛选，以及所属公司、采销员、品牌、供应商的远程搜索多选筛选；同字段多选按 OR，其他条件按 AND。商品图片、SKU、商品名称固定在前三列，其余完整业务列按勾选顺序本地保存和显示；详情/编辑覆盖全部业务字段，供应商与 SKU 只读，图片仅通过受控上传/清除维护。
 - Product Price Maintenance：`cost_price` 是当前成本价和当前供应商报价，不建设 `scm_supplier_product_quote`；正式成本价可为空，导入数值无效时保存 NULL。`product:cost:update` 仍只接受有效正数并仅保存成本价，所有价格、利润和比例独立维护（ADR-0024、ADR-0030）。
 - Product Operator Display：商品主数据已增加“操作记录”页签，复用正式 Product 列表和分页，显示既有 `created_by` / `created_at` / `updated_by` / `updated_at` 所表达的导入人、导入时间、最后更新人和最后更新时间；接口批量解析历史用户名，不新增表或 Migration。
 - Bid Matching / Task 2-3：PR #46 已提供投标共享 Schema 后，匹配任务、候选持久化、Top 20 可解释候选、人工选品不可变快照、无报价与四个受权限保护的 API 已完成。Task 3 已实现 Web 项目列表、创建、详情、文件版本和服务端分页匹配工作台；候选按需加载且历史展示不可变快照。项目业务开始时间 `start_at` 与审计 `created_at` 已分离。基础信息可由 `bid:update` 在允许状态编辑；删除采用 `bid:void` 业务作废，`VOIDED` 为历史保留终态（Revisions `20260916_0025`、`20260916_0026`、`20260916_0027`）。真实 API 浏览器验收仍等待已识别 BidTemplate，Template Management 仍为后续任务。
