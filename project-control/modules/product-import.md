@@ -1,8 +1,8 @@
 # 商品大表导入
 
 状态：IMPLEMENTED / PRODUCT_MASTER_2026_43_COLUMNS / FAILED_ROWS_EXPORT
-Owner：feat/product-import-failed-rows-export
-Last Updated：2026-09-20
+Owner：fix/product-import-empty-supplier-missing-greenlet
+Last Updated：2026-09-21
 
 ## Database
 - [x] `20260910_0013` 创建 `scm_product_import_task`、`scm_product_import_row`、`scm_product_import_supplier_match`
@@ -16,6 +16,7 @@ Last Updated：2026-09-20
 - [x] 预览校验 WPS/Excel `DISPIMG` 引用和内嵌媒体元数据并临时保存源 Excel；公式引用缺图、类型不支持或单图超限时该行不通过；只有 Confirm 的通过行才逐张流式提取媒体至相对本地目录，正式 Product 仅保存站内相对图片引用
 - [x] Confirm 成功后立即删除临时源 Excel；关闭预览弹窗会调用 discard 接口将任务标记为 `EXPIRED` 并立即删除，异常关闭时保留 24 小时兜底清理
 - [x] 供应商仅按冻结的标准化精确匹配；支持从当前有效 Supplier Master 手动解析
+- [x] 全部行供应商为空时也会正常生成预览：供应商匹配集合在持久化前显式初始化为空列表，不触发 AsyncSession 隐式懒加载；空供应商行仍按规则标记为不通过
 - [x] `POST /api/v1/products/imports/preview`、`GET /api/v1/products/imports/{task_id}`、`GET /api/v1/products/imports/supplier-candidates`、`POST /api/v1/products/imports/{task_id}/supplier-matches/{match_id}/resolve`、`POST /api/v1/products/imports/{task_id}/confirm`
 - [x] Confirm 锁定任务并重新校验有效来源供应商；当前通过且尚未导入的行作为一次单事务写入 `scm_product`
 - [x] `GET /api/v1/products/imports/template` 下载批准的原始 43 列模板
@@ -43,6 +44,7 @@ Last Updated：2026-09-20
 
 ## Tests
 - [x] API 集成测试覆盖未匹配预览、精确匹配和 Confirm 写入 `source_supplier_id`
+- [x] API 回归测试覆盖“所有行供应商为空”，要求返回 200 和空 `supplier_matches`，所有行保留“供应商不能为空”错误而不触发 `MissingGreenlet`
 - [x] 回归测试覆盖带 WPS `DISPIMG` 的失败行导出、43 列模板、错误说明及导出文件重新预览
 - [x] 全量后端测试、前端类型检查、单元测试与构建已执行
 
