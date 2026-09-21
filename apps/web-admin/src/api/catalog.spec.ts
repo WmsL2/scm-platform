@@ -109,6 +109,30 @@ describe("product import api", () => {
     )
   })
 
+  it("uses the same filter serializer for selection IDs", async () => {
+    http.get.mockResolvedValue({ ids: ["product-1"], total: 1 })
+    const { productApi } = await import("./catalog")
+
+    await productApi.getSelectionIds({
+      keyword: "打印纸",
+      brand: "测试品牌",
+      company_names: ["众诚公司"],
+      purchasing_agents: ["张三"],
+      brands: ["品牌 A"],
+      source_supplier_ids: ["supplier-1"],
+      jd_price_min: "100",
+      jd_price_max: "200",
+      profit_min: "-5",
+      profit_max: "30",
+      status: "DISABLED",
+      category_selections: ["LEVEL1:office"],
+    })
+
+    expect(http.get).toHaveBeenCalledWith(
+      "/api/v1/products/selection-ids?keyword=%E6%89%93%E5%8D%B0%E7%BA%B8&brand=%E6%B5%8B%E8%AF%95%E5%93%81%E7%89%8C&company_names=%E4%BC%97%E8%AF%9A%E5%85%AC%E5%8F%B8&purchasing_agents=%E5%BC%A0%E4%B8%89&brands=%E5%93%81%E7%89%8C+A&source_supplier_ids=supplier-1&jd_price_min=100&jd_price_max=200&profit_min=-5&profit_max=30&status=DISABLED&category_selections=LEVEL1%3Aoffice",
+    )
+  })
+
   it("repeats multi-select product filters and sends JD price and profit ranges", async () => {
     http.get.mockResolvedValue({ items: [] })
     const { productApi } = await import("./catalog")

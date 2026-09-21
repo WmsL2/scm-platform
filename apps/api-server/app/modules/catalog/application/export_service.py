@@ -3,10 +3,9 @@
 import asyncio
 import logging
 from io import BytesIO
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
-from openpyxl import Workbook
-from openpyxl.drawing.image import Image as WorkbookImage
-from openpyxl.utils import get_column_letter
+import xlsxwriter
 from PIL import Image as PillowImage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,41 +65,93 @@ class ProductExportService:
 
     @staticmethod
     def _build(columns, rows, image_bytes_by_reference: dict[str, bytes | None]) -> bytes:
-        workbook = Workbook(); sheet = workbook.active; sheet.title = "商品主数据"; sheet.freeze_panes = "A2"
-        sheet.append([column.header for column in columns])
-        image_column_index = next((index for index, column in enumerate(columns, start=1) if column.key == "image_reference"), None)
+        output = BytesIO()
+        workbook = xlsxwriter.Workbook(output, {"in_memory": True})
+        sheet = workbook.add_worksheet("商品主数据")
+        sheet.freeze_panes(1, 0)
+        sheet.write_row(0, 0, [column.header for column in columns])
+        image_column_index = next(
+            (index for index, column in enumerate(columns) if column.key == "image_reference"),
+            None,
+        )
+        image_format = workbook.add_format({"align": "center", "valign": "vcenter"})
+        date_format = workbook.add_format({"num_format": "yyyy-mm-dd"})
         image_sources: list[BytesIO] = []
-        for row_number, (product, supplier) in enumerate(rows, start=2):
-            sheet.append([None if column.key == "image_reference" else column.value(product, supplier) for column in columns])
+        for row_index, (product, supplier) in enumerate(rows, start=1):
+            for column_index, column in enumerate(columns):
+                if column.key == "image_reference":
+                    continue
+                value = column.value(product, supplier)
+                if column.key == "listed_at" and value is not None:
+                    sheet.write_datetime(row_index, column_index, value, date_format)
+                elif value is not None:
+                    sheet.write(row_index, column_index, value)
             if image_column_index is not None:
-                image_source = ProductExportService._workbook_image_source(image_bytes_by_reference.get(product.image_reference))
+                image_source = ProductExportService._prepare_embedded_image(
+                    image_bytes_by_reference.get(product.image_reference)
+                )
                 if image_source is not None:
-                    image = WorkbookImage(image_source)
-                    scale = min(_MAX_IMAGE_DIMENSION / image.width, _MAX_IMAGE_DIMENSION / image.height, 1)
-                    image.width *= scale; image.height *= scale
-                    sheet.add_image(image, f"{get_column_letter(image_column_index)}{row_number}")
-                    sheet.row_dimensions[row_number].height = _IMAGE_ROW_HEIGHT
+                    sheet.embed_image(
+                        row_index,
+                        image_column_index,
+                        "product-image.png",
+                        {"image_data": image_source, "cell_format": image_format},
+                    )
                     image_sources.append(image_source)
-        sheet.auto_filter.ref = sheet.dimensions
-        for column in sheet.columns: sheet.column_dimensions[column[0].column_letter].width = 18
+                    sheet.set_row(row_index, _IMAGE_ROW_HEIGHT)
+        sheet.autofilter(0, 0, len(rows), max(len(columns) - 1, 0))
+        sheet.set_column(0, max(len(columns) - 1, 0), 18)
         if image_column_index is not None:
-            sheet.column_dimensions[get_column_letter(image_column_index)].width = _IMAGE_COLUMN_WIDTH
-        output = BytesIO(); workbook.save(output); return output.getvalue()
+            sheet.set_column_pixels(image_column_index, image_column_index, 90)
+        workbook.close()
+        return ProductExportService._normalize_rich_data_relationship_path(output.getvalue())
 
     @staticmethod
-    def _workbook_image_source(content: bytes | None) -> BytesIO | None:
+    def _normalize_rich_data_relationship_path(content: bytes) -> bytes:
+        bad_path = "/xl/richData/_rels/richValueRel.xml.rels"
+        good_path = "xl/richData/_rels/richValueRel.xml.rels"
+        with ZipFile(BytesIO(content)) as source:
+            names = source.namelist()
+            if bad_path not in names or good_path in names:
+                return content
+            output = BytesIO()
+            with ZipFile(output, "w", ZIP_DEFLATED) as target:
+                for info in source.infolist():
+                    target_info = ZipInfo(good_path if info.filename == bad_path else info.filename)
+                    target_info.date_time = info.date_time
+                    target_info.external_attr = info.external_attr
+                    target_info.extra = info.extra
+                    target_info.comment = info.comment
+                    target_info.compress_type = info.compress_type
+                    target.writestr(target_info, source.read(info.filename))
+        return output.getvalue()
+
+    @staticmethod
+    def _prepare_embedded_image(content: bytes | None) -> BytesIO | None:
         if not content:
             return None
         try:
             with PillowImage.open(BytesIO(content)) as image:
                 image.load()
-                if image.format in {"PNG", "JPEG", "GIF"}:
+                if image.format in {"PNG", "JPEG"} and (
+                    image.width >= _MAX_IMAGE_DIMENSION or image.height >= _MAX_IMAGE_DIMENSION
+                ):
                     return BytesIO(content)
-                converted = BytesIO()
-                image.convert("RGBA" if "A" in image.getbands() else "RGB").save(
-                    converted, format="PNG"
+                prepared = image.convert("RGBA")
+                if image.width >= _MAX_IMAGE_DIMENSION or image.height >= _MAX_IMAGE_DIMENSION:
+                    prepared.thumbnail(
+                        (_MAX_IMAGE_DIMENSION, _MAX_IMAGE_DIMENSION),
+                        PillowImage.Resampling.LANCZOS,
+                    )
+                canvas = PillowImage.new("RGBA", (_MAX_IMAGE_DIMENSION, _MAX_IMAGE_DIMENSION))
+                canvas.alpha_composite(
+                    prepared,
+                    ((canvas.width - prepared.width) // 2, (canvas.height - prepared.height) // 2),
                 )
-                return converted
+                output = BytesIO()
+                canvas.save(output, format="PNG")
+                output.seek(0)
+                return output
         except Exception:
             logger.warning("Unable to decode product export image", exc_info=True)
             return None

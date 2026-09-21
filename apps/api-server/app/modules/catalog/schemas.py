@@ -284,6 +284,11 @@ class ProductExportRequest(BaseModel):
         return value
 
 
+class ProductSelectionIdsResponse(BaseModel):
+    ids: list[uuid.UUID]
+    total: int
+
+
 class ProductUpdateRequest(BaseModel):
     """Editable Product Master fields; supplier, SKU and image reference are immutable here."""
 

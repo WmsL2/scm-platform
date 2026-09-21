@@ -128,6 +128,11 @@ export interface ProductPage {
   page_size: number
 }
 
+export interface ProductSelectionIdsResult {
+  ids: string[]
+  total: number
+}
+
 export interface ProductLifecycleResult {
   id: string
   status: ProductStatus

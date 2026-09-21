@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Delete, Download, EditPen, Refresh, Search, Setting, Upload } from "@element-plus/icons-vue"
-import { computed, onMounted, reactive, ref } from "vue"
+import { computed, nextTick, onMounted, reactive, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { useRoute, useRouter } from "vue-router"
 
@@ -8,8 +8,13 @@ import { productApi } from "../../api/catalog"
 import { HttpError } from "../../shared/http"
 import { useExcelImportNavigationLock } from "../../shared/import/excelImportNavigationLock"
 import { useAuthStore } from "../../stores/auth"
-import { PRODUCT_EXPORT_COLUMN_DEFINITIONS } from "../../types/catalog"
-import { mergePageSelection, restoreExportColumns } from "./productExportSelection"
+import { PRODUCT_EXPORT_COLUMN_DEFINITIONS, PRODUCT_EXPORT_COLUMNS } from "../../types/catalog"
+import {
+  isAllProductsSelected,
+  clearProductSelection,
+  mergePageSelection,
+  restoreExportColumns,
+} from "./productExportSelection"
 import {
   PRODUCT_LIST_OPTIONAL_COLUMNS,
   restoreProductListOptionalColumns,
@@ -30,6 +35,7 @@ import type {
   ProductFilterOption,
   ProductFilterOptionField,
   ProductListItem,
+  ProductListParams,
   ProductExportColumnKey,
 } from "../../types/catalog"
 
@@ -40,6 +46,10 @@ type CategorySelectInstance = {
 }
 
 type CategoryPopupPosition = { scrollTop: number; scrollLeft: number }
+type ProductTableInstance = {
+  clearSelection: () => void
+  toggleRowSelection: (row: ProductListItem, selected?: boolean) => void
+}
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -158,6 +168,9 @@ const importRowsLoading = ref(false)
 const failedRowsExporting = ref(false)
 const activeTab = ref<"products" | "audit">("products")
 const selectedProductIds = ref(new Set<string>())
+const productTableRef = ref<ProductTableInstance>()
+const syncingSelection = ref(false)
+const selectingAll = ref(false)
 const exportDialogVisible = ref(false)
 const exporting = ref(false)
 const exportColumnStorageKey = "scm.product-export.columns.v1"
@@ -165,12 +178,64 @@ function initialExportColumns(): ProductExportColumnKey[] {
   return restoreExportColumns(localStorage.getItem(exportColumnStorageKey))
 }
 const exportColumns = ref<ProductExportColumnKey[]>(initialExportColumns())
+const isAllFilteredProductsSelected = computed(() =>
+  isAllProductsSelected(selectedProductIds.value, total.value),
+)
 function syncSelection(rows: ProductListItem[]): void {
+  if (syncingSelection.value) return
   selectedProductIds.value = mergePageSelection(
     selectedProductIds.value,
     products.value.map((item) => item.id),
     rows.map((row) => row.id),
   )
+}
+function productListParams(targetPage?: number): ProductListParams {
+  return {
+    keyword: filters.keyword,
+    company_names: productFilterSelections.COMPANY,
+    purchasing_agents: productFilterSelections.PURCHASING_AGENT,
+    brands: productFilterSelections.BRAND,
+    source_supplier_ids: productFilterSelections.SUPPLIER,
+    category_selections: categorySelections.value,
+    source_supplier_id: filters.source_supplier_id || undefined,
+    cost_price_min: filters.cost_price_min,
+    cost_price_max: filters.cost_price_max,
+    agreement_price_min: filters.agreement_price_min,
+    agreement_price_max: filters.agreement_price_max,
+    jd_price_min: filters.jd_price_min,
+    jd_price_max: filters.jd_price_max,
+    profit_min: filters.profit_min,
+    profit_max: filters.profit_max,
+    discount_rate_min: percentQuery(filters.discount_rate_min),
+    discount_rate_max: percentQuery(filters.discount_rate_max),
+    sales_volume_min: filters.sales_volume_min,
+    sales_volume_max: filters.sales_volume_max,
+    status: filters.status,
+    ...(targetPage === undefined ? {} : { page: targetPage, page_size: pageSize }),
+  }
+}
+async function restoreCurrentPageSelection(): Promise<void> {
+  syncingSelection.value = true
+  try {
+    await nextTick()
+    productTableRef.value?.clearSelection()
+    for (const product of products.value) {
+      if (selectedProductIds.value.has(product.id)) productTableRef.value?.toggleRowSelection(product, true)
+    }
+  } finally { syncingSelection.value = false }
+}
+async function selectAllFilteredProducts(): Promise<void> {
+  selectingAll.value = true
+  try {
+    const result = await productApi.getSelectionIds(productListParams())
+    selectedProductIds.value = new Set(result.ids)
+    await restoreCurrentPageSelection()
+  } catch (error) { ElMessage.error(error instanceof HttpError ? error.response.message : "获取全部商品失败") }
+  finally { selectingAll.value = false }
+}
+async function clearAllFilteredProductSelection(): Promise<void> {
+  selectedProductIds.value = clearProductSelection()
+  await restoreCurrentPageSelection()
 }
 async function exportSelected(): Promise<void> {
   exporting.value = true
@@ -186,38 +251,21 @@ async function exportSelected(): Promise<void> {
 async function loadProducts(targetPage = page.value): Promise<void> {
   loading.value = true
   try {
-    const result = await productApi.list({
-      keyword: filters.keyword,
-      company_names: productFilterSelections.COMPANY,
-      purchasing_agents: productFilterSelections.PURCHASING_AGENT,
-      brands: productFilterSelections.BRAND,
-      source_supplier_ids: productFilterSelections.SUPPLIER,
-      category_selections: categorySelections.value,
-      source_supplier_id: filters.source_supplier_id || undefined,
-      cost_price_min: filters.cost_price_min,
-      cost_price_max: filters.cost_price_max,
-      agreement_price_min: filters.agreement_price_min,
-      agreement_price_max: filters.agreement_price_max,
-      jd_price_min: filters.jd_price_min,
-      jd_price_max: filters.jd_price_max,
-      profit_min: filters.profit_min,
-      profit_max: filters.profit_max,
-      discount_rate_min: percentQuery(filters.discount_rate_min),
-      discount_rate_max: percentQuery(filters.discount_rate_max),
-      sales_volume_min: filters.sales_volume_min,
-      sales_volume_max: filters.sales_volume_max,
-      status: filters.status,
-      page: targetPage,
-      page_size: pageSize,
-    })
+    const result = await productApi.list(productListParams(targetPage))
     products.value = result.items
     total.value = result.total
     page.value = result.page
+    await restoreCurrentPageSelection()
   } catch (error) {
     ElMessage.error(error instanceof HttpError ? error.response.message : "加载商品列表失败")
   } finally {
     loading.value = false
   }
+}
+
+function searchProducts(): void {
+  selectedProductIds.value.clear()
+  void loadProducts(1)
 }
 
 function reset(): void {
@@ -717,14 +765,14 @@ onMounted(() => { void loadProducts() })
         show-icon
         class="supplier-filter-notice"
       />
-      <el-form :inline="true" label-position="top" @submit.prevent="loadProducts(1)">
+      <el-form :inline="true" label-position="top" @submit.prevent="searchProducts">
         <el-form-item label="自定义搜索">
           <el-input
             v-model="filters.keyword"
             clearable
             placeholder="相机、数码、品牌、SKU、类目等"
             style="width: 240px"
-            @keyup.enter="loadProducts(1)"
+            @keyup.enter="searchProducts"
           />
         </el-form-item>
         <el-form-item v-if="auth.hasPermission('product:disable')" label="商品状态">
@@ -734,7 +782,7 @@ onMounted(() => { void loadProducts() })
           </el-select>
         </el-form-item>
         <el-form-item class="filter-action">
-          <el-button type="primary" :icon="Search" :loading="loading" @click="loadProducts(1)">
+          <el-button type="primary" :icon="Search" :loading="loading" @click="searchProducts">
             查询
           </el-button>
           <el-button :icon="Refresh" @click="reset">{{ filters.source_supplier_id ? "查看全部商品" : "重置" }}</el-button>
@@ -790,17 +838,25 @@ onMounted(() => { void loadProducts() })
       <template #header>
         <div class="table-heading">
           <strong>{{ activeTab === "products" ? "商品列表" : "商品操作记录" }}</strong>
-          <el-button v-if="activeTab === 'products'" type="primary" :icon="Download" :disabled="selectedProductIds.size === 0" @click="exportDialogVisible = true">导出 Excel（{{ selectedProductIds.size }}）</el-button>
-          <el-popover v-if="activeTab === 'products'" placement="bottom-end" :width="340" trigger="click">
-            <template #reference><el-button :icon="Setting">自定义显示列</el-button></template>
-            <p class="column-picker-hint">商品图片、SKU、商品名称固定为前 3 列；其余列按勾选先后依次显示。</p>
-            <div class="column-picker">
-              <el-checkbox v-for="option in PRODUCT_LIST_OPTIONAL_COLUMNS" :key="option.key" :model-value="isOptionalColumnSelected(option.key)" @change="(checked: unknown) => updateColumnSelection(option.key, checked)">{{ option.label }}</el-checkbox>
-            </div>
-          </el-popover>
+          <div v-if="activeTab === 'products'" class="table-actions">
+            <el-button
+              plain
+              :loading="selectingAll"
+              :disabled="total === 0"
+              @click="isAllFilteredProductsSelected ? clearAllFilteredProductSelection() : selectAllFilteredProducts()"
+            >{{ isAllFilteredProductsSelected ? "取消全选" : `全选全部商品（${total}）` }}</el-button>
+            <el-button type="primary" :icon="Download" :disabled="selectedProductIds.size === 0" @click="exportDialogVisible = true">导出 Excel（{{ selectedProductIds.size }}）</el-button>
+            <el-popover placement="bottom-end" :width="340" trigger="click">
+              <template #reference><el-button :icon="Setting">自定义显示列</el-button></template>
+              <p class="column-picker-hint">商品图片、SKU、商品名称固定为前 3 列；其余列按勾选先后依次显示。</p>
+              <div class="column-picker">
+                <el-checkbox v-for="option in PRODUCT_LIST_OPTIONAL_COLUMNS" :key="option.key" :model-value="isOptionalColumnSelected(option.key)" @change="(checked: unknown) => updateColumnSelection(option.key, checked)">{{ option.label }}</el-checkbox>
+              </div>
+            </el-popover>
+          </div>
         </div>
       </template>
-      <el-table v-if="activeTab === 'products'" v-loading="loading" :data="products" row-key="id" @selection-change="syncSelection" empty-text="暂无正式商品数据">
+      <el-table ref="productTableRef" v-if="activeTab === 'products'" v-loading="loading" :data="products" row-key="id" @selection-change="syncSelection" empty-text="暂无正式商品数据">
         <el-table-column type="selection" width="48" reserve-selection />
         <el-table-column label="商品图片" width="108" fixed="left">
           <template #default="{ row }">
@@ -886,7 +942,13 @@ onMounted(() => { void loadProducts() })
     </el-card>
 
     <el-dialog v-model="exportDialogVisible" title="选择导出字段" width="680px">
-      <div class="table-heading"><p>已选择 {{ selectedProductIds.size }} 条商品</p><el-button text @click="exportColumns = []">清空字段</el-button></div>
+      <div class="table-heading">
+        <p>已选择 {{ selectedProductIds.size }} 条商品</p>
+        <div class="table-actions">
+          <el-button text :disabled="exportColumns.length === PRODUCT_EXPORT_COLUMNS.length" @click="exportColumns = [...PRODUCT_EXPORT_COLUMNS]">全选字段</el-button>
+          <el-button text :disabled="exportColumns.length === 0" @click="exportColumns = []">清空字段</el-button>
+        </div>
+      </div>
       <el-checkbox-group v-model="exportColumns" class="column-picker">
         <el-checkbox v-for="column in PRODUCT_EXPORT_COLUMN_DEFINITIONS" :key="column.key" :label="column.key">{{ column.label }}</el-checkbox>
       </el-checkbox-group>
@@ -1002,6 +1064,7 @@ onMounted(() => { void loadProducts() })
 .advanced-filters { display: flex; flex-wrap: wrap; gap: 0 12px; width: 100%; padding-top: 8px; border-top: 1px solid var(--border); }
 .range-input { display: flex; align-items: center; gap: 8px; width: 310px; }
 .table-heading { display: flex; align-items: center; justify-content: space-between; }
+.table-actions { display: flex; align-items: center; gap: 8px; }
 .column-picker { display: grid; grid-template-columns: 1fr 1fr; }
 .column-picker-hint { margin: 0 0 10px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 .table-card strong { color: #344054; }

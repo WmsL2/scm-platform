@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 import { PRODUCT_EXPORT_COLUMN_DEFINITIONS, PRODUCT_EXPORT_COLUMNS } from "../../types/catalog"
-import { mergePageSelection, restoreExportColumns } from "./productExportSelection"
+import {
+  clearProductSelection,
+  isAllProductsSelected,
+  mergePageSelection,
+  restoreExportColumns,
+} from "./productExportSelection"
 
 describe("product export selection", () => {
   it("restores only valid fields and falls back to all 43", () => {
@@ -27,5 +32,29 @@ describe("product export selection", () => {
     const second = mergePageSelection(first, ["C", "D"], ["C"])
     expect([...second]).toEqual(["A", "C"])
     expect([...mergePageSelection(second, ["A", "B"], [])]).toEqual(["C"])
+  })
+
+  it("keeps other selections when a selected-all current page is partially deselected", () => {
+    expect(
+      [...mergePageSelection(new Set(["A", "B", "C", "D"]), ["A", "B"], ["B"])],
+    ).toEqual(["B", "C", "D"])
+  })
+
+  it("merges a newly checked current-page row without dropping prior pages", () => {
+    expect(
+      [...mergePageSelection(new Set(["A", "C"]), ["C", "D"], ["C", "D"])],
+    ).toEqual(["A", "C", "D"])
+  })
+
+  it("identifies every selected product without a separate all-selected state", () => {
+    expect(isAllProductsSelected(new Set(["A", "B", "C", "D"]), 4)).toBe(true)
+    expect(isAllProductsSelected(new Set(["A", "B", "C"]), 4)).toBe(false)
+    expect(isAllProductsSelected(new Set(), 0)).toBe(false)
+    expect([...clearProductSelection()]).toEqual([])
+  })
+
+  it("selects all export fields in canonical order", () => {
+    expect([...PRODUCT_EXPORT_COLUMNS]).toHaveLength(43)
+    expect([...PRODUCT_EXPORT_COLUMNS]).toEqual(PRODUCT_EXPORT_COLUMNS)
   })
 })

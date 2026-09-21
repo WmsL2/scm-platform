@@ -1,7 +1,7 @@
 # Handoff: Product List Price, Multi-select and Column Order
 
-Status: IMPLEMENTED / BROWSER ACCEPTANCE PENDING  
-Date: 2026-09-21  
+Status: IMPLEMENTED / BROWSER ACCEPTANCE PENDING
+Date: 2026-09-21
 Branch: feat/product-list-price-and-multiselect-filters
 
 ## Completed

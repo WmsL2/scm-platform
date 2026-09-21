@@ -36,6 +36,8 @@ from app.modules.supplier.infrastructure.models import Supplier
 from app.modules.supplier.infrastructure.repository import SupplierRepository
 from app.modules.system.repository import UserRepository
 
+PRODUCT_EXPORT_SELECTION_LIMIT = 5000
+
 
 class ProductService:
     def __init__(self, session: AsyncSession, storage: ObjectStorage | None = None) -> None:
@@ -131,6 +133,84 @@ class ProductService:
             page=page_params.page,
             page_size=page_params.page_size,
         )
+
+    async def selection_ids(
+        self,
+        *,
+        keyword: str | None,
+        company_name: str | None,
+        purchasing_agent: str | None,
+        brand: str | None,
+        supplier_name: str | None,
+        company_names: List[str],
+        purchasing_agents: List[str],
+        brands: List[str],
+        source_supplier_ids: List[uuid.UUID],
+        source_supplier_id: uuid.UUID | None,
+        category_level1_name: str | None,
+        category_level2_name: str | None,
+        category_selections: List[str],
+        cost_price_min: Decimal | None,
+        cost_price_max: Decimal | None,
+        agreement_price_min: Decimal | None,
+        agreement_price_max: Decimal | None,
+        jd_price_min: Decimal | None,
+        jd_price_max: Decimal | None,
+        profit_min: Decimal | None,
+        profit_max: Decimal | None,
+        discount_rate_min: Decimal | None,
+        discount_rate_max: Decimal | None,
+        sales_volume_min: int | None,
+        sales_volume_max: int | None,
+        status: ProductStatus,
+    ) -> List[uuid.UUID]:
+        self._validate_range("cost_price", cost_price_min, cost_price_max)
+        self._validate_range("agreement_price", agreement_price_min, agreement_price_max)
+        self._validate_range("jd_price", jd_price_min, jd_price_max)
+        self._validate_range("profit", profit_min, profit_max)
+        self._validate_range("discount_rate", discount_rate_min, discount_rate_max)
+        self._validate_range("sales_volume", sales_volume_min, sales_volume_max)
+        level1_names, level2_paths, level3_paths = self._resolve_category_selections(
+            category_selections
+        )
+        ids = await self.repository.selection_ids(
+            keyword=keyword.strip() if keyword else None,
+            company_name=company_name.strip() if company_name else None,
+            purchasing_agent=purchasing_agent.strip() if purchasing_agent else None,
+            brand=brand.strip() if brand else None,
+            supplier_name=supplier_name.strip() if supplier_name else None,
+            company_names=self._normalize_multi_filter_values(company_names),
+            purchasing_agents=self._normalize_multi_filter_values(purchasing_agents),
+            brands=self._normalize_multi_filter_values(brands),
+            source_supplier_ids=self._normalize_source_supplier_ids(source_supplier_ids),
+            source_supplier_id=source_supplier_id,
+            category_level1_name=category_level1_name,
+            category_level2_name=category_level2_name,
+            category_level1_names=level1_names,
+            category_level2_paths=level2_paths,
+            category_level3_paths=level3_paths,
+            cost_price_min=cost_price_min,
+            cost_price_max=cost_price_max,
+            agreement_price_min=agreement_price_min,
+            agreement_price_max=agreement_price_max,
+            jd_price_min=jd_price_min,
+            jd_price_max=jd_price_max,
+            profit_min=profit_min,
+            profit_max=profit_max,
+            discount_rate_min=discount_rate_min,
+            discount_rate_max=discount_rate_max,
+            sales_volume_min=sales_volume_min,
+            sales_volume_max=sales_volume_max,
+            status=status,
+            limit=PRODUCT_EXPORT_SELECTION_LIMIT + 1,
+        )
+        if len(ids) > PRODUCT_EXPORT_SELECTION_LIMIT:
+            raise AppError(
+                "PRODUCT_EXPORT_SELECTION_LIMIT_EXCEEDED",
+                "当前筛选结果超过 5000 条，请缩小筛选范围后再全选导出。",
+                422,
+            )
+        return ids
 
     @staticmethod
     def _normalize_multi_filter_values(values: List[str]) -> List[str]:

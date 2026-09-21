@@ -35,6 +35,7 @@ from app.modules.catalog.schemas import (
     ProductListItem,
     ProductPurgeRequest,
     ProductPurgeResponse,
+    ProductSelectionIdsResponse,
     ProductSourceSupplierCandidateResponse,
     ProductUpdateRequest,
 )
@@ -141,6 +142,70 @@ async def list_products(
             status=status,
         )
     )
+
+
+@router.get("/selection-ids", response_model=ApiResponse[ProductSelectionIdsResponse])
+async def product_selection_ids(
+    current: Annotated[CurrentUser, Depends(require_permission("product:list"))],
+    session: SessionDep,
+    keyword: Annotated[str | None, Query(max_length=255)] = None,
+    company_name: Annotated[str | None, Query(max_length=255)] = None,
+    purchasing_agent: Annotated[str | None, Query(max_length=128)] = None,
+    brand: Annotated[str | None, Query(max_length=128)] = None,
+    supplier_name: Annotated[str | None, Query(max_length=255)] = None,
+    company_names: Annotated[list[str] | None, Query(max_length=255)] = None,
+    purchasing_agents: Annotated[list[str] | None, Query(max_length=128)] = None,
+    brands: Annotated[list[str] | None, Query(max_length=128)] = None,
+    source_supplier_ids: Annotated[list[uuid.UUID] | None, Query()] = None,
+    category_level1_name: Annotated[str | None, Query(max_length=255)] = None,
+    category_level2_name: Annotated[str | None, Query(max_length=255)] = None,
+    category_selections: Annotated[list[str] | None, Query()] = None,
+    source_supplier_id: uuid.UUID | None = None,
+    cost_price_min: Annotated[Decimal | None, Query(ge=0)] = None,
+    cost_price_max: Annotated[Decimal | None, Query(ge=0)] = None,
+    agreement_price_min: Annotated[Decimal | None, Query(ge=0)] = None,
+    agreement_price_max: Annotated[Decimal | None, Query(ge=0)] = None,
+    jd_price_min: Decimal | None = None,
+    jd_price_max: Decimal | None = None,
+    profit_min: Decimal | None = None,
+    profit_max: Decimal | None = None,
+    discount_rate_min: Decimal | None = None,
+    discount_rate_max: Decimal | None = None,
+    sales_volume_min: Annotated[int | None, Query(ge=0)] = None,
+    sales_volume_max: Annotated[int | None, Query(ge=0)] = None,
+    status: ProductStatus = ProductStatus.ACTIVE,
+) -> ApiResponse[ProductSelectionIdsResponse]:
+    if status == ProductStatus.DISABLED and "product:disable" not in current.permissions:
+        raise AppError("AUTH_FORBIDDEN", "Permission denied", 403)
+    ids = await ProductService(session).selection_ids(
+        keyword=keyword,
+        company_name=company_name,
+        purchasing_agent=purchasing_agent,
+        brand=brand,
+        supplier_name=supplier_name,
+        company_names=company_names or [],
+        purchasing_agents=purchasing_agents or [],
+        brands=brands or [],
+        source_supplier_ids=source_supplier_ids or [],
+        category_level1_name=category_level1_name,
+        category_level2_name=category_level2_name,
+        category_selections=category_selections or [],
+        source_supplier_id=source_supplier_id,
+        cost_price_min=cost_price_min,
+        cost_price_max=cost_price_max,
+        agreement_price_min=agreement_price_min,
+        agreement_price_max=agreement_price_max,
+        jd_price_min=jd_price_min,
+        jd_price_max=jd_price_max,
+        profit_min=profit_min,
+        profit_max=profit_max,
+        discount_rate_min=discount_rate_min,
+        discount_rate_max=discount_rate_max,
+        sales_volume_min=sales_volume_min,
+        sales_volume_max=sales_volume_max,
+        status=status,
+    )
+    return success(ProductSelectionIdsResponse(ids=ids, total=len(ids)))
 
 
 @router.get(

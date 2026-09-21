@@ -11,6 +11,7 @@ import type {
   ProductImportSupplierCandidate,
   ProductListParams,
   ProductPage,
+  ProductSelectionIdsResult,
   ProductLifecycleResult,
   ProductPurgeResult,
   ProductSourceSupplierCandidate,
@@ -35,6 +36,10 @@ function listQuery(params: ProductListParams): string {
 export const productApi = {
   list(params: ProductListParams = {}): Promise<ProductPage> {
     return http.get<ProductPage>(path(listQuery(params)))
+  },
+
+  getSelectionIds(params: ProductListParams = {}): Promise<ProductSelectionIdsResult> {
+    return http.get<ProductSelectionIdsResult>(path(`/selection-ids${listQuery(params)}`))
   },
 
   categoryFilterOptions(

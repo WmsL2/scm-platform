@@ -1,7 +1,9 @@
 # ruff: noqa: E501
 import uuid
 from decimal import Decimal
+from hashlib import sha256
 from io import BytesIO
+from zipfile import ZipFile
 
 from httpx import ASGITransport, AsyncClient
 from openpyxl import load_workbook
@@ -11,8 +13,10 @@ from sqlalchemy import delete, select
 from app.core.database import SessionLocal
 from app.main import app
 from app.modules.auth.security import create_token, hash_password
+from app.modules.catalog.application.export_service import ProductExportService
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Category, Product, ProductPurgeAudit
+from app.modules.catalog.infrastructure.repository import ProductRepository
 from app.modules.catalog.schemas import _serialize_product_price
 from app.modules.supplier.infrastructure.models import Supplier
 from app.modules.system.models import Permission, Role, RolePermission, User, UserRole
@@ -72,6 +76,30 @@ def png_bytes() -> bytes:
     content = BytesIO()
     Image.new("RGB", (10, 10), color="red").save(content, format="PNG")
     return content.getvalue()
+
+
+def png_bytes_with_size(width: int, height: int) -> bytes:
+    content = BytesIO()
+    Image.new("RGBA", (width, height), color="red").save(content, format="PNG")
+    return content.getvalue()
+
+
+def test_product_export_preserves_large_images_and_pads_small_images() -> None:
+    large_source = png_bytes_with_size(800, 800)
+    tall_source = png_bytes_with_size(105, 308)
+    large = ProductExportService._prepare_embedded_image(large_source)
+    tall = ProductExportService._prepare_embedded_image(tall_source)
+    small = ProductExportService._prepare_embedded_image(png_bytes_with_size(20, 10))
+    assert large is not None and tall is not None and small is not None
+    assert sha256(large.getvalue()).digest() == sha256(large_source).digest()
+    assert sha256(tall.getvalue()).digest() == sha256(tall_source).digest()
+    with Image.open(large) as large_image:
+        assert large_image.size == (800, 800)
+    with Image.open(tall) as tall_image:
+        assert tall_image.size == (105, 308)
+    with Image.open(small) as small_image:
+        assert small_image.size == (80, 80)
+        assert small_image.getbbox() == (30, 35, 50, 45)
 
 
 async def create_product_user(
@@ -703,6 +731,130 @@ async def test_product_export_disabled_visibility_requires_disable_permission() 
         await cleanup_user(disabled_user_id)
 
 
+async def test_product_selection_ids_matches_filtered_list_and_list_order() -> None:
+    user_id, headers = await create_product_user(("product:list",))
+    supplier_id, category_id, product_id = await create_product_fixture()
+    second_product_id = uuid.uuid4()
+    supplier_name = f"商品测试来源供应商-{supplier_id}"
+    try:
+        async with SessionLocal() as session:
+            session.add(
+                Product(
+                    id=second_product_id,
+                    product_name="第二个选中测试商品",
+                    sku="SELECTION-SECOND",
+                    source_supplier_id=supplier_id,
+                    cost_price=Decimal("2"),
+                )
+            )
+            await session.commit()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            listing = await client.get(
+                "/api/v1/products",
+                headers=headers,
+                params={"supplier_name": supplier_name, "page": 1, "page_size": 100},
+            )
+            selected = await client.get(
+                "/api/v1/products/selection-ids",
+                headers=headers,
+                params={"supplier_name": supplier_name},
+            )
+        assert listing.status_code == 200
+        assert selected.status_code == 200
+        assert selected.json()["data"] == {
+            "ids": [item["id"] for item in listing.json()["data"]["items"]],
+            "total": 2,
+        }
+        assert {str(product_id), str(second_product_id)} == set(selected.json()["data"]["ids"])
+    finally:
+        async with SessionLocal() as session:
+            await session.execute(delete(Product).where(Product.id == second_product_id))
+            await session.commit()
+        await cleanup_fixture(supplier_id, category_id, product_id)
+        await cleanup_user(user_id)
+
+
+async def test_product_selection_ids_requires_list_permission() -> None:
+    user_id, headers = await create_product_user(("product:detail",))
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/v1/products/selection-ids", headers=headers)
+        assert response.status_code == 403
+    finally:
+        await cleanup_user(user_id)
+
+
+async def test_product_selection_ids_disabled_visibility_requires_disable_permission() -> None:
+    list_user_id, list_headers = await create_product_user(("product:list",))
+    disabled_user_id, disabled_headers = await create_product_user(
+        ("product:list", "product:disable")
+    )
+    supplier_id, category_id, product_id = await create_product_fixture()
+    try:
+        async with SessionLocal() as session:
+            product = await session.get(Product, product_id)
+            assert product is not None
+            product.status = ProductStatus.DISABLED
+            await session.commit()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            params = {
+                "status": "DISABLED",
+                "source_supplier_id": str(supplier_id),
+            }
+            hidden = await client.get(
+                "/api/v1/products/selection-ids", params=params, headers=list_headers
+            )
+            allowed = await client.get(
+                "/api/v1/products/selection-ids", params=params, headers=disabled_headers
+            )
+        assert hidden.status_code == 403
+        assert allowed.status_code == 200
+        assert allowed.json()["data"] == {"ids": [str(product_id)], "total": 1}
+    finally:
+        await cleanup_fixture(supplier_id, category_id, product_id)
+        await cleanup_user(list_user_id)
+        await cleanup_user(disabled_user_id)
+
+
+async def test_product_selection_ids_reuses_active_supplier_visibility() -> None:
+    user_id, headers = await create_product_user(("product:list",))
+    supplier_id, category_id, product_id = await create_product_fixture()
+    try:
+        async with SessionLocal() as session:
+            supplier = await session.get(Supplier, supplier_id)
+            assert supplier is not None
+            supplier.cooperation_status = "STOPPED"
+            await session.commit()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            listing = await client.get("/api/v1/products", headers=headers)
+            selected = await client.get("/api/v1/products/selection-ids", headers=headers)
+        assert listing.status_code == 200
+        assert selected.status_code == 200
+        assert str(product_id) not in {item["id"] for item in listing.json()["data"]["items"]}
+        assert str(product_id) not in selected.json()["data"]["ids"]
+    finally:
+        await cleanup_fixture(supplier_id, category_id, product_id)
+        await cleanup_user(user_id)
+
+
+async def test_product_selection_ids_rejects_more_than_5000_results(monkeypatch) -> None:
+    user_id, headers = await create_product_user(("product:list",))
+
+    async def more_than_limit(*args, **kwargs) -> list[uuid.UUID]:
+        del args, kwargs
+        return [uuid.uuid4() for _ in range(5001)]
+
+    monkeypatch.setattr(ProductRepository, "selection_ids", more_than_limit)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/v1/products/selection-ids", headers=headers)
+        assert response.status_code == 422
+        assert response.json()["code"] == "PRODUCT_EXPORT_SELECTION_LIMIT_EXCEEDED"
+        assert response.json()["message"] == "当前筛选结果超过 5000 条，请缩小筛选范围后再全选导出。"
+    finally:
+        await cleanup_user(user_id)
+
+
 async def test_product_export_embeds_managed_local_media_image(monkeypatch) -> None:
     storage = ExportImageStorage({"product-images/test-product.png": png_bytes()})
     monkeypatch.setattr("app.modules.catalog.application.export_service.get_object_storage", lambda: storage)
@@ -712,13 +864,23 @@ async def test_product_export_embeds_managed_local_media_image(monkeypatch) -> N
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/v1/products/export", headers=headers, json={"product_ids": [str(product_id)], "columns": ["sku", "image_reference"]})
         assert response.status_code == 200
-        sheet = load_workbook(BytesIO(response.content)).active
-        assert [cell.value for cell in sheet[1]] == ["图片", "sku"]
-        assert sheet["A2"].value is None
-        assert all("local-media/" not in str(cell.value) for row in sheet.iter_rows() for cell in row if cell.value is not None)
-        assert len(sheet._images) == 1
-        assert sheet._images[0].anchor._from.col == 0
-        assert sheet._images[0].anchor._from.row == 1
+        with ZipFile(BytesIO(response.content)) as workbook:
+            names = workbook.namelist()
+            media = [name for name in names if name.startswith("xl/media/")]
+            media_content = workbook.read(media[0])
+        assert any(name.startswith("xl/media/") for name in names)
+        assert any(name.startswith("xl/richData/") for name in names)
+        assert not any(name.startswith("xl/drawings/") for name in names)
+        assert "xl/richData/_rels/richValueRel.xml.rels" in names
+        assert "/xl/richData/_rels/richValueRel.xml.rels" not in names
+        assert names.count("xl/richData/_rels/richValueRel.xml.rels") == 1
+        with Image.open(BytesIO(media_content)) as image:
+            image.verify()
+        with Image.open(BytesIO(media_content)) as image:
+            image.load()
+        expected = ProductExportService._prepare_embedded_image(png_bytes())
+        assert expected is not None
+        assert sha256(media_content).hexdigest() == sha256(expected.getvalue()).hexdigest()
         assert storage.read_keys == ["product-images/test-product.png"]
     finally:
         await cleanup_fixture(supplier_id, category_id, product_id)
@@ -734,10 +896,10 @@ async def test_product_export_keeps_missing_managed_image_blank(monkeypatch) -> 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/v1/products/export", headers=headers, json={"product_ids": [str(product_id)], "columns": ["sku", "image_reference"]})
         assert response.status_code == 200
-        sheet = load_workbook(BytesIO(response.content)).active
-        assert sheet["A2"].value is None
-        assert sheet["B2"].value == "SKU-1"
-        assert sheet._images == []
+        with ZipFile(BytesIO(response.content)) as workbook:
+            names = workbook.namelist()
+        assert not any(name.startswith("xl/media/") for name in names)
+        assert not any(name.startswith("xl/richData/") for name in names)
     finally:
         await cleanup_fixture(supplier_id, category_id, product_id)
         await cleanup_user(user_id)
@@ -752,10 +914,10 @@ async def test_product_export_keeps_invalid_managed_image_blank(monkeypatch) -> 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/v1/products/export", headers=headers, json={"product_ids": [str(product_id)], "columns": ["sku", "image_reference"]})
         assert response.status_code == 200
-        sheet = load_workbook(BytesIO(response.content)).active
-        assert sheet["A2"].value is None
-        assert sheet["B2"].value == "SKU-1"
-        assert sheet._images == []
+        with ZipFile(BytesIO(response.content)) as workbook:
+            names = workbook.namelist()
+        assert not any(name.startswith("xl/media/") for name in names)
+        assert not any(name.startswith("xl/richData/") for name in names)
     finally:
         await cleanup_fixture(supplier_id, category_id, product_id)
         await cleanup_user(user_id)

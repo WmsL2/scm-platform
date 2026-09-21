@@ -1,7 +1,7 @@
 # Change Record: All Excel Imports Navigation Lock
 
-Date: 2026-09-21  
-Branch: `fix/product-import-preview-navigation-lock`  
+Date: 2026-09-21
+Branch: `fix/product-import-preview-navigation-lock`
 Alembic Revision: None
 
 ## Problem

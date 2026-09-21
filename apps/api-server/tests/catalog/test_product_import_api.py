@@ -182,14 +182,15 @@ async def _create_category(
     return category_id
 
 
-async def _create_references() -> tuple[uuid.UUID, uuid.UUID]:
+async def _create_references() -> tuple[uuid.UUID, uuid.UUID, str]:
     supplier_id = uuid.uuid4()
+    supplier_name = f"导入测试供应商-{supplier_id.hex[:8]}"
     async with SessionLocal() as session:
         session.add(
             Supplier(
                 id=supplier_id,
                 supplier_code=f"IMP{str(supplier_id)[:8]}",
-                supplier_name="导入测试供应商",
+                supplier_name=supplier_name,
                 main_brands="测试品牌",
                 advantage="测试优势",
                 archive_status="ARCHIVED",
@@ -198,7 +199,7 @@ async def _create_references() -> tuple[uuid.UUID, uuid.UUID]:
         )
         await session.commit()
     category_id = await _create_category(("测试一级", "测试二级", "测试三级"))
-    return supplier_id, category_id
+    return supplier_id, category_id, supplier_name
 
 
 def _workbook_bytes(
@@ -312,7 +313,7 @@ def _with_wps_cell_image(content: bytes, *, image_id: str = "ID_PRODUCT") -> byt
 
 async def test_product_import_accepts_blank_styled_columns_after_approved_headers() -> None:
     user_id, headers = await _create_import_user()
-    supplier_id, category_id = await _create_references()
+    supplier_id, category_id, supplier_name = await _create_references()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             preview = await client.post(
@@ -322,7 +323,7 @@ async def test_product_import_accepts_blank_styled_columns_after_approved_header
                     "file": (
                         "styled-blank-columns.xlsx",
                         _workbook_bytes(
-                            "导入测试供应商", styled_blank_columns_after_template=True
+                            supplier_name, styled_blank_columns_after_template=True
                         ),
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
@@ -368,7 +369,7 @@ async def test_product_import_preview_handles_all_blank_suppliers() -> None:
 
 async def test_product_import_preview_omits_blank_category_levels() -> None:
     user_id, headers = await _create_import_user()
-    supplier_id, category_id = await _create_references()
+    supplier_id, category_id, supplier_name = await _create_references()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             for sku, path, expected in (
@@ -379,7 +380,7 @@ async def test_product_import_preview_omits_blank_category_levels() -> None:
                 preview = await client.post(
                     "/api/v1/products/imports/preview",
                     headers=headers,
-                files={"file": (f"{sku}.xlsx", _workbook_bytes("导入测试供应商", sku_override=sku, category_path=path), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},  # noqa: E501
+                files={"file": (f"{sku}.xlsx", _workbook_bytes(supplier_name, sku_override=sku, category_path=path), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},  # noqa: E501
                 )
                 assert preview.status_code == 200
                 assert preview.json()["data"]["rows"][0]["category_path"] == expected
@@ -427,7 +428,7 @@ async def test_product_import_saves_required_category_text_without_category_bind
         "app.modules.catalog.application.import_service.get_object_storage", lambda: storage
     )
     user_id, headers = await _create_import_user()
-    supplier_id, category_id = await _create_references()
+    supplier_id, category_id, supplier_name = await _create_references()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             unresolved = await client.post(
@@ -451,7 +452,7 @@ async def test_product_import_saves_required_category_text_without_category_bind
                 files={
                     "file": (
                         "products.xlsx",
-                        _workbook_bytes("导入测试供应商"),
+                        _workbook_bytes(supplier_name),
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
                 },
@@ -482,7 +483,7 @@ async def test_product_import_saves_required_category_text_without_category_bind
                     "file": (
                         "duplicate-products.xlsx",
                         _workbook_bytes(
-                            "导入测试供应商", product_name="更新后商品", cost_price="222"
+                            supplier_name, product_name="更新后商品", cost_price="222"
                         ),
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
@@ -517,8 +518,8 @@ async def test_product_import_saves_required_category_text_without_category_bind
                     "file": (
                         "duplicate-rows-products.xlsx",
                         _workbook_bytes(
-                            "导入测试供应商",
-                            "导入测试供应商",
+                            supplier_name,
+                            supplier_name,
                             sku_override="SKU-1",
                         ),
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -555,7 +556,7 @@ async def test_product_import_saves_required_category_text_without_category_bind
                 files={
                     "file": (
                         "disabled-product.xlsx",
-                        _workbook_bytes("导入测试供应商"),
+                        _workbook_bytes(supplier_name),
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
                 },
@@ -594,7 +595,7 @@ async def test_product_import_saves_required_category_text_without_category_bind
 
 async def test_product_import_accepts_category_paths_without_category_master_binding() -> None:
     user_id, headers = await _create_import_user()
-    supplier_id, default_category_id = await _create_references()
+    supplier_id, default_category_id, supplier_name = await _create_references()
     ambiguous_path = ("重复一级", "重复二级", "重复三级")
     inactive_path = ("停用一级", "停用二级", "停用三级")
     ambiguous_category_ids = (
@@ -611,7 +612,7 @@ async def test_product_import_accepts_category_paths_without_category_master_bin
                     "file": (
                         "missing-category.xlsx",
                         _workbook_bytes(
-                            "导入测试供应商",
+                            supplier_name,
                             category_path=("未知一级", "未知二级", "未知三级"),
                         ),
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -629,7 +630,7 @@ async def test_product_import_accepts_category_paths_without_category_master_bin
                 files={
                     "file": (
                         "ambiguous-category.xlsx",
-                        _workbook_bytes("导入测试供应商", category_path=ambiguous_path),
+                        _workbook_bytes(supplier_name, category_path=ambiguous_path),
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
                 },
@@ -645,7 +646,7 @@ async def test_product_import_accepts_category_paths_without_category_master_bin
                 files={
                     "file": (
                         "inactive-category.xlsx",
-                        _workbook_bytes("导入测试供应商", category_path=inactive_path),
+                        _workbook_bytes(supplier_name, category_path=inactive_path),
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
                 },
@@ -665,7 +666,7 @@ async def test_product_import_accepts_category_paths_without_category_master_bin
 
 async def test_product_import_requires_only_sku_and_supplier() -> None:
     user_id, headers = await _create_import_user()
-    supplier_id, category_id = await _create_references()
+    supplier_id, category_id, supplier_name = await _create_references()
     blank_fields = {
         header: "" for header in PRODUCT_IMPORT_HEADERS if header not in {"sku", "供应商"}
     }
@@ -684,7 +685,7 @@ async def test_product_import_requires_only_sku_and_supplier() -> None:
                     "file": (
                         "minimal-product.xlsx",
                         _workbook_bytes(
-                            "导入测试供应商",
+                            supplier_name,
                             sku_override="SKU-ONLY-001",
                             value_overrides=blank_fields,
                         ),
@@ -710,7 +711,7 @@ async def test_product_import_requires_only_sku_and_supplier() -> None:
                         "file": (
                             f"{sku}.xlsx",
                             _workbook_bytes(
-                                "导入测试供应商",
+                                supplier_name,
                                 sku_override=sku,
                                 category_path=category_path,
                             ),
@@ -728,7 +729,12 @@ async def test_product_import_requires_only_sku_and_supplier() -> None:
                 ).status_code == 200
 
         async with SessionLocal() as session:
-            minimal = await session.scalar(select(Product).where(Product.sku == "SKU-ONLY-001"))
+            minimal = await session.scalar(
+                select(Product).where(
+                    Product.source_supplier_id == supplier_id,
+                    Product.sku == "SKU-ONLY-001",
+                )
+            )
             assert minimal is not None
             assert minimal.source_supplier_id == supplier_id
             for field in (
@@ -759,7 +765,12 @@ async def test_product_import_requires_only_sku_and_supplier() -> None:
             ):
                 assert getattr(minimal, field) is None
             for sku, category_path in category_cases:
-                product = await session.scalar(select(Product).where(Product.sku == sku))
+                product = await session.scalar(
+                    select(Product).where(
+                        Product.source_supplier_id == supplier_id,
+                        Product.sku == sku,
+                    )
+                )
                 assert product is not None
                 assert (
                     product.category_level1_name,
@@ -773,7 +784,7 @@ async def test_product_import_requires_only_sku_and_supplier() -> None:
 
 async def test_product_import_confirms_valid_rows_and_retains_failed_rows() -> None:
     user_id, headers = await _create_import_user()
-    supplier_id, category_id = await _create_references()
+    supplier_id, category_id, supplier_name = await _create_references()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             preview = await client.post(
@@ -782,7 +793,7 @@ async def test_product_import_confirms_valid_rows_and_retains_failed_rows() -> N
                 files={
                     "file": (
                         "mixed-products.xlsx",
-                        _workbook_bytes("导入测试供应商", "未知供应商"),
+                        _workbook_bytes(supplier_name, "未知供应商"),
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
                 },
@@ -857,11 +868,11 @@ async def test_product_import_confirms_valid_rows_and_retains_failed_rows() -> N
 
 async def test_product_import_defers_formula_image_storage_until_confirm() -> None:
     user_id, headers = await _create_import_user()
-    supplier_id, category_id = await _create_references()
+    supplier_id, category_id, supplier_name = await _create_references()
     try:
         workbook = _with_wps_cell_image(
             _workbook_bytes(
-                "导入测试供应商",
+                supplier_name,
                 image_value='=_xlfn.DISPIMG("ID_PRODUCT",1)',
             )
         )
@@ -906,11 +917,11 @@ async def test_product_import_defers_formula_image_storage_until_confirm() -> No
 
 async def test_product_import_discard_deletes_temporary_workbook() -> None:
     user_id, headers = await _create_import_user()
-    supplier_id, category_id = await _create_references()
+    supplier_id, category_id, supplier_name = await _create_references()
     try:
         workbook = _with_wps_cell_image(
             _workbook_bytes(
-                "导入测试供应商",
+                supplier_name,
                 image_value='=_xlfn.DISPIMG("ID_PRODUCT",1)',
             )
         )
@@ -947,7 +958,7 @@ async def test_product_import_discard_deletes_temporary_workbook() -> None:
 
 async def test_product_import_rejects_formula_when_embedded_image_is_missing() -> None:
     user_id, headers = await _create_import_user()
-    supplier_id, category_id = await _create_references()
+    supplier_id, category_id, supplier_name = await _create_references()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             preview = await client.post(
@@ -957,7 +968,7 @@ async def test_product_import_rejects_formula_when_embedded_image_is_missing() -
                     "file": (
                         "missing-formula-image.xlsx",
                         _workbook_bytes(
-                            "导入测试供应商",
+                            supplier_name,
                             image_value='=_xlfn.DISPIMG("ID_MISSING",1)',
                         ),
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -998,12 +1009,12 @@ async def test_product_import_normalizes_formula_result_decimal_tails(
     header: str, field: str, cached_result: str, expected: str
 ) -> None:
     user_id, headers = await _create_import_user()
-    supplier_id, category_id = await _create_references()
+    supplier_id, category_id, supplier_name = await _create_references()
     try:
         formula_cell = f"{get_column_letter(PRODUCT_IMPORT_HEADERS.index(header) + 1)}2"
         workbook = _with_cached_formula_results(
             _workbook_bytes(
-                "导入测试供应商",
+                supplier_name,
                 sku_override=f"SKU-FORMULA-{field}",
                 value_overrides={header: "=1+1"},
                 number_formats={header: "General"},
@@ -1046,7 +1057,7 @@ async def test_product_import_normalizes_formula_result_decimal_tails(
 
 async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_text() -> None:
     user_id, headers = await _create_import_user()
-    supplier_id, category_id = await _create_references()
+    supplier_id, category_id, supplier_name = await _create_references()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             valid_preview = await client.post(
@@ -1056,7 +1067,7 @@ async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_tex
                     "file": (
                         "normalized-rates.xlsx",
                         _workbook_bytes(
-                            "导入测试供应商",
+                            supplier_name,
                             value_overrides={
                                 "利润": None,
                                 "京东价毛利（30-50）": "74.32%",
@@ -1093,7 +1104,7 @@ async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_tex
             assert confirmed.status_code == 200
 
             display_workbook = _workbook_bytes(
-                "导入测试供应商",
+                supplier_name,
                 sku_override="SKU-DISPLAY-PRECISION",
                 value_overrides={
                     "利润": "=Q2-M2",
@@ -1150,7 +1161,7 @@ async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_tex
                 assert display_row.normalized_data["price_inflation_rate"] == "-0.1400"
 
             div_zero_workbook = _workbook_bytes(
-                "导入测试供应商",
+                supplier_name,
                 sku_override="SKU-DIV-ZERO",
                 value_overrides={"毛利率": "=(Q2-M2)/Q2"},
                 number_formats={"毛利率": "0.00%"},
@@ -1174,7 +1185,7 @@ async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_tex
             assert div_zero_row["is_valid"] is True
 
             price_precision_workbook = _workbook_bytes(
-                "导入测试供应商",
+                supplier_name,
                 sku_override="SKU-PRICE-PRECISION",
                 value_overrides={"成本价": "=1+1"},
                 number_formats={"成本价": "0.00"},
@@ -1227,7 +1238,7 @@ async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_tex
                     "file": (
                         "maximum-price-precision.xlsx",
                         _workbook_bytes(
-                            "导入测试供应商",
+                            supplier_name,
                             sku_override="SKU-MAX-PRICE-PRECISION",
                             cost_price=maximum_price,
                         ),
@@ -1258,7 +1269,7 @@ async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_tex
                     "file": (
                         "invalid-numbers.xlsx",
                         _workbook_bytes(
-                            "导入测试供应商",
+                            supplier_name,
                             sku_override="SKU-INVALID",
                             value_overrides={"利润": "46.25%", "价格虚高比例": "5000+"},
                         ),
@@ -1276,7 +1287,7 @@ async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_tex
                     "file": (
                         "formula-without-cache.xlsx",
                         _workbook_bytes(
-                            "导入测试供应商",
+                            supplier_name,
                             sku_override="SKU-FORMULA",
                             value_overrides={"成本价": "=1+1"},
                         ),
@@ -1288,7 +1299,7 @@ async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_tex
             assert formula_row["is_valid"] is True
 
             profit_tail_workbook = _workbook_bytes(
-                "导入测试供应商",
+                supplier_name,
                 sku_override="SKU-PROFIT-FORMULA-TAIL",
                 value_overrides={"利润": "=1+1"},
                 number_formats={"利润": "General"},
@@ -1330,7 +1341,7 @@ async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_tex
                     "file": (
                         "profit-direct-tail.xlsx",
                         _workbook_bytes(
-                            "导入测试供应商",
+                            supplier_name,
                             sku_override="SKU-PROFIT-DIRECT-TAIL",
                             value_overrides={"利润": 12.34567, "市场价": "100.123456789012345"},
                             number_formats={"利润": "General", "市场价": "General"},
@@ -1373,7 +1384,7 @@ async def test_product_import_normalizes_rates_and_tolerates_invalid_numeric_tex
 
 async def test_product_import_accepts_unbounded_discount_rates() -> None:
     user_id, headers = await _create_import_user()
-    supplier_id, category_id = await _create_references()
+    supplier_id, category_id, supplier_name = await _create_references()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             for sku, rate, expected in (
@@ -1388,7 +1399,7 @@ async def test_product_import_accepts_unbounded_discount_rates() -> None:
                         "file": (
                             f"{sku}.xlsx",
                             _workbook_bytes(
-                                "导入测试供应商",
+                                supplier_name,
                                 sku_override=sku,
                                 value_overrides={"折扣率": rate},
                             ),
@@ -1415,7 +1426,7 @@ async def test_product_import_accepts_unbounded_discount_rates() -> None:
                     "file": (
                         "invalid-positive-rating.xlsx",
                         _workbook_bytes(
-                            "导入测试供应商",
+                            supplier_name,
                             sku_override="SKU-POSITIVE-RATING-OVER",
                             value_overrides={"好评率": "120%"},
                         ),
@@ -1434,7 +1445,7 @@ async def test_product_import_accepts_unbounded_discount_rates() -> None:
 
 async def test_product_import_stores_unparseable_numeric_values_as_null() -> None:
     user_id, headers = await _create_import_user()
-    supplier_id, category_id = await _create_references()
+    supplier_id, category_id, supplier_name = await _create_references()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             async def preview_and_confirm(
@@ -1447,7 +1458,7 @@ async def test_product_import_stores_unparseable_numeric_values_as_null() -> Non
                         "file": (
                             f"{sku}.xlsx",
                             _workbook_bytes(
-                                "导入测试供应商",
+                                supplier_name,
                                 sku_override=sku,
                                 cost_price=cost_price,  # type: ignore[arg-type]
                                 value_overrides=overrides,
@@ -1522,9 +1533,9 @@ async def test_product_import_stores_unparseable_numeric_values_as_null() -> Non
 
 async def test_product_import_preview_rows_are_server_paginated() -> None:
     user_id, headers = await _create_import_user()
-    supplier_id, category_id = await _create_references()
+    supplier_id, category_id, supplier_name = await _create_references()
     try:
-        workbook = _workbook_bytes(*(["导入测试供应商"] * 105))
+        workbook = _workbook_bytes(*([supplier_name] * 105))
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             preview = await client.post(
                 "/api/v1/products/imports/preview",
@@ -1676,7 +1687,7 @@ async def test_product_import_exports_failed_rows_as_reusable_approved_workbook(
 
 async def test_product_import_confirm_rejects_stale_concurrent_preview() -> None:
     user_id, headers = await _create_import_user()
-    supplier_id, category_id = await _create_references()
+    supplier_id, category_id, supplier_name = await _create_references()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             preview_ids: list[str] = []
@@ -1687,7 +1698,7 @@ async def test_product_import_confirm_rejects_stale_concurrent_preview() -> None
                     files={
                         "file": (
                             filename,
-                            _workbook_bytes("导入测试供应商"),
+                            _workbook_bytes(supplier_name),
                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         )
                     },
@@ -1712,7 +1723,7 @@ async def test_product_import_confirm_rejects_stale_concurrent_preview() -> None
                     "file": (
                         "stale-update.xlsx",
                         _workbook_bytes(
-                            "导入测试供应商", product_name="来自过期预览的名称"
+                            supplier_name, product_name="来自过期预览的名称"
                         ),
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )

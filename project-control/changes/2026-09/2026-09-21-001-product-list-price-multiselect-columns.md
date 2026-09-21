@@ -1,8 +1,8 @@
 # Change Record: Product List Price, Multi-select and Column Order
 
-Change ID: 2026-09-21-001  
-Module: catalog  
-Date: 2026-09-21  
+Change ID: 2026-09-21-001
+Module: catalog
+Date: 2026-09-21
 Branch: feat/product-list-price-and-multiselect-filters
 
 ## Goal

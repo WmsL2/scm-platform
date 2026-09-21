@@ -1,7 +1,7 @@
 # Change Record: Product Import Empty Supplier Async Load Fix
 
-Date: 2026-09-21  
-Branch: `fix/product-import-empty-supplier-missing-greenlet`  
+Date: 2026-09-21
+Branch: `fix/product-import-empty-supplier-missing-greenlet`
 Alembic Revision: None
 
 ## Problem
