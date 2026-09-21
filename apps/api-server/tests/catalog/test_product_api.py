@@ -168,6 +168,7 @@ async def create_product_fixture(
                 positive_rating=Decimal("0.9500"),
                 purchasing_agent="张三",
                 jd_price=Decimal("200.0000"),
+                profit=Decimal("30.0000"),
                 jd_self_operated_price=Decimal("180.0000"),
                 created_by=created_by,
                 updated_by=updated_by,
@@ -219,6 +220,7 @@ async def test_product_api_lists_details_and_updates_cost_independently() -> Non
             filtered = await client.get(
                 "/api/v1/products?company_name=众诚&supplier_name=商品测试"
                 "&cost_price_min=99&cost_price_max=101&agreement_price_min=160"
+                "&jd_price_min=200&jd_price_max=200&profit_min=30&profit_max=30"
                 "&discount_rate_min=0.8&discount_rate_max=0.8"
                 "&sales_volume_min=88&sales_volume_max=88",
                 headers=headers,
@@ -231,6 +233,63 @@ async def test_product_api_lists_details_and_updates_cost_independently() -> Non
             )
             assert invalid_range.status_code == 422
             assert invalid_range.json()["code"] == "PRODUCT_FILTER_RANGE_INVALID"
+
+            invalid_jd_price_range = await client.get(
+                "/api/v1/products?jd_price_min=300&jd_price_max=200", headers=headers
+            )
+            assert invalid_jd_price_range.status_code == 422
+            assert invalid_jd_price_range.json()["code"] == "PRODUCT_FILTER_RANGE_INVALID"
+
+            invalid_profit_range = await client.get(
+                "/api/v1/products?profit_min=40&profit_max=30", headers=headers
+            )
+            assert invalid_profit_range.status_code == 422
+            assert invalid_profit_range.json()["code"] == "PRODUCT_FILTER_RANGE_INVALID"
+
+            multi_value_filtered = await client.get(
+                "/api/v1/products?company_names=众诚测试公司&brands=测试品牌&brands=不存在品牌"
+                "&purchasing_agents=张三&source_supplier_ids="
+                f"{supplier_id}&jd_price_min=200&profit_min=30",
+                headers=headers,
+            )
+            assert multi_value_filtered.status_code == 200
+            assert str(product_id) in {
+                item["id"] for item in multi_value_filtered.json()["data"]["items"]
+            }
+
+            company_options = await client.get(
+                "/api/v1/products/filter-options?field=COMPANY&keyword=众诚",
+                headers=headers,
+            )
+            assert company_options.status_code == 200
+            assert {item["value"] for item in company_options.json()["data"]["items"]} >= {
+                "众诚测试公司"
+            }
+
+            purchasing_agent_options = await client.get(
+                "/api/v1/products/filter-options?field=PURCHASING_AGENT&keyword=张",
+                headers=headers,
+            )
+            assert purchasing_agent_options.status_code == 200
+            assert {item["value"] for item in purchasing_agent_options.json()["data"]["items"]} >= {
+                "张三"
+            }
+            brand_options = await client.get(
+                "/api/v1/products/filter-options?field=BRAND&keyword=测试",
+                headers=headers,
+            )
+            assert brand_options.status_code == 200
+            assert {item["value"] for item in brand_options.json()["data"]["items"]} >= {
+                "测试品牌"
+            }
+            supplier_options = await client.get(
+                "/api/v1/products/filter-options?field=SUPPLIER&keyword=商品测试",
+                headers=headers,
+            )
+            assert supplier_options.status_code == 200
+            assert str(supplier_id) in {
+                item["value"] for item in supplier_options.json()["data"]["items"]
+            }
 
             assert (
                 await client.get(
@@ -277,7 +336,7 @@ async def test_product_api_lists_details_and_updates_cost_independently() -> Non
             assert data["market_price"] is None
             assert data["agreement_price"] == "160.0000"
             assert data["agreement_purchase_price"] is None
-            assert data["profit"] is None
+            assert data["profit"] == "30.0000"
             assert data["discount_rate"] == "0.8000"
             assert data["deduction_rate"] is None
 

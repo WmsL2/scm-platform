@@ -23,6 +23,8 @@ from app.modules.catalog.schemas import (
     ProductCategoryFilterOptionResponse,
     ProductCostUpdateRequest,
     ProductDetailResponse,
+    ProductFilterOptionPageResponse,
+    ProductFilterOptionResponse,
     ProductLifecycleResponse,
     ProductListItem,
     ProductPurgeResponse,
@@ -52,6 +54,10 @@ class ProductService:
         purchasing_agent: str | None,
         brand: str | None,
         supplier_name: str | None,
+        company_names: List[str],
+        purchasing_agents: List[str],
+        brands: List[str],
+        source_supplier_ids: List[uuid.UUID],
         source_supplier_id: uuid.UUID | None,
         category_level1_name: str | None,
         category_level2_name: str | None,
@@ -60,6 +66,10 @@ class ProductService:
         cost_price_max: Decimal | None,
         agreement_price_min: Decimal | None,
         agreement_price_max: Decimal | None,
+        jd_price_min: Decimal | None,
+        jd_price_max: Decimal | None,
+        profit_min: Decimal | None,
+        profit_max: Decimal | None,
         discount_rate_min: Decimal | None,
         discount_rate_max: Decimal | None,
         sales_volume_min: int | None,
@@ -68,6 +78,8 @@ class ProductService:
     ) -> PageResult[ProductListItem]:
         self._validate_range("cost_price", cost_price_min, cost_price_max)
         self._validate_range("agreement_price", agreement_price_min, agreement_price_max)
+        self._validate_range("jd_price", jd_price_min, jd_price_max)
+        self._validate_range("profit", profit_min, profit_max)
         self._validate_range("discount_rate", discount_rate_min, discount_rate_max)
         self._validate_range("sales_volume", sales_volume_min, sales_volume_max)
         level1_names, level2_paths, level3_paths = self._resolve_category_selections(
@@ -80,6 +92,10 @@ class ProductService:
             purchasing_agent=purchasing_agent.strip() if purchasing_agent else None,
             brand=brand.strip() if brand else None,
             supplier_name=supplier_name.strip() if supplier_name else None,
+            company_names=self._normalize_multi_filter_values(company_names),
+            purchasing_agents=self._normalize_multi_filter_values(purchasing_agents),
+            brands=self._normalize_multi_filter_values(brands),
+            source_supplier_ids=self._normalize_source_supplier_ids(source_supplier_ids),
             source_supplier_id=source_supplier_id,
             category_level1_name=category_level1_name,
             category_level2_name=category_level2_name,
@@ -90,12 +106,17 @@ class ProductService:
             cost_price_max=cost_price_max,
             agreement_price_min=agreement_price_min,
             agreement_price_max=agreement_price_max,
+            jd_price_min=jd_price_min,
+            jd_price_max=jd_price_max,
+            profit_min=profit_min,
+            profit_max=profit_max,
             discount_rate_min=discount_rate_min,
             discount_rate_max=discount_rate_max,
             sales_volume_min=sales_volume_min,
             sales_volume_max=sales_volume_max,
             status=status,
         )
+
         usernames = await self.user_repository.usernames_by_ids(
             {
                 user_id
@@ -110,6 +131,32 @@ class ProductService:
             page=page_params.page,
             page_size=page_params.page_size,
         )
+
+    @staticmethod
+    def _normalize_multi_filter_values(values: List[str]) -> List[str]:
+        result: List[str] = []
+        for value in values:
+            normalized = value.strip()
+            if normalized and normalized not in result:
+                result.append(normalized)
+        if len(result) > 50:
+            raise AppError(
+                "PRODUCT_FILTER_SELECTION_LIMIT_EXCEEDED",
+                "A product filter accepts at most 50 selections",
+                422,
+            )
+        return result
+
+    @staticmethod
+    def _normalize_source_supplier_ids(values: List[uuid.UUID]) -> List[uuid.UUID]:
+        result = list(dict.fromkeys(values))
+        if len(result) > 50:
+            raise AppError(
+                "PRODUCT_FILTER_SELECTION_LIMIT_EXCEEDED",
+                "A product filter accepts at most 50 selections",
+                422,
+            )
+        return result
 
     def _resolve_category_selections(
         self, selections: List[str]
@@ -168,6 +215,27 @@ class ProductService:
                 )
             )
         return ProductCategoryFilterOptionPageResponse(items=items, has_more=has_more)
+
+    async def filter_options(
+        self,
+        *,
+        field: Literal["COMPANY", "PURCHASING_AGENT", "BRAND", "SUPPLIER"],
+        keyword: str | None,
+        offset: int,
+        limit: int,
+        status: ProductStatus,
+    ) -> ProductFilterOptionPageResponse:
+        rows, has_more = await self.repository.filter_options(
+            field=field,
+            keyword=keyword.strip() if keyword else None,
+            offset=offset,
+            limit=limit,
+            status=status,
+        )
+        return ProductFilterOptionPageResponse(
+            items=[ProductFilterOptionResponse(value=value, label=label) for value, label in rows],
+            has_more=has_more,
+        )
 
     async def get(self, product_id: uuid.UUID) -> ProductDetailResponse:
         product = await self.repository.by_id(product_id)
