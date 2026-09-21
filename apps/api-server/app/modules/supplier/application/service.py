@@ -72,8 +72,8 @@ class SupplierService:
                 self._restore_deleted_supplier(
                     supplier,
                     supplier_name=supplier_name,
-                    main_brands=self._required_text(payload.main_brands, "main_brands"),
-                    advantage=self._required_text(payload.advantage, "advantage"),
+                    main_brands=self._optional_text(payload.main_brands),
+                    advantage=self._optional_text(payload.advantage),
                     archive_status=payload.archive_status,
                     contacts=payload.contacts,
                     actor_id=actor_id,
@@ -84,8 +84,8 @@ class SupplierService:
                         "SUPPLIER"
                     ),
                     supplier_name=supplier_name,
-                    main_brands=self._required_text(payload.main_brands, "main_brands"),
-                    advantage=self._required_text(payload.advantage, "advantage"),
+                    main_brands=self._optional_text(payload.main_brands),
+                    advantage=self._optional_text(payload.advantage),
                     created_by=actor_id,
                     updated_by=actor_id,
                     contacts=[
@@ -114,9 +114,9 @@ class SupplierService:
                         raise AppError("SUPPLIER_NAME_EXISTS", "该供应商已存在", 409)
                     supplier.supplier_name = supplier_name
             if "main_brands" in payload.model_fields_set:
-                supplier.main_brands = self._required_text(payload.main_brands, "main_brands")
+                supplier.main_brands = self._optional_text(payload.main_brands)
             if "advantage" in payload.model_fields_set:
-                supplier.advantage = self._required_text(payload.advantage, "advantage")
+                supplier.advantage = self._optional_text(payload.advantage)
             if "archive_status" in payload.model_fields_set and payload.archive_status is not None:
                 self._apply_archive_status(supplier, payload.archive_status, actor_id)
             if "contacts" in payload.model_fields_set:
@@ -291,6 +291,10 @@ class SupplierService:
         if value is None or not value.strip():
             raise AppError("SUPPLIER_VALIDATION_ERROR", f"{field_name} must not be blank", 422)
         return value.strip()
+
+    @staticmethod
+    def _optional_text(value: str | None) -> str:
+        return value.strip() if value else ""
 
     @staticmethod
     def _list_item(supplier: Supplier) -> SupplierListItem:

@@ -58,7 +58,7 @@ Sprint 1 — Auth/RBAC + Supplier
 ## 下一步
 
 - 主任务：Product Master 已升级为固定 43 列模板；仅 SKU 与合格供应商必填，其余 41 列（含三级类目）可为空并保存为 `NULL`。覆盖式同键重新导入、成功提交后的旧图片回收、组合筛选、可搜索类目联动、自定义列表列和全字段详情/编辑均已实现。`scm_product` 与导入暂存行不依赖 `category_id`，类目维表保留为独立管理模块（ADR-0033）。商品导入已改为分块上传与磁盘只读解析，默认支持 1GB / 100,000 行，浏览器预览超时为 15 分钟（无 Alembic Revision，ADR-0022）。供应商 + SKU 仍为不可修改业务键，停用同键商品仍阻止入库。
-- 后续任务：准备真实商品大表需要的有效 Supplier Master，并处理 Excel 的空供应商；供应商 Excel 导入目前仅要求供应商名称，其余模板字段可后补；类目 Source Loader 不再是商品 Confirm 前置条件。
+- 后续任务：准备真实商品大表需要的有效 Supplier Master，并处理 Excel 的空供应商；供应商手工新增与 Excel 导入均仅要求供应商名称，其余已冻结字段可后补；类目 Source Loader 不再是商品 Confirm 前置条件。
 - 业务冻结：Supplier Product Quote 已取消；正式 `cost_price` 允许为空，43 列 Excel 的不可解析数值写为 NULL；后续供应商新报价的专用成本价接口仍要求大于零且不自动重算其他价格；不创建报价历史、有效期或比价模块（ADR-0024、ADR-0030）。
 - Auth 会话：Refresh Token、服务端 Session、令牌轮换、三天无活动过期、三十天绝对过期和全设备失效已实现；管理员设备会话管理页与 Role disable policy 仍待后续冻结。
 - 部署初始化：通过 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` 可一次性创建全权限 `boss` 管理员；同名账号一旦存在（包括逻辑删除）不被自动重建，创建后可安全移除环境变量并按常规账号管理删除该账号（ADR-0023，无 Migration）。
@@ -66,7 +66,7 @@ Sprint 1 — Auth/RBAC + Supplier
 ## Blocker
 
 - Repository：无代码合并 Blocker。
-- Supplier：名称唯一与重复数据清理已实现：同名只保留最早历史记录，后建重复记录已物理删除；创建/导入遇到已逻辑删除的同名记录会恢复并覆盖。合作状态已冻结为 NORMAL ↔ STOPPED / BLACKLIST，恢复均保留原因和历史；Import Confirm 已按原子持久化加固：锁定实际导入行、flush 成功和数量一致后才确认批次，异常整批回滚。未确认的企业、税务、地址、银行、资质等字段仍不得自行添加。资质业务字段及其 API 继续冻结。
+- Supplier：手工新增与 Excel 导入均仅要求供应商名称，主营品牌、主要优势和联系人资料可留空后补；名称唯一与重复数据清理已实现，同名只保留最早历史记录，后建重复记录已物理删除，创建/导入遇到已逻辑删除的同名记录会恢复并覆盖。合作状态已冻结为 NORMAL ↔ STOPPED / BLACKLIST，恢复均保留原因和历史；Import Confirm 已按原子持久化加固：锁定实际导入行、flush 成功和数量一致后才确认批次，异常整批回滚。未确认的企业、税务、地址、银行、资质等字段仍不得自行添加。资质业务字段及其 API 继续冻结。
 - Product / Catalog：Product Master 与 Product Import 已实现；实际 Confirm 写入当前通过新增行与正常同键更新行。仅 SKU 或来源供应商为空/无效、同 Excel 重复、停用同键商品以及公式图片缺失/不可解码等失败行保留在 Staging；三级类目为空允许入库。Product 已冻结为 `ACTIVE` / `DISABLED`：停用保留业务键并阻止导入；仅已停用商品可由 `product:purge` 永久删除，删除后可新建同键商品。Product 已不再关联 Category Master。
 - Product Import 空供应商预览已加固：当整份 Excel 没有任何有效供应商名称时，后端显式使用空匹配集合，不在 `flush` 后触发 AsyncSession 懒加载；预览正常返回并将相关行标记为“供应商不能为空”。
 - Excel 导入上线防误操作已实现第一版并覆盖全部 4 个入口：商品上传预览与 Confirm、供应商上传预览与 Confirm、类目原子导入、投标项目 Excel 创建。处理期间以前端全屏遮罩锁定交互，阻止站内路由切换，并对刷新或关闭页面请求浏览器原生确认；成功、失败或超时后自动解锁。该实现是紧急上线用的页面级保护，导入仍依赖当前页面请求，长期后台异步任务化尚未实施。

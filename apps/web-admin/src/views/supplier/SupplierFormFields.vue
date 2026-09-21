@@ -21,14 +21,14 @@ function removeContact(index: number): void {
 
 <template>
   <el-form label-position="top" class="supplier-form">
-    <el-form-item label="供应商名称">
+    <el-form-item label="供应商名称（必填）">
       <el-input v-model="draft.supplier_name" :disabled="props.readonly" placeholder="请输入供应商名称" />
     </el-form-item>
-    <el-form-item label="主营品牌">
-      <el-input v-model="draft.main_brands" :disabled="props.readonly" placeholder="可输入多个品牌文本" />
+    <el-form-item label="主营品牌（选填）">
+      <el-input v-model="draft.main_brands" :disabled="props.readonly" placeholder="可后续补充多个品牌文本" />
     </el-form-item>
-    <el-form-item label="主要优势">
-      <el-input v-model="draft.advantage" :disabled="props.readonly" type="textarea" :rows="4" placeholder="请输入主要优势" />
+    <el-form-item label="主要优势（选填）">
+      <el-input v-model="draft.advantage" :disabled="props.readonly" type="textarea" :rows="4" placeholder="可后续补充主要优势" />
     </el-form-item>
     <el-form-item label="归档状态">
       <el-select v-model="draft.archive_status" :disabled="props.readonly" placeholder="请选择归档状态">

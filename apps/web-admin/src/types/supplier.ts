@@ -137,8 +137,6 @@ export function normalizeSupplierDraft(draft: SupplierFormDraft): SupplierFormDr
 export function supplierDraftValidationMessage(draft: SupplierFormDraft): string | undefined {
   const normalized = normalizeSupplierDraft(draft)
   if (!normalized.supplier_name) return "请填写供应商名称"
-  if (!normalized.main_brands) return "请填写主营品牌"
-  if (!normalized.advantage) return "请填写主要优势"
   return undefined
 }
 

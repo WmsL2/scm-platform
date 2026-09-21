@@ -25,7 +25,7 @@ describe("supplier frontend boundary", () => {
     expect(commandRequiresReason("blacklist")).toBe(true)
   })
 
-  it("normalizes optional contacts and requires all frozen main fields", () => {
+  it("normalizes optional fields and requires only the supplier name", () => {
     const draft = normalizeSupplierDraft({
       supplier_name: " 众诚供应商 ",
       main_brands: " 品牌 A ",
@@ -44,5 +44,14 @@ describe("supplier frontend boundary", () => {
       contacts: [{ contact_name: "李四", contact_phone: "13800000000" }],
     })
     expect(supplierDraftValidationMessage(createSupplierFormDraft())).toBe("请填写供应商名称")
+    expect(
+      supplierDraftValidationMessage({
+        supplier_name: "仅名称供应商",
+        main_brands: "",
+        advantage: "",
+        archive_status: "DRAFT",
+        contacts: [],
+      }),
+    ).toBeUndefined()
   })
 })

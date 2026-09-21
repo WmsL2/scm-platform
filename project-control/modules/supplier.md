@@ -1,6 +1,6 @@
 # 供应商
 
-状态：IMPLEMENTED / ARCHIVE_STATUS_SELECTION
+状态：IMPLEMENTED / NAME_ONLY_CREATE
 Owner：人员 A（Backend）/ 人员 B（Frontend）
 Last Updated：2026-09-21
 
@@ -11,7 +11,7 @@ Last Updated：2026-09-21
 - [x] `supplier_name` 数据库全局 UNIQUE（含逻辑删除记录）；历史重复记录已按每个名称保留最早一条完成数据清理
 
 ## Backend
-- [x] 创建、编辑、详情、分页列表 API；新增、编辑与 Excel Confirm 均可选择归档状态，活跃同名创建/改名返回“该供应商已存在”
+- [x] 创建、编辑、详情、分页列表 API；手工新增仅供应商名称必填，主营品牌与主要优势可留空或后补；新增、编辑与 Excel Confirm 均可选择归档状态，活跃同名创建/改名返回“该供应商已存在”
 - [x] 详情页“相关商品”入口：仅拥有 `product:list` 的用户可进入，跳转后只显示该供应商作为来源供应商的正式商品
 - [x] DRAFT → PENDING → ARCHIVED；NORMAL ↔ STOPPED、NORMAL ↔ BLACKLIST 状态机；无 STOPPED ↔ BLACKLIST
 - [x] 创建/编辑/归档 Actor 与时间审计；停止/拉黑及恢复/移出黑名单均写合作状态历史和原因
@@ -21,7 +21,7 @@ Last Updated：2026-09-21
 
 ## Frontend
 - [x] 供应商列表：真实分页、关键字/双状态筛选、详情跳转
-- [x] 新增、详情、编辑：真实 Supplier API 调用、归档状态选择与错误反馈
+- [x] 新增、详情、编辑：真实 Supplier API 调用、归档状态选择与错误反馈；新增表单仅校验供应商名称，主营品牌和主要优势明确标记为选填
 - [x] 多联系人表单：符合 `contacts` 请求契约；联系人可空且每条至少姓名或电话
 - [x] 提交归档、归档、停止合作、黑名单、恢复合作、移出黑名单：按实时权限和状态机显示，全部合作状态操作收集原因
 - [x] 按权限显示删除按钮；下载模板、上传校验结果、归档状态选择与显式确认；错误文件保留逐行提示供修正后重传
@@ -59,8 +59,8 @@ Last Updated：2026-09-21
 
 ## Supplier Matching Foundation
 
-- `SupplierCreateRequest` 与 `SupplierUpdateRequest` 对 `supplier_name`、
-  `main_brands`、`advantage` 采用相同的本地 Pydantic 校验：去除首尾空白后不得为空；
+- `SupplierCreateRequest` 与 `SupplierUpdateRequest` 对 `supplier_name` 去除首尾空白后要求非空；
+  `main_brands`、`advantage` 为可选文本，空白归一后按空字符串保存到现有非空数据库列。
   联系人空白字段归一为 `None`，但联系人至少仍须保留姓名或电话其中之一。
 - `normalize_supplier_name()` 仅执行 Unicode NFKC、首尾空白去除和连续 Unicode
   空白压缩为一个普通空格；不删除公司后缀或地区，也不进行简称、大小写、拼音、模糊或 AI 替换。
@@ -90,6 +90,7 @@ Last Updated：2026-09-21
 - [x] 真实供应商字段资料与字段字典
 - [x] `supplier_code` 系统生成、全局唯一、不可修改及不回收
 - [x] 联系人及联系电话/手机号非必填（nullable；前端不设 required）
+- [x] 手工新增和 Excel 导入仅供应商名称必填；主营品牌、主要优势和联系人资料可后补
 - [x] 新建、编辑与 Excel Confirm 可选择 `DRAFT` / `PENDING` / `ARCHIVED`；导入合作状态固定 `NORMAL`
 
 ## Current Gate
