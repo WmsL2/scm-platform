@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from "element-plus"
 
 import { supplierApi } from "../../api/supplier"
 import { HttpError } from "../../shared/http"
+import { useExcelImportNavigationLock } from "../../shared/import/excelImportNavigationLock"
 import { useAuthStore } from "../../stores/auth"
 import {
   ARCHIVE_STATUS_LABELS,
@@ -25,6 +26,7 @@ const importInput = ref<HTMLInputElement>()
 const importPreview = ref<SupplierImportPreview | null>(null)
 const importDialogVisible = ref(false)
 const importing = ref(false)
+const importNavigationLock = useExcelImportNavigationLock()
 const importArchiveStatus = ref<ArchiveStatus>("ARCHIVED")
 const filters = reactive<{
   keyword: string
@@ -106,6 +108,7 @@ async function previewImport(event: Event): Promise<void> {
   input.value = ""
   if (!file) return
   importing.value = true
+  importNavigationLock.start()
   try {
     importPreview.value = await supplierApi.previewImport(file)
     importDialogVisible.value = true
@@ -116,6 +119,7 @@ async function previewImport(event: Event): Promise<void> {
   } catch (error) {
     ElMessage.error(error instanceof HttpError ? error.response.message : "Excel 导入预览失败")
   } finally {
+    importNavigationLock.stop()
     importing.value = false
   }
 }
@@ -123,6 +127,7 @@ async function previewImport(event: Event): Promise<void> {
 async function confirmImport(): Promise<void> {
   if (!importPreview.value || importPreview.value.invalid_rows) return
   importing.value = true
+  importNavigationLock.start()
   try {
     const result = await supplierApi.confirmImport(importPreview.value.id, importArchiveStatus.value)
     ElMessage.success(`成功导入 ${result.imported_count} 家供应商`)
@@ -132,6 +137,7 @@ async function confirmImport(): Promise<void> {
   } catch (error) {
     ElMessage.error(error instanceof HttpError ? error.response.message : "确认导入失败")
   } finally {
+    importNavigationLock.stop()
     importing.value = false
   }
 }

@@ -6,6 +6,7 @@ import { useRoute, useRouter } from "vue-router"
 
 import { productApi } from "../../api/catalog"
 import { HttpError } from "../../shared/http"
+import { useExcelImportNavigationLock } from "../../shared/import/excelImportNavigationLock"
 import { useAuthStore } from "../../stores/auth"
 import { PRODUCT_EXPORT_COLUMN_DEFINITIONS } from "../../types/catalog"
 import { mergePageSelection, restoreExportColumns } from "./productExportSelection"
@@ -118,6 +119,7 @@ const categorySelections = computed(() => [
 ])
 const importInput = ref<HTMLInputElement>()
 const importing = ref(false)
+const importNavigationLock = useExcelImportNavigationLock()
 const importDialogVisible = ref(false)
 const importPreview = ref<ProductImportPreview>()
 const supplierCandidates = ref<ProductImportSupplierCandidate[]>([])
@@ -380,6 +382,7 @@ async function previewImport(event: Event): Promise<void> {
   input.value = ""
   if (!file) return
   importing.value = true
+  importNavigationLock.start()
   try {
     importPreview.value = await productApi.previewImport(file)
     importRowFilter.value = "ALL"
@@ -394,6 +397,7 @@ async function previewImport(event: Event): Promise<void> {
         : "商品 Excel 上传或预览超时，请检查网络和服务状态后重试",
     )
   } finally {
+    importNavigationLock.stop()
     importing.value = false
   }
 }
@@ -454,6 +458,7 @@ async function resolveSupplier(matchId: string): Promise<void> {
 async function confirmImport(): Promise<void> {
   if (!importPreview.value) return
   importing.value = true
+  importNavigationLock.start()
   try {
     const result = await productApi.confirmImport(importPreview.value.id)
     await loadImportRows(1)
@@ -466,6 +471,7 @@ async function confirmImport(): Promise<void> {
   } catch (error) {
     ElMessage.error(error instanceof HttpError ? error.response.message : "确认导入失败")
   } finally {
+    importNavigationLock.stop()
     importing.value = false
   }
 }

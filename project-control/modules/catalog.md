@@ -2,7 +2,7 @@
 
 状态：IMPLEMENTED / PRODUCT_MASTER_CATEGORY_DECOUPLED / PRODUCT_IMPORT_SAFETY_CONCURRENCY / TEMPORARY_SOURCE_RETENTION
 Owner：feat/product-import-confirm-reupload
-Last Updated：2026-09-20
+Last Updated：2026-09-21
 
 ## Database
 - [x] `20260909_0008` / `20260909_0009` 创建并对齐 `scm_category` 与 `scm_product`
@@ -53,6 +53,7 @@ Last Updated：2026-09-20
 - [x] 类目管理页：与 Supplier 管理页统一的 Header / Card / Table 视觉结构，保留三级路径服务端分页、新增/编辑/删除确认、模板下载和 Excel 导入结果；用户侧统一填写“采购价系数”（如 `×0.95` 表示扣点 5%），精确转换为 API / DB 的 `deduction_rate = 0.05` 或 Import `deduction_rate_percent = "5"`。UI coefficient ≠ database deduction rate；正式 Pricing 公式仍为 `agreement_purchase_price = agreement_price × (1 - deduction_rate)`。
 - [x] 类目管理列表：支持一级/二级/三级类目、主营事业部的服务端包含筛选，以及采购价系数（转换后对 `scm_category.deduction_rate` Decimal 精确匹配）和状态精确筛选；多条件为 AND，筛选后仍使用每页 20 条的服务端分页，COUNT 与列表使用相同 SQL 条件。
 - [x] 类目管理菜单、路由和新增/编辑/删除按钮按独立类目权限显示；模板下载和 Excel 导入仍由 `product:import` 控制
+- [x] 商品上传预览与 Confirm、类目 Excel 原子导入均接入通用全屏导入锁；处理期间阻止站内跳转，并对刷新或关闭页面触发浏览器原生提醒
 
 ## Permissions
 - [x] `product:list`、`product:detail`、`product:update`、`product:cost:update`、`product:disable`、`product:purge`、`product:import`、`product:import:resolve`

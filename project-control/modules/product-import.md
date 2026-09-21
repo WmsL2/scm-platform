@@ -1,7 +1,7 @@
 # 商品大表导入
 
 状态：IMPLEMENTED / PRODUCT_MASTER_2026_43_COLUMNS / FAILED_ROWS_EXPORT
-Owner：fix/product-import-empty-supplier-missing-greenlet
+Owner：fix/product-import-preview-navigation-lock
 Last Updated：2026-09-21
 
 ## Database
@@ -37,6 +37,7 @@ Last Updated：2026-09-21
 - [x] 商品主数据页可直接 Confirm；关闭预览弹窗会释放该任务的临时 Excel
 - [x] 预览存在不通过行时显示“导出不通过数据”按钮，并按失败行数量生成修正工作簿
 - [x] 导入行明细按状态服务端分页，每页 50 行，避免 4,000+ 行一次返回和渲染
+- [x] 商品上传预览和 Confirm 均接入通用 Excel 导入锁：显示全屏遮罩、阻止站内路由离开，并在刷新或关闭页面时触发浏览器原生提醒；成功、失败和超时均统一解除锁定
 
 ## Permissions
 - [x] `product:import`
@@ -46,6 +47,7 @@ Last Updated：2026-09-21
 - [x] API 集成测试覆盖未匹配预览、精确匹配和 Confirm 写入 `source_supplier_id`
 - [x] API 回归测试覆盖“所有行供应商为空”，要求返回 200 和空 `supplier_matches`，所有行保留“供应商不能为空”错误而不触发 `MissingGreenlet`
 - [x] 回归测试覆盖带 WPS `DISPIMG` 的失败行导出、43 列模板、错误说明及导出文件重新预览
+- [x] 通用前端单元测试覆盖无 Excel 导入时允许离开、处理中阻止路由及请求浏览器离开提醒
 - [x] 全量后端测试、前端类型检查、单元测试与构建已执行
 
 ## Known Issues
