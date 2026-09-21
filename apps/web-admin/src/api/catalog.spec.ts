@@ -109,6 +109,37 @@ describe("product import api", () => {
     )
   })
 
+  it("repeats multi-select product filters and sends JD price and profit ranges", async () => {
+    http.get.mockResolvedValue({ items: [] })
+    const { productApi } = await import("./catalog")
+
+    await productApi.list({
+      company_names: ["众诚公司"],
+      purchasing_agents: ["张三", "李四"],
+      brands: ["品牌 A", "品牌 B"],
+      source_supplier_ids: ["supplier-1", "supplier-2"],
+      jd_price_min: "100",
+      jd_price_max: "200",
+      profit_min: "-5",
+      profit_max: "30",
+    })
+
+    expect(http.get).toHaveBeenCalledWith(
+      "/api/v1/products?company_names=%E4%BC%97%E8%AF%9A%E5%85%AC%E5%8F%B8&purchasing_agents=%E5%BC%A0%E4%B8%89&purchasing_agents=%E6%9D%8E%E5%9B%9B&brands=%E5%93%81%E7%89%8C+A&brands=%E5%93%81%E7%89%8C+B&source_supplier_ids=supplier-1&source_supplier_ids=supplier-2&jd_price_min=100&jd_price_max=200&profit_min=-5&profit_max=30",
+    )
+  })
+
+  it("loads remote Product filter options", async () => {
+    http.get.mockResolvedValue({ items: [], has_more: false })
+    const { productApi } = await import("./catalog")
+
+    await productApi.filterOptions("SUPPLIER", "众诚", 50, "DISABLED")
+
+    expect(http.get).toHaveBeenCalledWith(
+      "/api/v1/products/filter-options?field=SUPPLIER&limit=50&offset=50&status=DISABLED&keyword=%E4%BC%97%E8%AF%9A",
+    )
+  })
+
   it("loads Product Master category filter options with the active filter context", async () => {
     http.get.mockResolvedValue({ items: [], has_more: false })
     const { productApi } = await import("./catalog")

@@ -25,6 +25,7 @@ from app.modules.catalog.schemas import (
     ProductCostUpdateRequest,
     ProductDetailResponse,
     ProductExportRequest,
+    ProductFilterOptionPageResponse,
     ProductImportConfirmResponse,
     ProductImportDiscardResponse,
     ProductImportPreviewResponse,
@@ -85,6 +86,10 @@ async def list_products(
     purchasing_agent: Annotated[str | None, Query(max_length=128)] = None,
     brand: Annotated[str | None, Query(max_length=128)] = None,
     supplier_name: Annotated[str | None, Query(max_length=255)] = None,
+    company_names: Annotated[list[str] | None, Query(max_length=255)] = None,
+    purchasing_agents: Annotated[list[str] | None, Query(max_length=128)] = None,
+    brands: Annotated[list[str] | None, Query(max_length=128)] = None,
+    source_supplier_ids: Annotated[list[uuid.UUID] | None, Query()] = None,
     category_level1_name: Annotated[str | None, Query(max_length=255)] = None,
     category_level2_name: Annotated[str | None, Query(max_length=255)] = None,
     category_selections: Annotated[list[str] | None, Query()] = None,
@@ -93,6 +98,10 @@ async def list_products(
     cost_price_max: Annotated[Decimal | None, Query(ge=0)] = None,
     agreement_price_min: Annotated[Decimal | None, Query(ge=0)] = None,
     agreement_price_max: Annotated[Decimal | None, Query(ge=0)] = None,
+    jd_price_min: Decimal | None = None,
+    jd_price_max: Decimal | None = None,
+    profit_min: Decimal | None = None,
+    profit_max: Decimal | None = None,
     discount_rate_min: Decimal | None = None,
     discount_rate_max: Decimal | None = None,
     sales_volume_min: Annotated[int | None, Query(ge=0)] = None,
@@ -109,6 +118,10 @@ async def list_products(
             purchasing_agent=purchasing_agent,
             brand=brand,
             supplier_name=supplier_name,
+            company_names=company_names or [],
+            purchasing_agents=purchasing_agents or [],
+            brands=brands or [],
+            source_supplier_ids=source_supplier_ids or [],
             category_level1_name=category_level1_name,
             category_level2_name=category_level2_name,
             category_selections=category_selections or [],
@@ -117,10 +130,40 @@ async def list_products(
             cost_price_max=cost_price_max,
             agreement_price_min=agreement_price_min,
             agreement_price_max=agreement_price_max,
+            jd_price_min=jd_price_min,
+            jd_price_max=jd_price_max,
+            profit_min=profit_min,
+            profit_max=profit_max,
             discount_rate_min=discount_rate_min,
             discount_rate_max=discount_rate_max,
             sales_volume_min=sales_volume_min,
             sales_volume_max=sales_volume_max,
+            status=status,
+        )
+    )
+
+
+@router.get(
+    "/filter-options",
+    response_model=ApiResponse[ProductFilterOptionPageResponse],
+)
+async def product_filter_options(
+    current: Annotated[CurrentUser, Depends(require_permission("product:list"))],
+    session: SessionDep,
+    field: Literal["COMPANY", "PURCHASING_AGENT", "BRAND", "SUPPLIER"],
+    keyword: Annotated[str | None, Query(max_length=255)] = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=50)] = 50,
+    status: ProductStatus = ProductStatus.ACTIVE,
+) -> ApiResponse[ProductFilterOptionPageResponse]:
+    if status == ProductStatus.DISABLED and "product:disable" not in current.permissions:
+        raise AppError("AUTH_FORBIDDEN", "Permission denied", 403)
+    return success(
+        await ProductService(session).filter_options(
+            field=field,
+            keyword=keyword,
+            offset=offset,
+            limit=limit,
             status=status,
         )
     )
