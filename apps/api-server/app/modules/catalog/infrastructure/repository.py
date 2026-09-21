@@ -303,9 +303,8 @@ class ProductRepository:
         )
         return cast(Product | None, await self.session.scalar(statement))
 
-    async def list(
+    def _filtered_statements(
         self,
-        page_params: PageParams,
         *,
         keyword: str | None,
         company_name: str | None,
@@ -327,7 +326,7 @@ class ProductRepository:
         sales_volume_min: int | None,
         sales_volume_max: int | None,
         status: ProductStatus,
-    ) -> tuple[list[Product], int]:
+    ) -> tuple[Select[tuple[Product]], Select[tuple[int]]]:
         supplier_criteria = (
             (
                 Supplier.is_deleted.is_(False),
@@ -436,11 +435,119 @@ class ProductRepository:
         if range_criteria:
             statement = statement.where(*range_criteria)
             count_statement = count_statement.where(*range_criteria)
-        statement = (
-            statement.order_by(Product.updated_at.desc(), Product.id.desc())
-            .offset((page_params.page - 1) * page_params.page_size)
-            .limit(page_params.page_size)
+        return statement, count_statement
+
+    async def list(
+        self,
+        page_params: PageParams,
+        *,
+        keyword: str | None,
+        company_name: str | None,
+        purchasing_agent: str | None,
+        brand: str | None,
+        supplier_name: str | None,
+        source_supplier_id: uuid.UUID | None,
+        category_level1_name: str | None,
+        category_level2_name: str | None,
+        category_level1_names: set[str],
+        category_level2_paths: set[tuple[str, str]],
+        category_level3_paths: set[tuple[str, str, str]],
+        cost_price_min: Decimal | None,
+        cost_price_max: Decimal | None,
+        agreement_price_min: Decimal | None,
+        agreement_price_max: Decimal | None,
+        discount_rate_min: Decimal | None,
+        discount_rate_max: Decimal | None,
+        sales_volume_min: int | None,
+        sales_volume_max: int | None,
+        status: ProductStatus,
+    ) -> tuple[list[Product], int]:
+        statement, count_statement = self._filtered_statements(
+            keyword=keyword,
+            company_name=company_name,
+            purchasing_agent=purchasing_agent,
+            brand=brand,
+            supplier_name=supplier_name,
+            source_supplier_id=source_supplier_id,
+            category_level1_name=category_level1_name,
+            category_level2_name=category_level2_name,
+            category_level1_names=category_level1_names,
+            category_level2_paths=category_level2_paths,
+            category_level3_paths=category_level3_paths,
+            cost_price_min=cost_price_min,
+            cost_price_max=cost_price_max,
+            agreement_price_min=agreement_price_min,
+            agreement_price_max=agreement_price_max,
+            discount_rate_min=discount_rate_min,
+            discount_rate_max=discount_rate_max,
+            sales_volume_min=sales_volume_min,
+            sales_volume_max=sales_volume_max,
+            status=status,
         )
-        products = list((await self.session.scalars(statement)).all())
-        total = cast(int, await self.session.scalar(count_statement))
-        return products, total
+        products = list(
+            (
+                await self.session.scalars(
+                    statement.order_by(Product.updated_at.desc(), Product.id.desc())
+                    .offset((page_params.page - 1) * page_params.page_size)
+                    .limit(page_params.page_size)
+                )
+            ).all()
+        )
+        return products, cast(int, await self.session.scalar(count_statement))
+
+    async def selection_ids(
+        self,
+        *,
+        keyword: str | None,
+        company_name: str | None,
+        purchasing_agent: str | None,
+        brand: str | None,
+        supplier_name: str | None,
+        source_supplier_id: uuid.UUID | None,
+        category_level1_name: str | None,
+        category_level2_name: str | None,
+        category_level1_names: set[str],
+        category_level2_paths: set[tuple[str, str]],
+        category_level3_paths: set[tuple[str, str, str]],
+        cost_price_min: Decimal | None,
+        cost_price_max: Decimal | None,
+        agreement_price_min: Decimal | None,
+        agreement_price_max: Decimal | None,
+        discount_rate_min: Decimal | None,
+        discount_rate_max: Decimal | None,
+        sales_volume_min: int | None,
+        sales_volume_max: int | None,
+        status: ProductStatus,
+        limit: int,
+    ) -> List[uuid.UUID]:
+        statement, _ = self._filtered_statements(
+            keyword=keyword,
+            company_name=company_name,
+            purchasing_agent=purchasing_agent,
+            brand=brand,
+            supplier_name=supplier_name,
+            source_supplier_id=source_supplier_id,
+            category_level1_name=category_level1_name,
+            category_level2_name=category_level2_name,
+            category_level1_names=category_level1_names,
+            category_level2_paths=category_level2_paths,
+            category_level3_paths=category_level3_paths,
+            cost_price_min=cost_price_min,
+            cost_price_max=cost_price_max,
+            agreement_price_min=agreement_price_min,
+            agreement_price_max=agreement_price_max,
+            discount_rate_min=discount_rate_min,
+            discount_rate_max=discount_rate_max,
+            sales_volume_min=sales_volume_min,
+            sales_volume_max=sales_volume_max,
+            status=status,
+        )
+        return list(
+            (
+                await self.session.scalars(
+                    statement.with_only_columns(Product.id)
+                    .order_by(Product.updated_at.desc(), Product.id.desc())
+                    .limit(limit)
+                )
+            ).all()
+        )

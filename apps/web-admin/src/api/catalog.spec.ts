@@ -109,6 +109,22 @@ describe("product import api", () => {
     )
   })
 
+  it("uses the same filter serializer for selection IDs", async () => {
+    http.get.mockResolvedValue({ ids: ["product-1"], total: 1 })
+    const { productApi } = await import("./catalog")
+
+    await productApi.getSelectionIds({
+      keyword: "打印纸",
+      brand: "测试品牌",
+      status: "DISABLED",
+      category_selections: ["LEVEL1:office"],
+    })
+
+    expect(http.get).toHaveBeenCalledWith(
+      "/api/v1/products/selection-ids?keyword=%E6%89%93%E5%8D%B0%E7%BA%B8&brand=%E6%B5%8B%E8%AF%95%E5%93%81%E7%89%8C&status=DISABLED&category_selections=LEVEL1%3Aoffice",
+    )
+  })
+
   it("loads Product Master category filter options with the active filter context", async () => {
     http.get.mockResolvedValue({ items: [], has_more: false })
     const { productApi } = await import("./catalog")

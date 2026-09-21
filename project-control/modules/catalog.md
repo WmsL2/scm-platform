@@ -100,10 +100,12 @@ Last Updated：2026-09-20
 - 商品列表支持跨页选择商品
 - 支持选择固定 43 个商品主数据字段导出 Excel
 - 导出字段选择界面显示中文字段名，提交后端仍使用英文 canonical key
-- 导出 Excel 支持系统托管商品图片真实嵌入
+- 导出 Excel 的系统托管商品图片使用 Excel Place in Cell 嵌入，不再使用浮动 Drawing
 - 图片缺失或损坏不会导致整批导出失败
 - 导出继续复用 `product:list`
 - 单次最多导出 5000 个商品
+- 表头 checkbox 保持只选择当前页；“全选全部商品（N）”通过 `GET /api/v1/products/selection-ids` 取得当前筛选结果的真实可见 ID，复用列表筛选、供应商可见性及稳定排序，跨页选择可回显和局部取消
+- 筛选结果超过 5,000 条时 `selection-ids` 明确返回 422，不静默截断；未新增 Permission
 - 未新增 Migration
 - 未新增 Permission
 - Product Import 固定 43 列契约保持不变
