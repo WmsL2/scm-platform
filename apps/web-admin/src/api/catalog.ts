@@ -2,6 +2,8 @@ import { http } from "../shared/http/runtime"
 import type {
   ProductCategoryFilterOption,
   ProductCategoryFilterOptionPage,
+  ProductFilterOptionField,
+  ProductFilterOptionPage,
   ProductDetail,
   ProductExportColumnKey,
   ProductImportConfirmResult,
@@ -51,6 +53,17 @@ export const productApi = {
     if (keyword.trim()) query.set("keyword", keyword.trim())
     for (const selection of categorySelections) query.append("category_selections", selection)
     return http.get<ProductCategoryFilterOptionPage>(path(`/category-filter-options?${query}`))
+  },
+
+  filterOptions(
+    field: ProductFilterOptionField,
+    keyword = "",
+    offset = 0,
+    status: ProductListParams["status"] = "ACTIVE",
+  ): Promise<ProductFilterOptionPage> {
+    const query = new URLSearchParams({ field, limit: "50", offset: String(offset), status })
+    if (keyword.trim()) query.set("keyword", keyword.trim())
+    return http.get<ProductFilterOptionPage>(path(`/filter-options?${query}`))
   },
 
   get(id: string): Promise<ProductDetail> {

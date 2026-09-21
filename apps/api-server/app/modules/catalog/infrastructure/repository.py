@@ -134,6 +134,85 @@ class ProductRepository:
             rows
         ) > limit
 
+    async def filter_options(
+        self,
+        *,
+        field: Literal["COMPANY", "PURCHASING_AGENT", "BRAND", "SUPPLIER"],
+        keyword: str | None,
+        offset: int,
+        limit: int,
+        status: ProductStatus,
+    ) -> tuple[list[tuple[str, str]], bool]:
+        supplier_criteria = (
+            (
+                Supplier.is_deleted.is_(False),
+                Supplier.cooperation_status == CooperationStatus.NORMAL,
+            )
+            if status == ProductStatus.ACTIVE
+            else ()
+        )
+        if field == "SUPPLIER":
+            supplier_statement = (
+                select(Product.source_supplier_id, Supplier.supplier_code, Supplier.supplier_name)
+                .select_from(Product)
+                .join(Supplier)
+                .where(Product.status == status, *supplier_criteria)
+            )
+            if keyword:
+                supplier_statement = supplier_statement.where(
+                    or_(
+                        Supplier.supplier_code.contains(keyword),
+                        Supplier.supplier_name.contains(keyword),
+                    )
+                )
+            rows = list(
+                (
+                    await self.session.execute(
+                        supplier_statement.distinct()
+                        .order_by(
+                            Supplier.supplier_name,
+                            Supplier.supplier_code,
+                            Product.source_supplier_id,
+                        )
+                        .offset(offset)
+                        .limit(limit + 1)
+                    )
+                ).tuples()
+            )
+            return [
+                (str(supplier_id), f"{supplier_code} / {supplier_name}")
+                for supplier_id, supplier_code, supplier_name in rows[:limit]
+            ], len(rows) > limit
+
+        column = {
+            "COMPANY": Product.company_name,
+            "PURCHASING_AGENT": Product.purchasing_agent,
+            "BRAND": Product.brand,
+        }[field]
+        text_statement = (
+            select(column)
+            .select_from(Product)
+            .join(Supplier)
+            .where(
+                Product.status == status,
+                column.is_not(None),
+                column != "",
+                *supplier_criteria,
+            )
+        )
+        if keyword:
+            text_statement = text_statement.where(column.contains(keyword))
+        text_rows = list(
+            (
+                await self.session.execute(
+                    text_statement.distinct().order_by(column).offset(offset).limit(limit + 1)
+                )
+            ).scalars()
+        )
+        return [
+            (value, value) for value in text_rows[:limit] if value is not None
+        ], len(text_rows) > limit
+
     async def import_task_by_id(self, task_id: uuid.UUID) -> ProductImportTask | None:
         statement = (
             select(ProductImportTask)
@@ -311,6 +390,10 @@ class ProductRepository:
         purchasing_agent: str | None,
         brand: str | None,
         supplier_name: str | None,
+        company_names: List[str],
+        purchasing_agents: List[str],
+        brands: List[str],
+        source_supplier_ids: List[uuid.UUID],
         source_supplier_id: uuid.UUID | None,
         category_level1_name: str | None,
         category_level2_name: str | None,
@@ -321,6 +404,10 @@ class ProductRepository:
         cost_price_max: Decimal | None,
         agreement_price_min: Decimal | None,
         agreement_price_max: Decimal | None,
+        jd_price_min: Decimal | None,
+        jd_price_max: Decimal | None,
+        profit_min: Decimal | None,
+        profit_max: Decimal | None,
         discount_rate_min: Decimal | None,
         discount_rate_max: Decimal | None,
         sales_volume_min: int | None,
@@ -402,6 +489,11 @@ class ProductRepository:
             count_statement = count_statement.where(
                 Product.source_supplier_id == source_supplier_id
             )
+        if source_supplier_ids:
+            statement = statement.where(Product.source_supplier_id.in_(source_supplier_ids))
+            count_statement = count_statement.where(
+                Product.source_supplier_id.in_(source_supplier_ids)
+            )
         filters = (
             (company_name, Product.company_name.contains),
             (purchasing_agent, Product.purchasing_agent.contains),
@@ -415,6 +507,15 @@ class ProductRepository:
                 criterion = operation(value)
                 statement = statement.where(criterion)
                 count_statement = count_statement.where(criterion)
+        if company_names:
+            statement = statement.where(Product.company_name.in_(company_names))
+            count_statement = count_statement.where(Product.company_name.in_(company_names))
+        if purchasing_agents:
+            statement = statement.where(Product.purchasing_agent.in_(purchasing_agents))
+            count_statement = count_statement.where(Product.purchasing_agent.in_(purchasing_agents))
+        if brands:
+            statement = statement.where(Product.brand.in_(brands))
+            count_statement = count_statement.where(Product.brand.in_(brands))
         range_criteria = []
         if cost_price_min is not None:
             range_criteria.append(Product.cost_price >= cost_price_min)
@@ -424,6 +525,14 @@ class ProductRepository:
             range_criteria.append(Product.agreement_price >= agreement_price_min)
         if agreement_price_max is not None:
             range_criteria.append(Product.agreement_price <= agreement_price_max)
+        if jd_price_min is not None:
+            range_criteria.append(Product.jd_price >= jd_price_min)
+        if jd_price_max is not None:
+            range_criteria.append(Product.jd_price <= jd_price_max)
+        if profit_min is not None:
+            range_criteria.append(Product.profit >= profit_min)
+        if profit_max is not None:
+            range_criteria.append(Product.profit <= profit_max)
         if discount_rate_min is not None:
             range_criteria.append(Product.discount_rate >= discount_rate_min)
         if discount_rate_max is not None:
@@ -446,6 +555,10 @@ class ProductRepository:
         purchasing_agent: str | None,
         brand: str | None,
         supplier_name: str | None,
+        company_names: List[str],
+        purchasing_agents: List[str],
+        brands: List[str],
+        source_supplier_ids: List[uuid.UUID],
         source_supplier_id: uuid.UUID | None,
         category_level1_name: str | None,
         category_level2_name: str | None,
@@ -456,6 +569,10 @@ class ProductRepository:
         cost_price_max: Decimal | None,
         agreement_price_min: Decimal | None,
         agreement_price_max: Decimal | None,
+        jd_price_min: Decimal | None,
+        jd_price_max: Decimal | None,
+        profit_min: Decimal | None,
+        profit_max: Decimal | None,
         discount_rate_min: Decimal | None,
         discount_rate_max: Decimal | None,
         sales_volume_min: int | None,
@@ -468,6 +585,10 @@ class ProductRepository:
             purchasing_agent=purchasing_agent,
             brand=brand,
             supplier_name=supplier_name,
+            company_names=company_names,
+            purchasing_agents=purchasing_agents,
+            brands=brands,
+            source_supplier_ids=source_supplier_ids,
             source_supplier_id=source_supplier_id,
             category_level1_name=category_level1_name,
             category_level2_name=category_level2_name,
@@ -478,6 +599,10 @@ class ProductRepository:
             cost_price_max=cost_price_max,
             agreement_price_min=agreement_price_min,
             agreement_price_max=agreement_price_max,
+            jd_price_min=jd_price_min,
+            jd_price_max=jd_price_max,
+            profit_min=profit_min,
+            profit_max=profit_max,
             discount_rate_min=discount_rate_min,
             discount_rate_max=discount_rate_max,
             sales_volume_min=sales_volume_min,
@@ -503,6 +628,10 @@ class ProductRepository:
         purchasing_agent: str | None,
         brand: str | None,
         supplier_name: str | None,
+        company_names: List[str],
+        purchasing_agents: List[str],
+        brands: List[str],
+        source_supplier_ids: List[uuid.UUID],
         source_supplier_id: uuid.UUID | None,
         category_level1_name: str | None,
         category_level2_name: str | None,
@@ -513,6 +642,10 @@ class ProductRepository:
         cost_price_max: Decimal | None,
         agreement_price_min: Decimal | None,
         agreement_price_max: Decimal | None,
+        jd_price_min: Decimal | None,
+        jd_price_max: Decimal | None,
+        profit_min: Decimal | None,
+        profit_max: Decimal | None,
         discount_rate_min: Decimal | None,
         discount_rate_max: Decimal | None,
         sales_volume_min: int | None,
@@ -526,6 +659,10 @@ class ProductRepository:
             purchasing_agent=purchasing_agent,
             brand=brand,
             supplier_name=supplier_name,
+            company_names=company_names,
+            purchasing_agents=purchasing_agents,
+            brands=brands,
+            source_supplier_ids=source_supplier_ids,
             source_supplier_id=source_supplier_id,
             category_level1_name=category_level1_name,
             category_level2_name=category_level2_name,
@@ -536,6 +673,10 @@ class ProductRepository:
             cost_price_max=cost_price_max,
             agreement_price_min=agreement_price_min,
             agreement_price_max=agreement_price_max,
+            jd_price_min=jd_price_min,
+            jd_price_max=jd_price_max,
+            profit_min=profit_min,
+            profit_max=profit_max,
             discount_rate_min=discount_rate_min,
             discount_rate_max=discount_rate_max,
             sales_volume_min=sales_volume_min,

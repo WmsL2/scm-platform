@@ -154,6 +154,18 @@ async def test_supplier_api_enforces_permissions_and_lifecycle() -> None:
             assert supplier["cooperation_status"] == "NORMAL"
             assert supplier["contacts"][0]["contact_name"] == "李四"
 
+            name_only_create = await client.post(
+                "/api/v1/suppliers",
+                headers=headers,
+                json={"supplier_name": "仅名称手工新增供应商"},
+            )
+            assert name_only_create.status_code == 201, name_only_create.text
+            name_only_supplier = name_only_create.json()["data"]
+            supplier_ids.append(name_only_supplier["id"])
+            assert name_only_supplier["main_brands"] == ""
+            assert name_only_supplier["advantage"] == ""
+            assert name_only_supplier["contacts"] == []
+
             selected_status_create = await client.post(
                 "/api/v1/suppliers",
                 headers=headers,
@@ -186,10 +198,17 @@ async def test_supplier_api_enforces_permissions_and_lifecycle() -> None:
             update = await client.patch(
                 f"/api/v1/suppliers/{supplier_id}",
                 headers=headers,
-                json={"supplier_name": "更新后的供应商", "contacts": []},
+                json={
+                    "supplier_name": "更新后的供应商",
+                    "main_brands": "   ",
+                    "advantage": None,
+                    "contacts": [],
+                },
             )
             assert update.status_code == 200
             assert update.json()["data"]["supplier_name"] == "更新后的供应商"
+            assert update.json()["data"]["main_brands"] == ""
+            assert update.json()["data"]["advantage"] == ""
             assert update.json()["data"]["contacts"] == []
 
             status_edit = await client.patch(

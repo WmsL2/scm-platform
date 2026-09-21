@@ -56,6 +56,16 @@ class ProductCategoryFilterOptionPageResponse(BaseModel):
     has_more: bool
 
 
+class ProductFilterOptionResponse(BaseModel):
+    value: str
+    label: str
+
+
+class ProductFilterOptionPageResponse(BaseModel):
+    items: list[ProductFilterOptionResponse]
+    has_more: bool
+
+
 class CategoryWriteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_type: Literal["MALL_LEVEL3", "INDUSTRIAL_LINE"]

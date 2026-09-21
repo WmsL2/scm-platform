@@ -68,9 +68,13 @@ export interface ProductListParams {
   page_size?: number
   keyword?: string
   company_name?: string
+  company_names?: string[]
   purchasing_agent?: string
   brand?: string
   supplier_name?: string
+  purchasing_agents?: string[]
+  brands?: string[]
+  source_supplier_ids?: string[]
   category_level1_name?: string
   category_level2_name?: string
   category_selections?: string[]
@@ -79,6 +83,10 @@ export interface ProductListParams {
   cost_price_max?: string
   agreement_price_min?: string
   agreement_price_max?: string
+  jd_price_min?: string
+  jd_price_max?: string
+  profit_min?: string
+  profit_max?: string
   discount_rate_min?: string
   discount_rate_max?: string
   sales_volume_min?: string
@@ -98,6 +106,18 @@ export interface ProductCategoryFilterOption {
 
 export interface ProductCategoryFilterOptionPage {
   items: ProductCategoryFilterOption[]
+  has_more: boolean
+}
+
+export type ProductFilterOptionField = "COMPANY" | "PURCHASING_AGENT" | "BRAND" | "SUPPLIER"
+
+export interface ProductFilterOption {
+  value: string
+  label: string
+}
+
+export interface ProductFilterOptionPage {
+  items: ProductFilterOption[]
   has_more: boolean
 }
 

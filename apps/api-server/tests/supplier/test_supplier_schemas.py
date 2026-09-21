@@ -17,19 +17,27 @@ def valid_supplier_payload() -> dict[str, object]:
     }
 
 
-@pytest.mark.parametrize("field_name", ("supplier_name", "main_brands", "advantage"))
-def test_supplier_create_rejects_blank_required_text(field_name: str) -> None:
+def test_supplier_create_rejects_blank_supplier_name() -> None:
     payload = valid_supplier_payload()
-    payload[field_name] = "   "
+    payload["supplier_name"] = "   "
 
     with pytest.raises(ValidationError):
         SupplierCreateRequest(**payload)
 
 
-@pytest.mark.parametrize("field_name", ("supplier_name", "main_brands", "advantage"))
-def test_supplier_update_rejects_blank_required_text(field_name: str) -> None:
+def test_supplier_update_rejects_blank_supplier_name() -> None:
     with pytest.raises(ValidationError):
-        SupplierUpdateRequest(**{field_name: "   "})
+        SupplierUpdateRequest(supplier_name="   ")
+
+
+def test_supplier_requests_allow_blank_optional_business_text() -> None:
+    create_request = SupplierCreateRequest(supplier_name="供应商名称")
+    update_request = SupplierUpdateRequest(main_brands="   ", advantage=None)
+
+    assert create_request.main_brands is None
+    assert create_request.advantage is None
+    assert update_request.main_brands is None
+    assert update_request.advantage is None
 
 
 def test_supplier_requests_store_trimmed_required_text() -> None:
