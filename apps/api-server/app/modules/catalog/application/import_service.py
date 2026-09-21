@@ -218,6 +218,7 @@ class ProductImportService:
                 dispimg_image_id(row.source_data.get("图片")) is not None for row in rows
             )
             candidates = await self.supplier_repository.eligible_source_suppliers()
+            supplier_matches = self._build_supplier_matches(candidates, rows)
             task = ProductImportTask(
                 id=uuid.uuid4(),
                 original_filename=filename[:255],
@@ -228,8 +229,8 @@ class ProductImportService:
                 invalid_rows=0,
                 imported_rows=0,
                 created_by=actor_id,
+                supplier_matches=supplier_matches,
             )
-            self._create_supplier_matches(task, candidates, rows)
             stored_source_key: str | None = None
             try:
                 if has_embedded_image_formula:
@@ -242,7 +243,7 @@ class ProductImportService:
                     await self.session.flush()
                     matches_by_name = {
                         match.supplier_name_normalized: match
-                        for match in task.supplier_matches
+                        for match in supplier_matches
                     }
                     for offset in range(0, len(rows), PRODUCT_IMPORT_DB_BATCH_SIZE):
                         batch = rows[offset : offset + PRODUCT_IMPORT_DB_BATCH_SIZE]
@@ -706,12 +707,11 @@ class ProductImportService:
             formula_workbook.close()
             cached_workbook.close()
 
-    def _create_supplier_matches(
-        self,
-        task: ProductImportTask,
+    @staticmethod
+    def _build_supplier_matches(
         candidates: list[Supplier],
         rows: list[ProductImportRow],
-    ) -> None:
+    ) -> list[ProductImportSupplierMatch]:
         candidate_models = [
             SupplierMatchCandidate(
                 id=supplier.id,
@@ -729,9 +729,10 @@ class ProductImportService:
                 if row.supplier_name_raw and normalize_supplier_name(row.supplier_name_raw)
             }
         )
+        matches: list[ProductImportSupplierMatch] = []
         for normalized_name in names:
             result = classify_supplier_name_match(normalized_name, candidate_models)
-            task.supplier_matches.append(
+            matches.append(
                 ProductImportSupplierMatch(
                     supplier_name_normalized=normalized_name,
                     match_status=result.status,
@@ -739,6 +740,7 @@ class ProductImportService:
                     matched_supplier_id=result.matched_supplier_id,
                 )
             )
+        return matches
 
     async def _refresh_validation(
         self, task: ProductImportTask, *, preserve_target_snapshots: bool = False
