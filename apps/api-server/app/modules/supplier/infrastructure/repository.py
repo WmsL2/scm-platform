@@ -134,26 +134,8 @@ class SupplierRepository:
         archive_status: ArchiveStatus | None,
         cooperation_status: CooperationStatus | None,
     ) -> tuple[list[Supplier], int]:
-        statement: Select[tuple[Supplier]] = select(Supplier).where(Supplier.is_deleted.is_(False))
-        count_statement = (
-            select(func.count()).select_from(Supplier).where(Supplier.is_deleted.is_(False))
-        )
-        if keyword:
-            criteria = or_(
-                Supplier.supplier_code.contains(keyword),
-                Supplier.supplier_name.contains(keyword),
-                Supplier.main_brands.contains(keyword),
-            )
-            statement = statement.where(criteria)
-            count_statement = count_statement.where(criteria)
-        if archive_status:
-            statement = statement.where(Supplier.archive_status == archive_status)
-            count_statement = count_statement.where(Supplier.archive_status == archive_status)
-        if cooperation_status:
-            statement = statement.where(Supplier.cooperation_status == cooperation_status)
-            count_statement = count_statement.where(
-                Supplier.cooperation_status == cooperation_status
-            )
+        statement = self._filtered_statement(keyword, archive_status, cooperation_status)
+        count_statement = select(func.count()).select_from(statement.subquery())
         statement = (
             statement.order_by(Supplier.created_at.desc(), Supplier.id.desc())
             .offset((page_params.page - 1) * page_params.page_size)
@@ -162,6 +144,74 @@ class SupplierRepository:
         suppliers = list((await self.session.scalars(statement)).all())
         total = cast(int, await self.session.scalar(count_statement))
         return suppliers, total
+
+    async def export_active(
+        self,
+        *,
+        keyword: str | None,
+        archive_status: ArchiveStatus | None,
+        cooperation_status: CooperationStatus | None,
+    ) -> list[Supplier]:
+        statement = self._filtered_statement(keyword, archive_status, cooperation_status).options(
+            selectinload(Supplier.contacts)
+        )
+        return list(
+            (
+                await self.session.scalars(
+                    statement.order_by(Supplier.created_at.desc(), Supplier.id.desc())
+                )
+            ).all()
+        )
+
+    async def selection_ids(
+        self,
+        *,
+        keyword: str | None,
+        archive_status: ArchiveStatus | None,
+        cooperation_status: CooperationStatus | None,
+    ) -> list[uuid.UUID]:
+        statement = self._filtered_statement(keyword, archive_status, cooperation_status)
+        return list(
+            (
+                await self.session.scalars(
+                    statement.with_only_columns(Supplier.id).order_by(
+                        Supplier.created_at.desc(), Supplier.id.desc()
+                    )
+                )
+            ).all()
+        )
+
+    async def selected_active(self, supplier_ids: list[uuid.UUID]) -> list[Supplier]:
+        return list(
+            (
+                await self.session.scalars(
+                    select(Supplier)
+                    .options(selectinload(Supplier.contacts))
+                    .where(Supplier.id.in_(supplier_ids), Supplier.is_deleted.is_(False))
+                )
+            ).all()
+        )
+
+    @staticmethod
+    def _filtered_statement(
+        keyword: str | None,
+        archive_status: ArchiveStatus | None,
+        cooperation_status: CooperationStatus | None,
+    ) -> Select[tuple[Supplier]]:
+        statement: Select[tuple[Supplier]] = select(Supplier).where(Supplier.is_deleted.is_(False))
+        if keyword:
+            statement = statement.where(
+                or_(
+                    Supplier.supplier_code.contains(keyword),
+                    Supplier.supplier_name.contains(keyword),
+                    Supplier.main_brands.contains(keyword),
+                )
+            )
+        if archive_status:
+            statement = statement.where(Supplier.archive_status == archive_status)
+        if cooperation_status:
+            statement = statement.where(Supplier.cooperation_status == cooperation_status)
+        return statement
 
     async def import_batch_by_id_for_update(
         self, batch_id: uuid.UUID

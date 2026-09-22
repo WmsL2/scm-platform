@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from io import BytesIO
 
 import pytest
@@ -1053,3 +1054,193 @@ async def test_supplier_standalone_sequential_writes_do_not_leave_transaction_ac
             assert supplier.supplier_name == updated_name
     finally:
         await cleanup_suppliers([supplier_id] if supplier_id else [])
+
+
+async def test_supplier_excel_export_contract_and_filters() -> None:
+    """The export is deliberately independent of list pagination, but shares its filters."""
+    user_id, headers = await create_user_with_permissions(SUPPLIER_PERMISSIONS)
+    no_list_user_id, no_list_headers = await create_user_with_permissions(("supplier:create",))
+    supplier_ids: list[str] = []
+    suffix = uuid.uuid4().hex
+
+    async def create_supplier(
+        client: AsyncClient,
+        *,
+        name: str,
+        archive_status: str = "ARCHIVED",
+        contacts: list[dict[str, str]] | None = None,
+    ) -> dict[str, object]:
+        response = await client.post(
+            "/api/v1/suppliers",
+            headers=headers,
+            json={
+                "supplier_name": name,
+                "main_brands": f"品牌-{suffix}",
+                "advantage": "导出专项测试",
+                "archive_status": archive_status,
+                "contacts": contacts or [],
+            },
+        )
+        assert response.status_code == 201, response.text
+        supplier = response.json()["data"]
+        supplier_ids.append(supplier["id"])
+        return supplier
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            assert (await client.get("/api/v1/suppliers/selection-ids")).status_code == 401
+            assert (
+                await client.get("/api/v1/suppliers/selection-ids", headers=no_list_headers)
+            ).status_code == 403
+            assert (
+                await client.post(
+                    "/api/v1/suppliers/export",
+                    headers=no_list_headers,
+                    json={"supplier_ids": [str(uuid.uuid4())]},
+                )
+            ).status_code == 403
+
+            target = await create_supplier(
+                client,
+                name=f"导出匹配供应商-{suffix}",
+                contacts=[
+                    {"contact_name": "联系人 A", "contact_phone": "0013800000000"},
+                    {"contact_name": "联系人 B", "contact_phone": "0023800000000"},
+                    {"contact_name": "已删除联系人", "contact_phone": "0033800000000"},
+                ],
+            )
+            await create_supplier(client, name=f"导出草稿供应商-{suffix}", archive_status="DRAFT")
+            await create_supplier(
+                client, name=f"导出待归档供应商-{suffix}", archive_status="PENDING"
+            )
+            blacklisted = await create_supplier(client, name=f"导出黑名单供应商-{suffix}")
+            blacklist_response = await client.post(
+                f"/api/v1/suppliers/{blacklisted['id']}/commands/blacklist",
+                headers=headers,
+                json={"reason": "导出专项测试"},
+            )
+            assert blacklist_response.status_code == 200
+            deleted = await create_supplier(client, name=f"导出已删除供应商-{suffix}")
+            assert (
+                await client.delete(f"/api/v1/suppliers/{deleted['id']}", headers=headers)
+            ).status_code == 200
+            for index in range(21):
+                await create_supplier(client, name=f"导出分页供应商-{suffix}-{index:02d}")
+
+            async with SessionLocal() as session:
+                deleted_contact = await session.scalar(
+                    select(SupplierContact)
+                    .where(
+                        SupplierContact.supplier_id == target["id"],
+                        SupplierContact.contact_name == "已删除联系人",
+                    )
+                )
+                assert deleted_contact is not None
+                deleted_contact.is_deleted = True
+                await session.commit()
+
+            selection = await client.get("/api/v1/suppliers/selection-ids", headers=headers)
+            assert selection.status_code == 200
+            selected_ids = selection.json()["data"]["ids"]
+            assert selection.json()["data"]["total"] == len(selected_ids)
+            assert target["id"] in selected_ids
+            assert deleted["id"] not in selected_ids
+            assert len(
+                [supplier_id for supplier_id in selected_ids if supplier_id in supplier_ids]
+            ) == 25
+
+            response = await client.post(
+                "/api/v1/suppliers/export", headers=headers, json={"supplier_ids": selected_ids}
+            )
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            assert ".xlsx" in response.headers["content-disposition"]
+            workbook = load_workbook(BytesIO(response.content))
+            sheet = workbook.active
+            assert sheet.title == "供应商"
+            assert tuple(cell.value for cell in sheet[1]) == (
+                "供应商编码", "供应商名称", "主营品牌", "主要优势", "联系人", "联系电话",
+                "归档状态", "合作状态", "创建时间", "更新时间",
+            )
+            exported_rows = list(sheet.iter_rows(min_row=2, values_only=False))
+            test_rows = [row for row in exported_rows if suffix in row[1].value]
+            assert len(test_rows) == 25  # 26 created records less the logical deletion.
+            target_row = next(
+                row for row in exported_rows if row[1].value == target["supplier_name"]
+            )
+            assert isinstance(target_row[0].value, str)
+            assert target_row[0].value.startswith("SUP")
+            exported_contacts = target_row[4].value.split("；")
+            exported_phones = target_row[5].value.split("；")
+            assert set(exported_contacts) == {"联系人 A", "联系人 B"}
+            assert dict(zip(exported_contacts, exported_phones, strict=True)) == {
+                "联系人 A": "0013800000000",
+                "联系人 B": "0023800000000",
+            }
+            assert isinstance(target_row[5].value, str)
+            assert target_row[6].value == "已归档"
+            assert target_row[7].value == "正常合作"
+            assert isinstance(target_row[8].value, datetime)
+            assert isinstance(target_row[9].value, datetime)
+            assert all(row[1].value != deleted["supplier_name"] for row in exported_rows)
+
+            archived = await client.get(
+                "/api/v1/suppliers/selection-ids?archive_status=ARCHIVED", headers=headers
+            )
+            archived_ids = archived.json()["data"]["ids"]
+            archived_export = await client.post(
+                "/api/v1/suppliers/export", headers=headers, json={"supplier_ids": archived_ids}
+            )
+            archived_sheet = load_workbook(BytesIO(archived_export.content)).active
+            assert all(row[6].value == "已归档" for row in archived_sheet.iter_rows(min_row=2))
+            normal = await client.get(
+                "/api/v1/suppliers/selection-ids?cooperation_status=NORMAL", headers=headers
+            )
+            normal_export = await client.post(
+                "/api/v1/suppliers/export",
+                headers=headers,
+                json={"supplier_ids": normal.json()["data"]["ids"]},
+            )
+            normal_sheet = load_workbook(BytesIO(normal_export.content)).active
+            assert all(row[7].value == "正常合作" for row in normal_sheet.iter_rows(min_row=2))
+
+            combined = await client.get(
+                f"/api/v1/suppliers/selection-ids?keyword={target['supplier_name']}&archive_status=ARCHIVED&cooperation_status=NORMAL",
+                headers=headers,
+            )
+            combined_export = await client.post(
+                "/api/v1/suppliers/export",
+                headers=headers,
+                json={"supplier_ids": combined.json()["data"]["ids"]},
+            )
+            combined_sheet = load_workbook(BytesIO(combined_export.content)).active
+            assert [row[1].value for row in combined_sheet.iter_rows(min_row=2)] == [
+                target["supplier_name"]
+            ]
+            empty = await client.get(
+                "/api/v1/suppliers/selection-ids?keyword=no-such-supplier", headers=headers
+            )
+            assert empty.json()["data"] == {"ids": [], "total": 0}
+            assert (
+                await client.post(
+                    "/api/v1/suppliers/export", headers=headers, json={"supplier_ids": []}
+                )
+            ).status_code == 422
+            assert (
+                await client.post(
+                    "/api/v1/suppliers/export",
+                    headers=headers,
+                    json={"supplier_ids": [target["id"], target["id"]]},
+                )
+            ).status_code == 422
+            stale = await client.post(
+                "/api/v1/suppliers/export", headers=headers, json={"supplier_ids": [deleted["id"]]}
+            )
+            assert stale.status_code == 409
+            assert stale.json()["code"] == "SUPPLIER_EXPORT_SELECTION_STALE"
+    finally:
+        await cleanup_suppliers(supplier_ids)
+        await cleanup_user(user_id)
+        await cleanup_user(no_list_user_id)
