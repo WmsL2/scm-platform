@@ -22,8 +22,8 @@ def _percent(value: object | None) -> str | None:
     return f"{scaled.normalize():f}%"
 
 
-def _decimal(value: object | None) -> str | None:
-    return None if value is None else str(value)
+def _decimal(value: object | None) -> Decimal | None:
+    return None if value is None else Decimal(str(value))
 
 
 _FIELDS = (
@@ -46,13 +46,13 @@ _FIELDS = (
     ("tax_code", "税收编码"), ("invoice_name", "开票名称"), ("tax_category", "税收分类"),
     ("shipping_courier", "发货快递"), ("after_sales_policy", "售后政策"), ("remark", "备注"),
 )
-_DECIMALS = {"cost_price", "market_price", "jd_price", "agreement_price", "agreement_purchase_price", "profit", "jd_self_operated_price"}
+PRICE_EXPORT_COLUMN_KEYS = frozenset({"cost_price", "market_price", "jd_price", "agreement_price", "agreement_purchase_price", "profit", "jd_self_operated_price"})
 _PERCENTS = {"jd_margin", "deduction_review", "gross_margin", "positive_rating", "discount_rate", "price_inflation_rate"}
 
 def _value(key: str) -> Callable[[Product, Supplier], object | None]:
     if key == "supplier_name": return lambda _product, supplier: supplier.supplier_name
     if key in _PERCENTS: return lambda product, _supplier: _percent(getattr(product, key))
-    if key in _DECIMALS: return lambda product, _supplier: _decimal(getattr(product, key))
+    if key in PRICE_EXPORT_COLUMN_KEYS: return lambda product, _supplier: _decimal(getattr(product, key))
     return lambda product, _supplier: getattr(product, key)
 
 PRODUCT_EXPORT_COLUMNS = tuple(ProductExportColumn(key, header, _value(key)) for key, header in _FIELDS)

@@ -83,7 +83,8 @@ def test_product_export_draws_borders_around_values_blanks_dates_and_images() ->
     sheet = load_workbook(BytesIO(content)).active
 
     assert sheet.max_row == 3
-    assert [sheet.cell(2, column).value for column in (1, 3, 4)] == [datetime(2026, 9, 22), "SKU-1", "12.5"]
+    assert [sheet.cell(2, column).value for column in (1, 3, 4)] == [datetime(2026, 9, 22), "SKU-1", 12.5]
+    assert sheet.cell(2, 4).number_format == "0.00"
     assert [cell.value for cell in sheet[3]] == [None, None, "SKU-2", None]
     for row in sheet.iter_rows(min_row=2, max_row=3):
         for cell in row:
@@ -101,6 +102,52 @@ def test_product_price_json_keeps_significant_digits_and_legacy_minimum() -> Non
         == "100.123456789012345678901234567891"
     )
     assert _serialize_product_price(None) is None
+
+
+def test_product_export_rounds_only_price_cells_to_two_decimal_places() -> None:
+    price_keys = (
+        "cost_price", "market_price", "jd_price", "agreement_price",
+        "agreement_purchase_price", "profit", "jd_self_operated_price",
+    )
+    columns = [
+        column for column in PRODUCT_EXPORT_COLUMNS
+        if column.key in {*price_keys, "discount_rate", "sku"}
+    ]
+    product = SimpleNamespace(
+        sku="000123", cost_price=Decimal("12.345"),
+        market_price=Decimal("2999.000000000000000000000000000000"),
+        jd_price=Decimal("12.344"), agreement_price=Decimal("0.995"),
+        agreement_purchase_price=Decimal("2"), profit=Decimal("-1.235"),
+        jd_self_operated_price=None, discount_rate=Decimal("0.8125"),
+    )
+    content = ProductExportService._build(columns, [(product, SimpleNamespace())], {})
+    sheet = load_workbook(BytesIO(content)).active
+    values = {column.key: sheet.cell(2, index) for index, column in enumerate(columns, start=1)}
+
+    assert values["cost_price"].value == 12.35
+    assert values["market_price"].value == 2999
+    assert values["jd_price"].value == 12.34
+    assert values["agreement_price"].value == 1
+    assert values["agreement_purchase_price"].value == 2
+    assert values["profit"].value == -1.24
+    assert values["jd_self_operated_price"].value is None
+    for key in price_keys:
+        if key != "jd_self_operated_price":
+            assert values[key].data_type == "n"
+            assert values[key].number_format == "0.00"
+    assert values["discount_rate"].value == "81.25%"
+    assert values["sku"].value == "000123"
+    assert product.cost_price == Decimal("12.345")
+
+
+def test_product_export_preserves_cents_for_amounts_beyond_excel_numeric_precision() -> None:
+    columns = [column for column in PRODUCT_EXPORT_COLUMNS if column.key == "cost_price"]
+    product = SimpleNamespace(cost_price=Decimal("10000000000000.005"))
+    content = ProductExportService._build(columns, [(product, SimpleNamespace())], {})
+    cell = load_workbook(BytesIO(content)).active["A2"]
+
+    assert cell.value == "10000000000000.01"
+    assert cell.data_type == "s"
 
 
 class RecordingStorage:
@@ -732,7 +779,8 @@ async def test_product_export_validates_selection_and_preserves_values() -> None
             assert response.headers["content-type"].startswith("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             sheet = load_workbook(BytesIO(response.content)).active
             assert [cell.value for cell in sheet[1]] == ["品牌", "sku", "市场价", "69码", "好评率", "折扣率", "价格虚高比例"]
-            assert [cell.value for cell in sheet[2]][1:] == ["000123", "100.123456789012345678901234567890", "0000123456789", "95%", "120%", "-20%"]
+            assert [cell.value for cell in sheet[2]][1:] == ["000123", 100.12, "0000123456789", "95%", "120%", "-20%"]
+            assert sheet.cell(2, 3).number_format == "0.00"
             null_export = await client.post("/api/v1/products/export", json={"product_ids": [str(second_product_id)], "columns": ["sku", "category_level1_name", "market_price", "discount_rate", "supplier_name"]}, headers=headers)
             null_sheet = load_workbook(BytesIO(null_export.content)).active
             assert [cell.value for cell in null_sheet[2]] == ["SKU-B", None, None, "商品测试来源供应商-" + str(supplier_id), None]

@@ -3,6 +3,7 @@
 import asyncio
 import colorsys
 import logging
+from decimal import ROUND_HALF_UP, Decimal, localcontext
 from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree
@@ -18,7 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.contracts import AppError
 from app.infrastructure.adapters import get_object_storage
 from app.modules.catalog.application.media import local_media_storage_key
-from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMNS
+from app.modules.catalog.application.product_export_columns import (
+    PRICE_EXPORT_COLUMN_KEYS,
+    PRODUCT_EXPORT_COLUMNS,
+)
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.supplier.domain.rules import CooperationStatus
@@ -31,6 +35,15 @@ _IMAGE_COLUMN_WIDTH = 16
 _PRODUCT_MASTER_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "resources" / "product-master-template.xlsx"
 _THEME_COLOR_NAMES = ("lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink")
 _DRAWING_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+_PRICE_EXPORT_QUANTUM = Decimal("0.01")
+_MAX_EXACT_CENTS_AS_EXCEL_NUMBER = Decimal("10000000000000")
+
+
+def _export_price(value: object) -> Decimal:
+    amount = Decimal(str(value))
+    with localcontext() as context:
+        context.prec = max(65, len(amount.as_tuple().digits) + 2)
+        return amount.quantize(_PRICE_EXPORT_QUANTUM, rounding=ROUND_HALF_UP)
 
 
 def _template_color(color: Color, theme_colors: dict[str, str]) -> str | None:
@@ -136,6 +149,7 @@ class ProductExportService:
             None,
         )
         cell_format = workbook.add_format({"border": 1})
+        price_format = workbook.add_format({"border": 1, "num_format": "0.00"})
         image_format = workbook.add_format({"border": 1, "align": "center", "valign": "vcenter"})
         date_format = workbook.add_format({"border": 1, "num_format": "yyyy-mm-dd"})
         image_sources: list[BytesIO] = []
@@ -146,6 +160,12 @@ class ProductExportService:
                 value = column.value(product, supplier)
                 if column.key == "listed_at" and value is not None:
                     sheet.write_datetime(row_index, column_index, value, date_format)
+                elif column.key in PRICE_EXPORT_COLUMN_KEYS and value is not None:
+                    price = _export_price(value)
+                    if abs(price) < _MAX_EXACT_CENTS_AS_EXCEL_NUMBER:
+                        sheet.write_number(row_index, column_index, float(price), price_format)
+                    else:
+                        sheet.write_string(row_index, column_index, f"{price:.2f}", cell_format)
                 elif value is not None:
                     sheet.write(row_index, column_index, value, cell_format)
                 else:
