@@ -1,14 +1,15 @@
 # 商品大表导入
 
 状态：IMPLEMENTED / PRODUCT_MASTER_2026_43_COLUMNS / FAILED_ROWS_EXPORT
-Owner：fix/product-import-preview-navigation-lock
-Last Updated：2026-09-21
+Owner：fix/product-import-lock-contention
+Last Updated：2026-09-22
 
 ## Database
 - [x] `20260910_0013` 创建 `scm_product_import_task`、`scm_product_import_row`、`scm_product_import_supplier_match`
 - [x] `20260911_0022` 为 Task 增加 `imported_rows`，为 Staging 行增加导入状态与操作审计字段
 - [x] `20260918_0033` 为 Staging 行增加标准化正式值及目标 Product 版本快照，不修改正式业务表
 - [x] `20260918_0034` 将六个正式价格字段扩展为 `DECIMAL(65,30)`，无损保存价格原值
+- [x] `20260922_0038` 为过期导入任务清理增加 `status + created_at` 复合索引
 - [x] 原始 Excel 行和 `supplier_name_raw` 仅保留在 Staging；正式 `scm_product` 不增加供应商名称字段
 
 ## Backend
@@ -32,6 +33,8 @@ Last Updated：2026-09-21
 - [x] 工作簿预览与 Confirm 图片提取共用可配置的进程内并发闸门，默认每进程 1 个重任务
 - [x] Confirm 浏览器请求允许等待 15 分钟；正式 Product 的供应商 + SKU 查询与锁定按稳定顺序每 500 组分批执行，避免 MySQL 超大复合 `IN` 的范围优化内存告警，同时保持事务原子性和并发冲突保护
 - [x] Confirm 不再使用 50MB 全工作簿图片累计上限；每次只解码和保存一张图片，浏览器不直接支持的 TIFF/EMF/BMP/WMF 转为 PNG，单图上限由 `PRODUCT_IMPORT_MAX_IMAGE_MB` 配置（默认 64MB）
+- [x] 过期临时任务清理按状态限批（每次最多 100）并使用 `FOR UPDATE SKIP LOCKED`；已被其他事务锁定的旧任务留待后续清理，不阻塞当前预览或 Confirm
+- [x] Confirm 在锁定 Task 前准备本次图片文件；锁定、重新校验通过后才将图片键写入 Staging 行并写正式 Product，冲突或失败时仅清理本次新建图片，临时源 Excel 的 24 小时保留与成功后删除规则不变
 
 ## Frontend
 - [x] 商品主数据页可直接 Confirm；关闭预览弹窗会释放该任务的临时 Excel
@@ -49,6 +52,7 @@ Last Updated：2026-09-21
 - [x] API 回归测试覆盖“所有行供应商为空”，要求返回 200 和空 `supplier_matches`，所有行保留“供应商不能为空”错误而不触发 `MissingGreenlet`
 - [x] 回归测试覆盖带 WPS `DISPIMG` 的失败行导出、43 列模板、错误说明及导出文件重新预览
 - [x] 通用前端单元测试覆盖无 Excel 导入时允许离开、处理中阻止路由及请求浏览器离开提醒
+- [x] Repository 回归测试覆盖过期清理分批上限及 `SKIP LOCKED` 锁语义；图片暂存测试覆盖“准备阶段不写回 Staging 行”
 - [x] 全量后端测试、前端类型检查、单元测试与构建已执行
 
 ## Known Issues
