@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError, PageParams, PageResult
 from app.core.transaction import transaction_scope
+from app.modules.supplier.domain.matching import supplier_name_identity_key
 from app.modules.supplier.domain.rules import (
     ArchiveStatus,
     CooperationStatus,
@@ -64,7 +65,7 @@ class SupplierService:
     ) -> SupplierDetailResponse:
         async with transaction_scope(self.session):
             supplier_name = self._required_text(payload.supplier_name, "supplier_name")
-            existing = await self.repository.by_name_for_update(supplier_name)
+            existing = await self._supplier_with_same_identity(supplier_name)
             if existing is not None:
                 if not existing.is_deleted:
                     raise AppError("SUPPLIER_NAME_EXISTS", "该供应商已存在", 409)
@@ -109,7 +110,7 @@ class SupplierService:
             if "supplier_name" in payload.model_fields_set:
                 supplier_name = self._required_text(payload.supplier_name, "supplier_name")
                 if supplier_name != supplier.supplier_name:
-                    existing = await self.repository.by_name_for_update(supplier_name)
+                    existing = await self._supplier_with_same_identity(supplier_name)
                     if existing is not None and existing.id != supplier.id:
                         raise AppError("SUPPLIER_NAME_EXISTS", "该供应商已存在", 409)
                     supplier.supplier_name = supplier_name
@@ -227,6 +228,28 @@ class SupplierService:
         if supplier is None:
             raise AppError("SUPPLIER_NOT_FOUND", "Supplier not found", 404)
         return supplier
+
+    async def _supplier_with_same_identity(self, supplier_name: str) -> Supplier | None:
+        identity_key = supplier_name_identity_key(supplier_name)
+        if not identity_key:
+            raise AppError(
+                "SUPPLIER_VALIDATION_ERROR", "supplier_name must contain letters or digits", 422
+            )
+        records = await self.repository.supplier_name_records()
+        matches = [
+            (supplier_id, is_deleted)
+            for supplier_id, name, is_deleted in records
+            if supplier_name_identity_key(name) == identity_key
+        ]
+        active = [supplier_id for supplier_id, is_deleted in matches if not is_deleted]
+        if len(active) > 1 or (not active and len(matches) > 1):
+            raise AppError("SUPPLIER_NAME_EXISTS", "该供应商已存在", 409)
+        if active:
+            return await self.repository.by_id_for_update(active[0])
+        if matches:
+            return await self.repository.by_id_for_update(matches[0][0])
+        # Keep MySQL's own collation/UNIQUE rule as an additional backstop.
+        return await self.repository.by_name_for_update(supplier_name)
 
     def _replace_contacts(
         self, supplier: Supplier, contacts: Sequence[SupplierContactInput], actor_id: uuid.UUID

@@ -45,6 +45,16 @@ def normalize_supplier_name(value: str) -> str:
     return _WHITESPACE_PATTERN.sub(" ", normalized)
 
 
+def supplier_name_identity_key(value: str) -> str:
+    """Compare supplier-master names by substantive letters and digits only.
+
+    This is deliberately separate from product-source matching's stricter
+    ``normalize_supplier_name`` rule. Never persist this key as the display name.
+    """
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    return "".join(character for character in normalized if character.isalnum())
+
+
 def is_eligible_source_supplier(candidate: SupplierMatchCandidate) -> bool:
     """Return whether a supplier may be selected as a product source supplier."""
     return (

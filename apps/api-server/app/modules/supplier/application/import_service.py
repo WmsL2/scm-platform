@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError
 from app.core.transaction import transaction_scope
+from app.modules.supplier.domain.matching import supplier_name_identity_key
 from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
 from app.modules.supplier.infrastructure.models import (
     Supplier,
@@ -125,10 +126,28 @@ class SupplierImportService:
                     "Import batch valid row count does not match persisted rows",
                     409,
                 )
+            name_records = await self.repository.supplier_name_records()
+            existing_by_key: dict[str, list[tuple[uuid.UUID, bool]]] = {}
+            for supplier_id, name, is_deleted in name_records:
+                existing_by_key.setdefault(supplier_name_identity_key(name), []).append(
+                    (supplier_id, is_deleted)
+                )
+            seen_keys: set[str] = set()
             processed_count = 0
             for row in rows:
                 supplier_name = self._required_value(row.supplier_name)
-                existing = await self.repository.by_name_for_update(supplier_name)
+                identity_key = supplier_name_identity_key(supplier_name)
+                if not identity_key or identity_key in seen_keys:
+                    raise AppError("SUPPLIER_NAME_EXISTS", "该供应商已存在", 409)
+                seen_keys.add(identity_key)
+                matches = existing_by_key.get(identity_key, [])
+                if any(not is_deleted for _, is_deleted in matches) or len(matches) > 1:
+                    raise AppError("SUPPLIER_NAME_EXISTS", "该供应商已存在", 409)
+                existing = (
+                    await self.repository.by_id_for_update(matches[0][0])
+                    if matches
+                    else await self.repository.by_name_for_update(supplier_name)
+                )
                 if existing is not None:
                     if not existing.is_deleted:
                         raise AppError("SUPPLIER_NAME_EXISTS", "该供应商已存在", 409)
@@ -224,27 +243,36 @@ class SupplierImportService:
         return rows
 
     async def _mark_duplicate_supplier_names(self, rows: list[SupplierImportRow]) -> None:
-        active_names = await self.repository.active_supplier_names(
-            {row.supplier_name for row in rows if row.supplier_name is not None}
-        )
+        name_records = await self.repository.supplier_name_records()
+        active_keys = {
+            supplier_name_identity_key(name)
+            for _, name, is_deleted in name_records
+            if not is_deleted
+        }
+        deleted_counts: dict[str, int] = {}
+        for _, name, is_deleted in name_records:
+            if is_deleted:
+                key = supplier_name_identity_key(name)
+                deleted_counts[key] = deleted_counts.get(key, 0) + 1
         first_excel_row_by_name: dict[str, int] = {}
         for row in rows:
             supplier_name = row.supplier_name
             if not supplier_name:
                 continue
+            identity_key = supplier_name_identity_key(supplier_name)
             errors: list[str] = []
-            if supplier_name in active_names:
+            if not identity_key:
+                errors.append("供应商名称不能只有标点或空格")
+            elif identity_key in active_keys or deleted_counts.get(identity_key, 0) > 1:
                 errors.append("该供应商已存在")
-            first_row = first_excel_row_by_name.get(supplier_name)
+            first_row = first_excel_row_by_name.get(identity_key)
             if first_row is None:
-                first_excel_row_by_name[supplier_name] = row.source_row_number
+                first_excel_row_by_name[identity_key] = row.source_row_number
             else:
                 errors.append(f"与 Excel 第 {first_row} 行供应商名称重复")
             if errors:
                 row.is_valid = False
-                row.error_message = "；".join(
-                    filter(None, [row.error_message, *errors])
-                )
+                row.error_message = "；".join(filter(None, [row.error_message, *errors]))
 
     def _restore_deleted_supplier(
         self,

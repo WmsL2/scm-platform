@@ -9,6 +9,7 @@ from app.modules.supplier.domain.matching import (
     classify_supplier_name_match,
     is_eligible_source_supplier,
     normalize_supplier_name,
+    supplier_name_identity_key,
 )
 from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
 
@@ -46,6 +47,17 @@ def test_normalize_supplier_name_only_applies_nfkc_and_whitespace(
 
 def test_normalize_supplier_name_preserves_region_and_company_suffix() -> None:
     assert normalize_supplier_name("广州科技有限公司") == "广州科技有限公司"
+
+
+def test_supplier_master_identity_ignores_punctuation_and_spacing_only() -> None:
+    expected = supplier_name_identity_key("甜卿品牌管理(深圳)有限公司")
+    assert supplier_name_identity_key(" 甜卿 品牌管理（深圳）有限公司。 ") == expected
+    assert supplier_name_identity_key("甜卿品牌管理(广州)有限公司") != expected
+    assert supplier_name_identity_key("（） 。 - ") == ""
+    # Product-source matching deliberately keeps its stricter ADR-0008 rule.
+    assert normalize_supplier_name("甜卿品牌管理(深圳)有限公司") != normalize_supplier_name(
+        "甜卿品牌管理（深圳）有限公司。"
+    )
 
 
 @pytest.mark.parametrize(
