@@ -19,6 +19,7 @@ from app.modules.supplier.domain.rules import CooperationStatus
 from app.modules.supplier.infrastructure.models import Supplier
 
 PRODUCT_IMPORT_PRODUCT_LOOKUP_BATCH_SIZE = 500
+PRODUCT_IMPORT_TEMP_MEDIA_CLEANUP_BATCH_SIZE = 100
 
 
 class ProductRepository:
@@ -305,43 +306,52 @@ class ProductRepository:
     async def temporary_media_cleanup_tasks_for_update(
         self, *, stale_before: datetime
     ) -> list[ProductImportTask]:
-        statement = (
-            select(ProductImportTask)
-            .options(selectinload(ProductImportTask.rows))
-            .where(
+        remaining = PRODUCT_IMPORT_TEMP_MEDIA_CLEANUP_BATCH_SIZE
+        tasks: list[ProductImportTask] = []
+        criteria_sets = (
+            (
+                ProductImportTask.status.in_(
+                    (
+                        "VALIDATED",
+                        "NEEDS_RESOLUTION",
+                        "READY_TO_CONFIRM",
+                        "PARTIALLY_CONFIRMED",
+                    )
+                ),
+                ProductImportTask.created_at < stale_before,
+            ),
+            (
+                ProductImportTask.status == "EXPIRED",
                 or_(
-                    and_(
-                        ProductImportTask.status.in_(
-                            (
-                                "VALIDATED",
-                                "NEEDS_RESOLUTION",
-                                "READY_TO_CONFIRM",
-                                "PARTIALLY_CONFIRMED",
-                            )
-                        ),
-                        ProductImportTask.created_at < stale_before,
-                    ),
-                    and_(
-                        ProductImportTask.status == "EXPIRED",
-                        or_(
-                            ProductImportTask.source_file_storage_key.is_not(None),
-                            select(ProductImportRow.id)
-                            .where(
-                                ProductImportRow.import_task_id == ProductImportTask.id,
-                                ProductImportRow.image_storage_key.is_not(None),
-                            )
-                            .exists(),
-                        ),
-                    ),
-                    and_(
-                        ProductImportTask.status == "CONFIRMED",
-                        ProductImportTask.source_file_storage_key.is_not(None),
-                    ),
-                )
-            )
-            .with_for_update()
+                    ProductImportTask.source_file_storage_key.is_not(None),
+                    select(ProductImportRow.id)
+                    .where(
+                        ProductImportRow.import_task_id == ProductImportTask.id,
+                        ProductImportRow.image_storage_key.is_not(None),
+                    )
+                    .exists(),
+                ),
+            ),
+            (
+                ProductImportTask.status == "CONFIRMED",
+                ProductImportTask.source_file_storage_key.is_not(None),
+            ),
         )
-        return list((await self.session.scalars(statement)).all())
+        for criteria in criteria_sets:
+            if remaining == 0:
+                break
+            statement = (
+                select(ProductImportTask)
+                .options(selectinload(ProductImportTask.rows))
+                .where(*criteria)
+                .order_by(ProductImportTask.created_at, ProductImportTask.id)
+                .limit(remaining)
+                .with_for_update(skip_locked=True)
+            )
+            selected = list((await self.session.scalars(statement)).all())
+            tasks.extend(selected)
+            remaining -= len(selected)
+        return tasks
 
     async def products_by_supplier_sku(
         self, keys: set[tuple[uuid.UUID, str]], *, for_update: bool = False

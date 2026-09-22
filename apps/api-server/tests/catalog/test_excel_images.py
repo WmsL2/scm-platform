@@ -179,7 +179,7 @@ async def test_confirm_reads_temporary_workbook_before_staging_embedded_image() 
 
         async def save_file(self, name: str, source: Path) -> str:
             self.saved.append((name, source.read_bytes()))
-            return "product-images/task/image.png"
+            return name
 
         async def delete(self, key: str) -> None:
             raise AssertionError(f"unexpected delete: {key}")
@@ -195,11 +195,18 @@ async def test_confirm_reads_temporary_workbook_before_staging_embedded_image() 
         id=uuid4(), rows=[row], source_file_storage_key="product-import-sources/task.xlsx"
     )
     storage = MemoryStorage()
-    service = ProductImportService(cast(AsyncSession, None), storage=storage)
+    service = ProductImportService(
+        cast(AsyncSession, None), storage=cast(ObjectStorage, storage)
+    )
+    attempt_id = uuid4()
 
     assert row.image_storage_key is None
-    saved_keys = await service._stage_confirmed_row_images(cast(ProductImportTask, task), [row])
+    saved_keys_by_row_id = await service._stage_confirmed_row_images(
+        cast(ProductImportTask, task), [row], attempt_id=attempt_id
+    )
 
-    assert saved_keys == ["product-images/task/image.png"]
-    assert storage.saved[0][0].startswith("product-images/")
-    assert row.image_storage_key == "product-images/task/image.png"
+    assert saved_keys_by_row_id == {
+        row.id: f"product-images/{task.id}/{attempt_id}/{row.id}.png"
+    }
+    assert storage.saved[0][0] == f"product-images/{task.id}/{attempt_id}/{row.id}.png"
+    assert row.image_storage_key is None

@@ -397,6 +397,27 @@ class ProductImportService:
         completed_source: tuple[uuid.UUID, str] | None = None
         try:
             await self._cleanup_expired_temp_media()
+            task_for_image_staging = await self.repository.import_task_by_id(task_id)
+            self._assert_editable_task(task_for_image_staging, actor_id)
+            assert task_for_image_staging is not None
+            rows_for_image_staging = [
+                row
+                for row in task_for_image_staging.rows
+                if row.is_valid and not row.is_imported
+            ]
+            if not rows_for_image_staging:
+                raise AppError(
+                    "PRODUCT_IMPORT_NO_VALID_ROWS",
+                    "There are no validated rows available to import",
+                    409,
+                )
+            image_staging_attempt_id = uuid.uuid4()
+            staged_images_by_row_id = await self._stage_confirmed_row_images(
+                task_for_image_staging,
+                rows_for_image_staging,
+                attempt_id=image_staging_attempt_id,
+            )
+            staged_image_keys = list(staged_images_by_row_id.values())
             async with transaction_scope(self.session):
                 task = await self.repository.import_task_by_id_for_update(task_id)
                 self._assert_editable_task(task, actor_id)
@@ -410,7 +431,6 @@ class ProductImportService:
                         409,
                     )
                 matches = {match.id: match for match in task.supplier_matches}
-                staged_image_keys = await self._stage_confirmed_row_images(task, rows_to_write)
                 try:
                     async with self.session.begin_nested():
                         row_supplier_sku_keys: dict[int, tuple[uuid.UUID, str]] = {}
@@ -505,6 +525,9 @@ class ProductImportService:
                         created_count = 0
                         updated_count = 0
                         for row, source_supplier_id in resolved_rows:
+                            staged_image_key = staged_images_by_row_id.get(row.id)
+                            if staged_image_key is not None:
+                                row.image_storage_key = staged_image_key
                             supplier_sku_key = row_supplier_sku_keys[row.source_row_number]
                             existing_product = existing_products.get(supplier_sku_key)
                             if existing_product is None:
@@ -1010,15 +1033,19 @@ class ProductImportService:
         row.normalized_data = normalized
 
     async def _stage_confirmed_row_images(
-        self, task: ProductImportTask, rows: list[ProductImportRow]
-    ) -> list[str]:
+        self,
+        task: ProductImportTask,
+        rows: list[ProductImportRow],
+        *,
+        attempt_id: uuid.UUID,
+    ) -> dict[uuid.UUID, str]:
         rows_by_image_id: dict[str, list[ProductImportRow]] = defaultdict(list)
         for row in rows:
             image_id = dispimg_image_id(row.source_data.get("图片"))
             if image_id is not None:
                 rows_by_image_id[image_id].append(row)
         if not rows_by_image_id:
-            return []
+            return {}
         if not task.source_file_storage_key:
             raise AppError(
                 "PRODUCT_IMPORT_SOURCE_FILE_MISSING",
@@ -1042,7 +1069,7 @@ class ProductImportService:
                     ) from exc
                 max_image_bytes = get_settings().product_import_max_image_mb * 1024 * 1024
                 archive = await asyncio.to_thread(DispimgImageArchive, source_path)
-                saved_keys: list[str] = []
+                saved_keys_by_row_id: dict[uuid.UUID, str] = {}
                 try:
                     with TemporaryDirectory(prefix="scm-product-import-images-") as directory:
                         temporary_directory = Path(directory)
@@ -1068,16 +1095,19 @@ class ProductImportService:
                                 ) from exc
                             try:
                                 for row in image_rows:
-                                    row.image_storage_key = await self.storage.save_file(
-                                        f"product-images/{task.id}/{row.id}{image.extension}",
+                                    storage_key = await self.storage.save_file(
+                                        (
+                                            f"product-images/{task.id}/{attempt_id}/"
+                                            f"{row.id}{image.extension}"
+                                        ),
                                         image.path,
                                     )
-                                    saved_keys.append(row.image_storage_key)
+                                    saved_keys_by_row_id[row.id] = storage_key
                             finally:
                                 image.path.unlink(missing_ok=True)
-                    return saved_keys
+                    return saved_keys_by_row_id
                 except Exception:
-                    for key in saved_keys:
+                    for key in saved_keys_by_row_id.values():
                         try:
                             await self.storage.delete(key)
                         except Exception:

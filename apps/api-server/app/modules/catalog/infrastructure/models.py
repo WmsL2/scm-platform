@@ -200,6 +200,7 @@ class ProductPurgeAudit(Base):
 class ProductImportTask(Base):
     __tablename__ = "scm_product_import_task"
     __table_args__ = (
+        Index("ix_scm_product_import_task_status_created_at", "status", "created_at"),
         CheckConstraint(
             "status IN ('VALIDATED', 'NEEDS_RESOLUTION', 'READY_TO_CONFIRM', "
             "'PARTIALLY_CONFIRMED', 'CONFIRMED', 'EXPIRED')",
