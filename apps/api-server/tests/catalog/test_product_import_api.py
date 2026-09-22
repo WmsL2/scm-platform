@@ -26,6 +26,7 @@ from app.modules.catalog.application.import_service import (
     PRODUCT_IMPORT_HEADERS,
     ProductImportService,
 )
+from app.modules.catalog.application.stale_cleanup import ProductImportStaleCleanupService
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import (
     Category,
@@ -1001,6 +1002,41 @@ async def test_manual_purge_deletes_one_abandoned_import_task() -> None:
         async with SessionLocal() as session:
             deleted = await ProductImportService(session).purge_abandoned_task(task_id)
         assert deleted is True
+        async with SessionLocal() as session:
+            assert await session.get(ProductImportTask, task_id) is None
+    finally:
+        async with SessionLocal() as session:
+            existing = await session.get(ProductImportTask, task_id)
+            if existing is not None:
+                await session.delete(existing)
+                await session.commit()
+
+
+async def test_stale_cleanup_purges_one_expired_import_without_loading_history() -> None:
+    task_id = uuid.uuid4()
+    task = ProductImportTask(
+        id=task_id,
+        original_filename="stale-products.xlsx",
+        status="READY_TO_CONFIRM",
+        total_rows=0,
+        valid_rows=0,
+        update_rows=0,
+        invalid_rows=0,
+        imported_rows=0,
+        created_by=uuid.uuid4(),
+        created_at=datetime.now() - timedelta(hours=6),
+    )
+    async with SessionLocal() as session:
+        session.add(task)
+        await session.commit()
+    try:
+        async with SessionLocal() as session:
+            result = await ProductImportStaleCleanupService(session).purge_task(
+                task_id,
+                stale_before=datetime.now() - timedelta(hours=5),
+                skip_locked=False,
+            )
+        assert result == "DELETED"
         async with SessionLocal() as session:
             assert await session.get(ProductImportTask, task_id) is None
     finally:
