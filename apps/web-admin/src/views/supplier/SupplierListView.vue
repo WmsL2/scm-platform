@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Delete, Download, Plus, Refresh, Search, Upload } from "@element-plus/icons-vue"
-import { onMounted, reactive, ref } from "vue"
+import { computed, nextTick, onMounted, reactive, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 
 import { supplierApi } from "../../api/supplier"
@@ -9,6 +9,7 @@ import { useExcelImportNavigationLock } from "../../shared/import/excelImportNav
 import OperationDuration from "../../shared/operation/OperationDuration.vue"
 import { useOperationTimer } from "../../shared/operation/useOperationTimer"
 import { useAuthStore } from "../../stores/auth"
+import { clearSupplierSelection, isAllSuppliersSelected, mergeSupplierPageSelection } from "./supplierExportSelection"
 import {
   ARCHIVE_STATUS_LABELS,
   COOPERATION_STATUS_LABELS,
@@ -17,6 +18,11 @@ import {
   type SupplierImportPreview,
   type SupplierListItem,
 } from "../../types/supplier"
+
+type SupplierTableInstance = {
+  clearSelection: () => void
+  toggleRowSelection: (row: SupplierListItem, selected?: boolean) => void
+}
 
 const auth = useAuthStore()
 const loading = ref(false)
@@ -28,6 +34,11 @@ const importInput = ref<HTMLInputElement>()
 const importPreview = ref<SupplierImportPreview | null>(null)
 const importDialogVisible = ref(false)
 const importing = ref(false)
+const exporting = ref(false)
+const selectingAll = ref(false)
+const syncingSelection = ref(false)
+const selectedSupplierIds = ref(new Set<string>())
+const supplierTableRef = ref<SupplierTableInstance>()
 const operationTimer = useOperationTimer()
 const importNavigationLock = useExcelImportNavigationLock(operationTimer)
 const importArchiveStatus = ref<ArchiveStatus>("ARCHIVED")
@@ -36,6 +47,47 @@ const filters = reactive<{
   archive_status: ArchiveStatus | undefined
   cooperation_status: CooperationStatus | undefined
 }>({ keyword: "", archive_status: undefined, cooperation_status: undefined })
+const isAllFilteredSuppliersSelected = computed(() =>
+  isAllSuppliersSelected(selectedSupplierIds.value, total.value),
+)
+
+function supplierFilterParams() {
+  return { keyword: filters.keyword, archive_status: filters.archive_status, cooperation_status: filters.cooperation_status }
+}
+
+function syncSelection(rows: SupplierListItem[]): void {
+  if (syncingSelection.value) return
+  selectedSupplierIds.value = mergeSupplierPageSelection(
+    selectedSupplierIds.value, suppliers.value.map((item) => item.id), rows.map((row) => row.id),
+  )
+}
+
+async function restoreCurrentPageSelection(): Promise<void> {
+  syncingSelection.value = true
+  try {
+    await nextTick()
+    supplierTableRef.value?.clearSelection()
+    for (const supplier of suppliers.value) {
+      if (selectedSupplierIds.value.has(supplier.id)) supplierTableRef.value?.toggleRowSelection(supplier, true)
+    }
+  } finally { syncingSelection.value = false }
+}
+
+async function selectAllFilteredSuppliers(): Promise<void> {
+  selectingAll.value = true
+  try {
+    const result = await supplierApi.getSelectionIds(supplierFilterParams())
+    selectedSupplierIds.value = new Set(result.ids)
+    await restoreCurrentPageSelection()
+  } catch (error) {
+    ElMessage.error(error instanceof HttpError ? error.response.message : "获取全部供应商失败")
+  } finally { selectingAll.value = false }
+}
+
+async function clearAllFilteredSupplierSelection(): Promise<void> {
+  selectedSupplierIds.value = clearSupplierSelection()
+  await restoreCurrentPageSelection()
+}
 
 async function loadSuppliers(targetPage = page.value): Promise<void> {
   loading.value = true
@@ -44,6 +96,7 @@ async function loadSuppliers(targetPage = page.value): Promise<void> {
     suppliers.value = result.items
     total.value = result.total
     page.value = result.page
+    await restoreCurrentPageSelection()
   } catch (error) {
     ElMessage.error(error instanceof HttpError ? error.response.message : "加载供应商列表失败")
   } finally {
@@ -52,10 +105,12 @@ async function loadSuppliers(targetPage = page.value): Promise<void> {
 }
 
 function search(): void {
+  selectedSupplierIds.value.clear()
   void loadSuppliers(1)
 }
 
 function reset(): void {
+  selectedSupplierIds.value.clear()
   filters.keyword = ""
   filters.archive_status = undefined
   filters.cooperation_status = undefined
@@ -78,6 +133,7 @@ async function deleteSupplier(supplier: SupplierListItem): Promise<void> {
       { confirmButtonText: "删除", cancelButtonText: "取消", type: "warning" },
     )
     await supplierApi.delete(supplier.id)
+    selectedSupplierIds.value.delete(supplier.id)
     ElMessage.success("供应商已标记为已删除")
     await loadSuppliers(suppliers.value.length === 1 && page.value > 1 ? page.value - 1 : page.value)
   } catch (error) {
@@ -98,6 +154,16 @@ async function downloadTemplate(): Promise<void> {
   } catch (error) {
     ElMessage.error(error instanceof HttpError ? error.response.message : "下载导入模板失败")
   }
+}
+async function exportSelectedSuppliers(): Promise<void> {
+  exporting.value = true
+  try {
+    const blob = await operationTimer.measure("供应商 Excel 导出", () => supplierApi.exportSelected([...selectedSupplierIds.value]))
+    const url = URL.createObjectURL(blob); const anchor = document.createElement("a")
+    anchor.href = url; anchor.download = "供应商导出.xlsx"; anchor.click(); URL.revokeObjectURL(url)
+    ElMessage.success("供应商 Excel 导出成功")
+  } catch (error) { ElMessage.error(error instanceof HttpError ? error.response.message : "供应商 Excel 导出失败") }
+  finally { exporting.value = false }
 }
 
 function openImportDialog(): void {
@@ -160,6 +226,8 @@ onMounted(() => void loadSuppliers())
       <div class="header-action-group">
         <div class="header-actions">
           <el-button v-if="auth.hasPermission('supplier:create')" :icon="Download" @click="downloadTemplate">下载模板</el-button>
+          <el-button v-if="auth.hasPermission('supplier:list')" plain :loading="selectingAll" :disabled="total === 0" @click="isAllFilteredSuppliersSelected ? clearAllFilteredSupplierSelection() : selectAllFilteredSuppliers()">{{ isAllFilteredSuppliersSelected ? "取消全选" : `全选全部供应商（${total}）` }}</el-button>
+          <el-button v-if="auth.hasPermission('supplier:list')" :icon="Download" :loading="exporting" :disabled="selectedSupplierIds.size === 0" @click="exportSelectedSuppliers">导出 Excel（{{ selectedSupplierIds.size }}）</el-button>
           <el-button v-if="auth.hasPermission('supplier:create')" :icon="Upload" :loading="importing" @click="openImportDialog">导入 Excel</el-button>
           <input ref="importInput" class="file-input" type="file" accept=".xlsx" @change="previewImport" />
           <RouterLink v-if="auth.hasPermission('supplier:create')" to="/suppliers/new">
@@ -194,7 +262,8 @@ onMounted(() => void loadSuppliers())
 
     <el-card class="page-card table-card">
       <template #header><strong>供应商列表</strong></template>
-      <el-table v-loading="loading" :data="suppliers" empty-text="暂无供应商数据">
+      <el-table ref="supplierTableRef" v-loading="loading" :data="suppliers" empty-text="暂无供应商数据" @selection-change="syncSelection">
+        <el-table-column type="selection" width="48" />
         <el-table-column prop="supplier_code" label="供应商编码" min-width="150" />
         <el-table-column prop="supplier_name" label="供应商名称" min-width="180" />
         <el-table-column prop="main_brands" label="主营品牌" min-width="150" />

@@ -141,6 +141,24 @@ class SupplierImportConfirmRequest(BaseModel):
     archive_status: ArchiveStatus = ArchiveStatus.ARCHIVED
 
 
+class SupplierExportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    supplier_ids: list[uuid.UUID] = Field(min_length=1, max_length=5000)
+
+    @field_validator("supplier_ids")
+    @classmethod
+    def unique_supplier_ids(cls, value: list[uuid.UUID]) -> list[uuid.UUID]:
+        if len(set(value)) != len(value):
+            raise ValueError("supplier_ids must not contain duplicates")
+        return value
+
+
+class SupplierSelectionIdsResponse(BaseModel):
+    ids: list[uuid.UUID]
+    total: int
+
+
 def _normalize_required_text(value: str) -> str:
     normalized = value.strip()
     if not normalized:

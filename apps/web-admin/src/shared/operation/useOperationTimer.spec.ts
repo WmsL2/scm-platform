@@ -46,7 +46,7 @@ describe("import and export operation timing", () => {
   it("covers imports, exports and bid file downloads, but not template downloads", () => {
     for (const [source, labels] of [
       [productListSource, ["商品导入预览", "商品确认导入", "商品导出", "不通过行导出"]],
-      [supplierListSource, ["供应商导入预览", "供应商确认导入"]],
+      [supplierListSource, ["供应商导入预览", "供应商确认导入", "供应商 Excel 导出"]],
       [categoryListSource, ["类目导入"]],
       [bidProjectListSource, ["投标 Excel 导入"]],
       [bidProjectDetailSource, ["报价文件导出", "投标文件下载"]],

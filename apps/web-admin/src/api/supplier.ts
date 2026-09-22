@@ -8,7 +8,9 @@ import type {
   SupplierImportConfirmResult,
   SupplierImportPreview,
   SupplierListParams,
+  SupplierExportParams,
   SupplierPage,
+  SupplierSelectionIdsResult,
 } from "../types/supplier"
 
 function supplierPath(path = ""): string {
@@ -27,6 +29,12 @@ function listQuery(params: SupplierListParams): string {
 export const supplierApi = {
   list(params: SupplierListParams = {}): Promise<SupplierPage> {
     return http.get<SupplierPage>(supplierPath(listQuery(params)))
+  },
+  getSelectionIds(params: SupplierExportParams = {}): Promise<SupplierSelectionIdsResult> {
+    return http.get<SupplierSelectionIdsResult>(supplierPath(`/selection-ids${listQuery(params)}`))
+  },
+  exportSelected(supplierIds: string[]): Promise<Blob> {
+    return http.postBlob(supplierPath("/export"), { supplier_ids: supplierIds })
   },
 
   get(id: string): Promise<SupplierDetail> {

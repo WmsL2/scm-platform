@@ -1,5 +1,6 @@
 import uuid
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,18 +9,22 @@ from app.common.contracts import ApiResponse, PageParams, PageResult, success
 from app.core.database import get_db_session
 from app.modules.auth.dependencies import require_permission
 from app.modules.auth.schemas import CurrentUser
+from app.modules.supplier.application.export_service import SupplierExportService
 from app.modules.supplier.application.import_service import SupplierImportService
 from app.modules.supplier.application.service import SupplierService
 from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
+from app.modules.supplier.infrastructure.repository import SupplierRepository
 from app.modules.supplier.schemas import (
     CooperationCommand,
     SupplierCreateRequest,
     SupplierDeleteResponse,
     SupplierDetailResponse,
+    SupplierExportRequest,
     SupplierImportConfirmRequest,
     SupplierImportConfirmResponse,
     SupplierImportPreviewResponse,
     SupplierListItem,
+    SupplierSelectionIdsResponse,
     SupplierUpdateRequest,
 )
 
@@ -44,6 +49,39 @@ async def list_suppliers(
         cooperation_status=cooperation_status,
     )
     return success(result)
+
+
+@router.get("/selection-ids", response_model=ApiResponse[SupplierSelectionIdsResponse])
+async def supplier_selection_ids(
+    _: Annotated[CurrentUser, Depends(require_permission("supplier:list"))],
+    session: SessionDep,
+    keyword: Annotated[str | None, Query(max_length=255)] = None,
+    archive_status: ArchiveStatus | None = None,
+    cooperation_status: CooperationStatus | None = None,
+) -> ApiResponse[SupplierSelectionIdsResponse]:
+    ids = await SupplierRepository(session).selection_ids(
+        keyword=keyword.strip() if keyword else None,
+        archive_status=archive_status,
+        cooperation_status=cooperation_status,
+    )
+    return success(SupplierSelectionIdsResponse(ids=ids, total=len(ids)))
+
+
+@router.post("/export")
+async def export_suppliers(
+    payload: SupplierExportRequest,
+    _: Annotated[CurrentUser, Depends(require_permission("supplier:list"))],
+    session: SessionDep,
+) -> Response:
+    from datetime import datetime
+
+    content = await SupplierExportService(session).export(payload.supplier_ids)
+    filename = f"供应商导出-{datetime.now():%Y%m%d-%H%M%S}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
 
 
 @router.get("/imports/template")

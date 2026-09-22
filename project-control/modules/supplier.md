@@ -21,6 +21,7 @@ Last Updated：2026-09-22
 - [x] 导入确认采用原子持久化：锁定并直接读取批次行，Supplier 写入 `flush` 成功且数量一致后才标记 `CONFIRMED`；异常整批回滚
 
 ## Frontend
+- [x] Supplier Excel Export：支持单选、多选与跨页回显；表头 checkbox 仅选择当前页，“全选全部供应商（N）”经当前筛选条件的 ID 集合选择全部。导出仅提交 selected supplier_ids，使用 `supplier:list`，不新增权限
 - [x] 供应商列表：真实分页、关键字/双状态筛选、详情跳转
 - [x] 新增、详情、编辑：真实 Supplier API 调用、归档状态选择与错误反馈；新增表单仅校验供应商名称，主营品牌和主要优势明确标记为选填
 - [x] 多联系人表单：符合 `contacts` 请求契约；联系人可空且每条至少姓名或电话
@@ -34,7 +35,9 @@ Last Updated：2026-09-22
 
 ## Tests
 - [x] MySQL Schema、API 生命周期、401/403、状态机、状态历史覆盖
+- [x] Supplier Excel Export：selection-ids 的筛选、超分页、逻辑删除和权限，以及 POST 已选 ID 导出的空/重复/失效选择、固定表头、文本编码/电话、有效联系人、中文状态和时间覆盖；联系人以 `selectinload` 批量预取，无 N+1
 - [x] 前端 Supplier API 路径、请求体、字段规范化、路由权限单元测试
+- [x] 前端 Supplier Excel Export：selection-ids 只发送非分页筛选参数，导出经 `http.postBlob()` 发送 selected supplier_ids；跨页选择 helper 覆盖单选、多选、当前页全选、跨页保留、取消与全选判断；页面复用“供应商 Excel 导出”Operation Timer
 - [x] 删除权限、逻辑删除保留、同名恢复覆盖、名称唯一、新建/编辑/Excel Confirm 归档状态选择及 Excel 模板/预览/错误行 MySQL 集成测试
 - [x] Post-merge：Supplier UUID Path Validation（`422` / `VALIDATION_ERROR`）与
   caller-owned transaction rollback 回归覆盖

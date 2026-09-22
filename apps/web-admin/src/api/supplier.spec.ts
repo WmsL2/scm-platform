@@ -4,6 +4,7 @@ const http = vi.hoisted(() => ({
   get: vi.fn(),
   getBlob: vi.fn(),
   post: vi.fn(),
+  postBlob: vi.fn(),
   patch: vi.fn(),
   delete: vi.fn(),
 }))
@@ -15,6 +16,7 @@ describe("supplier api", () => {
     http.get.mockReset()
     http.getBlob.mockReset()
     http.post.mockReset()
+    http.postBlob.mockReset()
     http.patch.mockReset()
     http.delete.mockReset()
   })
@@ -55,6 +57,26 @@ describe("supplier api", () => {
 
     expect(http.get).toHaveBeenCalledWith(
       "/api/v1/suppliers?page=2&page_size=20&keyword=%E4%BC%97%E8%AF%9A&archive_status=DRAFT",
+    )
+  })
+
+  it("gets filtered selection IDs and exports explicitly selected IDs", async () => {
+    http.get.mockResolvedValue({ ids: ["id-1"], total: 1 })
+    http.postBlob.mockResolvedValue(new Blob())
+    const { supplierApi } = await import("./supplier")
+
+    await supplierApi.getSelectionIds({
+      keyword: "众诚",
+      archive_status: "ARCHIVED",
+      cooperation_status: "NORMAL",
+    })
+    await supplierApi.exportSelected(["id-1", "id-2"])
+
+    expect(http.get).toHaveBeenCalledWith(
+      "/api/v1/suppliers/selection-ids?keyword=%E4%BC%97%E8%AF%9A&archive_status=ARCHIVED&cooperation_status=NORMAL",
+    )
+    expect(http.postBlob).toHaveBeenCalledWith(
+      "/api/v1/suppliers/export", { supplier_ids: ["id-1", "id-2"] },
     )
   })
 

@@ -83,6 +83,8 @@ export interface SupplierListParams {
   archive_status?: ArchiveStatus
   cooperation_status?: CooperationStatus
 }
+export type SupplierExportParams = Pick<SupplierListParams, "keyword" | "archive_status" | "cooperation_status">
+export interface SupplierSelectionIdsResult { ids: string[]; total: number }
 
 export const ARCHIVE_STATUS_LABELS: Record<ArchiveStatus, string> = {
   DRAFT: "草稿",
