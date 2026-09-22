@@ -61,6 +61,31 @@ STORAGE_MODE=local
 
 Redis / MinIO 非 Sprint 0 强制依赖。
 
+## 商品导入暂存数据人工清理
+
+正常 Confirm 成功和关闭预览会立即删除对应导入暂存数据，不需要 Windows 计划任务。若浏览器崩溃、断网或进程中断导致任务遗留，管理员可仅针对明确指定且已创建至少 24 小时的 Task 执行人工清理；未确认 Task 会先标记为 `EXPIRED`。确认该 Task 不再使用后，再按外键顺序删除：`scm_product_import_row`、`scm_product_import_supplier_match`、`scm_product_import_task`。
+
+不得删除 `scm_product`、`scm_supplier`，也不得按目录批量删除 `product-images`，因为其中可能有正式商品正在使用的图片。临时源 Excel 位于受控 storage key 下，应先按 Task 记录逐项删除成功后再删除对应数据库记录。
+
+```sql
+START TRANSACTION;
+
+DELETE r
+FROM scm_product_import_row AS r
+JOIN scm_product_import_task AS t ON t.id = r.import_task_id
+WHERE t.status IN ('EXPIRED', 'CONFIRMED');
+
+DELETE m
+FROM scm_product_import_supplier_match AS m
+JOIN scm_product_import_task AS t ON t.id = m.import_task_id
+WHERE t.status IN ('EXPIRED', 'CONFIRMED');
+
+DELETE FROM scm_product_import_task
+WHERE status IN ('EXPIRED', 'CONFIRMED');
+
+COMMIT;
+```
+
 ## 局域网开发访问
 
 局域网临时演示可让前端和后端分别监听 `0.0.0.0`，并在前端 `.env` 中把

@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import cast
 from uuid import UUID
 
@@ -6,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.catalog.infrastructure.repository import (
     PRODUCT_IMPORT_PRODUCT_LOOKUP_BATCH_SIZE,
-    PRODUCT_IMPORT_TEMP_MEDIA_CLEANUP_BATCH_SIZE,
     ProductRepository,
 )
 
@@ -40,33 +38,22 @@ async def test_product_key_lookup_batches_large_composite_in_query() -> None:
     )
 
 
-async def test_temporary_media_cleanup_locks_small_batches_without_waiting() -> None:
-    class ScalarRows:
-        def all(self) -> list[object]:
-            return []
-
+async def test_import_task_staging_deletion_uses_foreign_key_safe_order() -> None:
     class Session:
         def __init__(self) -> None:
             self.statements: list[object] = []
 
-        async def scalars(self, statement: object) -> ScalarRows:
+        async def execute(self, statement: object) -> None:
             self.statements.append(statement)
-            return ScalarRows()
 
     session = Session()
     repository = ProductRepository(cast(AsyncSession, session))
+    task_id = UUID(int=1)
 
-    tasks = await repository.temporary_media_cleanup_tasks_for_update(
-        stale_before=datetime(2026, 9, 22)
-    )
+    await repository.delete_import_task_staging(task_id)
 
-    assert tasks == []
     assert len(session.statements) == 3
-    assert all(
-        getattr(statement, "_for_update_arg").skip_locked is True
-        for statement in session.statements
-    )
-    assert all(
-        getattr(statement, "_limit_clause").value == PRODUCT_IMPORT_TEMP_MEDIA_CLEANUP_BATCH_SIZE
-        for statement in session.statements
-    )
+    statements = [str(statement) for statement in session.statements]
+    assert "scm_product_import_row" in statements[0]
+    assert "scm_product_import_supplier_match" in statements[1]
+    assert "scm_product_import_task" in statements[2]

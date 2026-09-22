@@ -1,7 +1,7 @@
 # 商品大表导入
 
 状态：IMPLEMENTED / PRODUCT_MASTER_2026_43_COLUMNS / FAILED_ROWS_EXPORT
-Owner：fix/product-import-lock-contention
+Owner：codex/fix/product-import-immediate-staging-purge
 Last Updated：2026-09-22
 
 ## Database
@@ -15,7 +15,7 @@ Last Updated：2026-09-22
 ## Backend
 - [x] 严格校验批准的 43 列 2026 模板及表头顺序；仅 SKU 与供应商单元格必填，其余 41 列（包括三级类目）可为空并直接保存为 `NULL`，不绑定类目维表外键；价格仍直接按 Excel 正式值保存，不重算价格
 - [x] 预览校验 WPS/Excel `DISPIMG` 引用和内嵌媒体元数据并临时保存源 Excel；公式引用缺图、类型不支持或单图超限时该行不通过；只有 Confirm 的通过行才逐张流式提取媒体至相对本地目录，正式 Product 仅保存站内相对图片引用
-- [x] Confirm 成功后立即删除临时源 Excel；关闭预览弹窗会调用 discard 接口将任务标记为 `EXPIRED` 并立即删除，异常关闭时保留 24 小时兜底清理
+- [x] Confirm 全部成功后立即删除临时源 Excel、导入行、供应商匹配和 Task；关闭预览弹窗会删除该批未完成暂存数据。正式 Product 与正式商品图片不受影响
 - [x] 供应商仅按冻结的标准化精确匹配；支持从当前有效 Supplier Master 手动解析
 - [x] 全部行供应商为空时也会正常生成预览：供应商匹配集合在持久化前显式初始化为空列表，不触发 AsyncSession 隐式懒加载；空供应商行仍按规则标记为不通过
 - [x] `POST /api/v1/products/imports/preview`、`GET /api/v1/products/imports/{task_id}`、`GET /api/v1/products/imports/supplier-candidates`、`POST /api/v1/products/imports/{task_id}/supplier-matches/{match_id}/resolve`、`POST /api/v1/products/imports/{task_id}/confirm`
@@ -33,7 +33,7 @@ Last Updated：2026-09-22
 - [x] 工作簿预览与 Confirm 图片提取共用可配置的进程内并发闸门，默认每进程 1 个重任务
 - [x] Confirm 浏览器请求允许等待 15 分钟；正式 Product 的供应商 + SKU 查询与锁定按稳定顺序每 500 组分批执行，避免 MySQL 超大复合 `IN` 的范围优化内存告警，同时保持事务原子性和并发冲突保护
 - [x] Confirm 不再使用 50MB 全工作簿图片累计上限；每次只解码和保存一张图片，浏览器不直接支持的 TIFF/EMF/BMP/WMF 转为 PNG，单图上限由 `PRODUCT_IMPORT_MAX_IMAGE_MB` 配置（默认 64MB）
-- [x] 过期临时任务清理按状态限批（每次最多 100）并使用 `FOR UPDATE SKIP LOCKED`；已被其他事务锁定的旧任务留待后续清理，不阻塞当前预览或 Confirm
+- [x] 预览与 Confirm 不再清理任何历史 Task，避免加载历史暂存行 JSON；未收到关闭请求的异常遗留任务由业务方手工处理
 - [x] Confirm 在锁定 Task 前准备本次图片文件；锁定、重新校验通过后才将图片键写入 Staging 行并写正式 Product，冲突或失败时仅清理本次新建图片，临时源 Excel 的 24 小时保留与成功后删除规则不变
 
 ## Frontend
@@ -52,13 +52,13 @@ Last Updated：2026-09-22
 - [x] API 回归测试覆盖“所有行供应商为空”，要求返回 200 和空 `supplier_matches`，所有行保留“供应商不能为空”错误而不触发 `MissingGreenlet`
 - [x] 回归测试覆盖带 WPS `DISPIMG` 的失败行导出、43 列模板、错误说明及导出文件重新预览
 - [x] 通用前端单元测试覆盖无 Excel 导入时允许离开、处理中阻止路由及请求浏览器离开提醒
-- [x] Repository 回归测试覆盖过期清理分批上限及 `SKIP LOCKED` 锁语义；图片暂存测试覆盖“准备阶段不写回 Staging 行”
+- [x] Repository 回归测试覆盖终态 Task 按 Row、Supplier Match、Task 的外键顺序删除；图片暂存测试覆盖“准备阶段不写回 Staging 行”
 - [x] 全量后端测试、前端类型检查、单元测试与构建已执行
 
 ## Known Issues
 - 三级类目文本来自固定模板并直接保存到 Product；商品导入不再要求匹配类目维表。
 - 2026-09-10 对用户提供的 50 行模板进行了事务回滚预检：34 行通过，16 行因供应商为空或未解析而未通过；预检未保留任何暂存或正式数据。
-- 临时源 Excel 仅用于当前导入任务：Confirm 成功或用户关闭预览后立即删除；浏览器异常关闭、断网或进程中断时，超过 `PRODUCT_IMPORT_UNCONFIRMED_RETENTION_DAYS=1` 的任务在下一次导入操作中会过期并清理。已导入 Product 的图片绝不属于临时文件清理范围。
+- 临时源 Excel 仅用于当前导入任务：Confirm 全部成功或用户关闭预览后立即删除并删除该批 Staging。浏览器异常关闭、断网或进程中断时不会自动清理，业务方仅可手工清理 `EXPIRED` / `CONFIRMED` 暂存数据。已导入 Product 的图片绝不属于临时文件清理范围。
 - 本次图片流式修复不回填历史 Product，也不扫描或改写既有 `image_reference`；须重新上传并 Confirm 才应用新逻辑。
 - 升级到 `20260918_0033` 前已生成的未确认更新任务没有 Product 版本快照，必须重新上传预览后再确认。
 

@@ -130,3 +130,14 @@ Sprint 0 已稳定完成。开始新任务前请先阅读 `AGENTS.md`、
 后端健康检查：`http://localhost:8000/health/live`；就绪检查会验证 MySQL：
 `http://localhost:8000/health/ready`。默认 `TASK_MODE=inline`、
 `STORAGE_MODE=local`，不要求 Redis、MinIO 或 Docker。
+
+## 9. 商品导入异常任务人工清理
+
+正常 Confirm 成功或关闭预览会立即删除对应暂存数据，不使用 Windows 计划任务。若浏览器崩溃、断网或临时文件删除失败，管理员可在后端目录手工清理**一条指定且至少 24 小时前创建**的导入任务：
+
+```powershell
+cd apps/api-server
+.\.venv\Scripts\python -m app.jobs.purge_product_import_task --task-id <任务UUID>
+```
+
+命令只读取和删除该 Task 的临时 Excel、未导入临时图片、暂存行、供应商匹配与 Task；不会删除 `scm_product`、`scm_supplier` 或正式商品图片。若文件仍被占用或无权限删除，命令保留 Task 及精确文件 Key，修复后可重试。需要调整人工确认的最短时间时，可追加 `--minimum-age-hours 48`。
