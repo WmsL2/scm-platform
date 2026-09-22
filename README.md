@@ -141,3 +141,14 @@ cd apps/api-server
 ```
 
 命令只读取和删除该 Task 的临时 Excel、未导入临时图片、暂存行、供应商匹配与 Task；不会删除 `scm_product`、`scm_supplier` 或正式商品图片。若文件仍被占用或无权限删除，命令保留 Task 及精确文件 Key，修复后可重试。需要调整人工确认的最短时间时，可追加 `--minimum-age-hours 48`。
+
+## 10. 商品导入五小时自动清理（Windows 服务器）
+
+自动清理命令在后端目录执行，默认每轮处理最多 100 条创建超过五小时的 Task：
+
+```powershell
+cd apps/api-server
+.\.venv\Scripts\python -m app.jobs.cleanup_stale_product_imports --older-than-hours 5 --task-limit 100
+```
+
+在服务器 Windows 计划任务中每 15 分钟执行一次该命令；“起始于”必须填写服务器实际的 `apps\api-server` 绝对目录，并设置“如果任务已在运行，则不要启动新实例”。该命令不在 API 导入请求中运行，只处理 Task ID、状态、时间和精确文件 Key，不加载历史 Excel JSON。超时的 `PARTIALLY_CONFIRMED` 仅删除剩余 Staging；已写入 `scm_product` 的正式商品及正式图片不会回滚或删除。

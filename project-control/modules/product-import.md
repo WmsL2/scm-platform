@@ -1,7 +1,7 @@
 # 商品大表导入
 
 状态：IMPLEMENTED / PRODUCT_MASTER_2026_43_COLUMNS / FAILED_ROWS_EXPORT
-Owner：codex/fix/product-import-immediate-staging-purge
+Owner：codex/feat/product-import-stale-cleanup
 Last Updated：2026-09-22
 
 ## Database
@@ -34,6 +34,7 @@ Last Updated：2026-09-22
 - [x] Confirm 浏览器请求允许等待 15 分钟；正式 Product 的供应商 + SKU 查询与锁定按稳定顺序每 500 组分批执行，避免 MySQL 超大复合 `IN` 的范围优化内存告警，同时保持事务原子性和并发冲突保护
 - [x] Confirm 不再使用 50MB 全工作簿图片累计上限；每次只解码和保存一张图片，浏览器不直接支持的 TIFF/EMF/BMP/WMF 转为 PNG，单图上限由 `PRODUCT_IMPORT_MAX_IMAGE_MB` 配置（默认 64MB）
 - [x] 预览与 Confirm 不再清理任何历史 Task，避免加载历史暂存行 JSON；未收到关闭请求的异常遗留任务由业务方手工处理
+- [x] 独立清理命令默认每轮处理最多 100 个创建超过五小时的 Task；只查询 Task / 文件 Key 投影字段、使用 `SKIP LOCKED`，由 Windows 计划任务每 15 分钟调用
 - [x] Confirm 在锁定 Task 前准备本次图片文件；锁定、重新校验通过后才将图片键写入 Staging 行并写正式 Product，冲突或失败时仅清理本次新建图片，临时源 Excel 的 24 小时保留与成功后删除规则不变
 
 ## Frontend
@@ -58,7 +59,7 @@ Last Updated：2026-09-22
 ## Known Issues
 - 三级类目文本来自固定模板并直接保存到 Product；商品导入不再要求匹配类目维表。
 - 2026-09-10 对用户提供的 50 行模板进行了事务回滚预检：34 行通过，16 行因供应商为空或未解析而未通过；预检未保留任何暂存或正式数据。
-- 临时源 Excel 仅用于当前导入任务：Confirm 全部成功或用户关闭预览后立即删除并删除该批 Staging。浏览器异常关闭、断网或进程中断时不会自动清理，业务方仅可手工清理 `EXPIRED` / `CONFIRMED` 暂存数据。已导入 Product 的图片绝不属于临时文件清理范围。
+- 临时源 Excel 仅用于当前导入任务：Confirm 全部成功或用户关闭预览后立即删除并删除该批 Staging。浏览器异常关闭、断网或进程中断时，Windows 计划任务会在 Task 创建满五小时后的下一次 15 分钟扫描中清理。已导入 Product 的图片绝不属于临时文件清理范围。
 - 本次图片流式修复不回填历史 Product，也不扫描或改写既有 `image_reference`；须重新上传并 Confirm 才应用新逻辑。
 - 升级到 `20260918_0033` 前已生成的未确认更新任务没有 Product 版本快照，必须重新上传预览后再确认。
 
