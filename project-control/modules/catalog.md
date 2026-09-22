@@ -2,7 +2,7 @@
 
 状态：IMPLEMENTED / PRODUCT_MASTER_CATEGORY_DECOUPLED / PRODUCT_IMPORT_SAFETY_CONCURRENCY / TEMPORARY_SOURCE_RETENTION
 Owner：feat/product-import-confirm-reupload
-Last Updated：2026-09-21
+Last Updated：2026-09-22
 
 ## Database
 - [x] `20260909_0008` / `20260909_0009` 创建并对齐 `scm_category` 与 `scm_product`
@@ -50,6 +50,9 @@ Last Updated：2026-09-21
 - [x] 4,000+ 行导入预览使用每页 50 行的服务端分页，不再把全部行发送到浏览器
 - [x] 关闭商品导入预览会调用 discard 接口，立即删除临时源 Excel 并作废任务；未关闭但 24 小时未完成的任务由下一次导入操作兜底过期清理
 - [x] 商品列表支持正常/已停用状态筛选、停用/启用和 SKU/名称二次确认的永久删除；页面保留普通纵向滚动，左侧导航固定于视口左侧
+- [x] 商品导入确认、停用、启用和永久删除成功后统一清空跨页导出选择并重新请求列表；导入固定回第一页，当前页最后一条被移除时自动回上一页。列表请求以递增序列防止旧慢响应覆盖 mutation 后的新数据
+- [x] 商品 Confirm 成功后将正式列表刷新置于导入明细回读、提示和关闭预览之前；导入明细作为次级 UI，不得阻断首次或连续 Confirm 的正式列表 GET
+- [x] Product Import Confirm 使用 FastAPI function-scoped request transaction；HTTP 200 发送前已提交正式 Product 写入，前端首次列表 GET 可立即读取最新数据
 - [x] 统一 API 请求禁用浏览器缓存，商品导入 Confirm 后重新加载列表可立即读取最新商品数据
 - [x] 商品主数据增加“商品列表 / 操作记录”可切换页签；操作记录按商品展示图片、导入人、导入时间、最后更新人和最后更新时间，用户名从既有 `created_by` / `updated_by` 解析，未新增审计表
 - [x] 类目管理页：与 Supplier 管理页统一的 Header / Card / Table 视觉结构，保留三级路径服务端分页、新增/编辑/删除确认、模板下载和 Excel 导入结果；用户侧统一填写“采购价系数”（如 `×0.95` 表示扣点 5%），精确转换为 API / DB 的 `deduction_rate = 0.05` 或 Import `deduction_rate_percent = "5"`。UI coefficient ≠ database deduction rate；正式 Pricing 公式仍为 `agreement_purchase_price = agreement_price × (1 - deduction_rate)`。

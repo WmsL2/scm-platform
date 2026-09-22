@@ -25,6 +25,11 @@ import {
   type ProductListOptionalColumnKey,
 } from "./productListColumns"
 import {
+  acceptsProductListResponse,
+  productMutationRefreshPage,
+  type ProductMutationRefreshOptions,
+} from "./productListRefresh"
+import {
   derivedLevel1Keys,
   derivedLevel2Keys,
   updateExplicitSelection,
@@ -61,6 +66,7 @@ const products = ref<ProductListItem[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = 20
+let productListRequestSequence = 0
 const advancedVisible = ref(false)
 const directCategoryLevel1Names = ref<string[]>([])
 const directCategoryLevel2Keys = ref<string[]>([])
@@ -253,18 +259,30 @@ async function exportSelected(): Promise<void> {
 }
 
 async function loadProducts(targetPage = page.value): Promise<void> {
+  const sequence = ++productListRequestSequence
   loading.value = true
   try {
     const result = await productApi.list(productListParams(targetPage))
+    if (!acceptsProductListResponse(sequence, productListRequestSequence)) return
     products.value = result.items
     total.value = result.total
     page.value = result.page
     await restoreCurrentPageSelection()
   } catch (error) {
-    ElMessage.error(error instanceof HttpError ? error.response.message : "加载商品列表失败")
+    if (acceptsProductListResponse(sequence, productListRequestSequence)) {
+      ElMessage.error(error instanceof HttpError ? error.response.message : "加载商品列表失败")
+    }
   } finally {
-    loading.value = false
+    if (acceptsProductListResponse(sequence, productListRequestSequence)) loading.value = false
   }
+}
+
+async function refreshProductsAfterMutation(
+  options: ProductMutationRefreshOptions = {},
+): Promise<void> {
+  selectedProductIds.value.clear()
+  const targetPage = productMutationRefreshPage(page.value, products.value.length, options)
+  await loadProducts(targetPage)
 }
 
 function searchProducts(): void {
@@ -645,13 +663,9 @@ async function confirmImport(): Promise<void> {
   importNavigationLock.start()
   try {
     const result = await operationTimer.measure("商品确认导入", () => productApi.confirmImport(taskId))
-    await loadImportRows(1)
+    await refreshProductsAfterMutation({ resetToFirstPage: true })
     ElMessage.success(`本次新增 ${result.created_count} 条，更新 ${result.updated_count} 条商品`)
-    if (result.status === "CONFIRMED") {
-      importDialogVisible.value = false
-      importPreview.value = undefined
-    }
-    await loadProducts(1)
+    finishImportDialog()
   } catch (error) {
     ElMessage.error(error instanceof HttpError ? error.response.message : "确认导入失败")
   } finally {
@@ -660,10 +674,23 @@ async function confirmImport(): Promise<void> {
   }
 }
 
-async function discardImportPreview(): Promise<void> {
-  const taskId = importPreview.value?.id
+async function closeImportDialog(): Promise<void> {
+  if (importing.value) return
+  await refreshProductsAfterMutation()
+  importDialogVisible.value = false
+}
+
+function finishImportDialog(): void {
   importPreview.value = undefined
   supplierCandidates.value = []
+  for (const key of Object.keys(selections)) delete selections[key]
+  importRowFilter.value = "ALL"
+  importDialogVisible.value = false
+}
+
+async function discardImportPreview(): Promise<void> {
+  const taskId = importPreview.value?.id
+  finishImportDialog()
   if (!taskId) return
   try {
     await productApi.discardImport(taskId)
@@ -685,7 +712,9 @@ async function disableProduct(product: ProductListItem): Promise<void> {
     )
     await productApi.disable(product.id)
     ElMessage.success("商品已停用")
-    await loadProducts(products.value.length === 1 && page.value > 1 ? page.value - 1 : page.value)
+    await refreshProductsAfterMutation({
+      rowRemoved: true,
+    })
   } catch (error) {
     if (error === "cancel" || error === "close") return
     ElMessage.error(error instanceof HttpError ? error.response.message : "停用商品失败")
@@ -696,7 +725,9 @@ async function enableProduct(product: ProductListItem): Promise<void> {
   try {
     await productApi.enable(product.id)
     ElMessage.success("商品已启用")
-    await loadProducts()
+    await refreshProductsAfterMutation({
+      rowRemoved: true,
+    })
   } catch (error) {
     ElMessage.error(error instanceof HttpError ? error.response.message : "启用商品失败")
   }
@@ -716,7 +747,9 @@ async function purgeProduct(product: ProductListItem): Promise<void> {
     }
     await productApi.purge(product.id)
     ElMessage.success("商品已永久删除")
-    await loadProducts(products.value.length === 1 && page.value > 1 ? page.value - 1 : page.value)
+    await refreshProductsAfterMutation({
+      rowRemoved: true,
+    })
   } catch (error) {
     if (error === "cancel" || error === "close") return
     ElMessage.error(error instanceof HttpError ? error.response.message : "永久删除商品失败")
@@ -1045,7 +1078,7 @@ onMounted(() => { void loadProducts() })
         />
       </template>
       <template #footer>
-        <el-button :disabled="importing" @click="importDialogVisible = false">关闭</el-button>
+        <el-button :disabled="importing" @click="closeImportDialog">关闭</el-button>
         <el-button
           v-if="(importPreview?.invalid_rows ?? 0) > 0"
           type="warning"

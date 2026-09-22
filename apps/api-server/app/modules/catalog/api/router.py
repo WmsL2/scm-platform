@@ -13,8 +13,8 @@ from starlette.background import BackgroundTask
 
 from app.common.contracts import ApiResponse, AppError, PageParams, PageResult, success
 from app.core.config import get_settings
-from app.core.database import get_db_session
-from app.modules.auth.dependencies import require_permission
+from app.core.database import FunctionSessionDep, get_db_session
+from app.modules.auth.dependencies import require_permission, require_permission_before_response
 from app.modules.auth.schemas import CurrentUser
 from app.modules.catalog.application.export_service import ProductExportService
 from app.modules.catalog.application.import_service import ProductImportService
@@ -371,8 +371,8 @@ async def resolve_product_import_supplier(
 @router.post("/imports/{task_id}/confirm", response_model=ApiResponse[ProductImportConfirmResponse])
 async def confirm_product_import(
     task_id: uuid.UUID,
-    current: Annotated[CurrentUser, Depends(require_permission("product:import"))],
-    session: SessionDep,
+    current: Annotated[CurrentUser, Depends(require_permission_before_response("product:import"))],
+    session: FunctionSessionDep,
 ) -> ApiResponse[ProductImportConfirmResponse]:
     return success(await ProductImportService(session).confirm(task_id, current.user_id))
 
