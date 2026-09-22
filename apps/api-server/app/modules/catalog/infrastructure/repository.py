@@ -1,8 +1,10 @@
 import uuid
+from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from typing import List, Literal, cast
 
-from sqlalchemy import Select, and_, delete, func, or_, select, tuple_
+from sqlalchemy import Select, and_, delete, func, or_, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload, selectinload
 from sqlalchemy.sql.elements import ColumnElement
@@ -19,6 +21,14 @@ from app.modules.supplier.domain.rules import CooperationStatus
 from app.modules.supplier.infrastructure.models import Supplier
 
 PRODUCT_IMPORT_PRODUCT_LOOKUP_BATCH_SIZE = 500
+
+
+@dataclass(frozen=True)
+class ProductImportCleanupSnapshot:
+    id: uuid.UUID
+    status: str
+    created_at: datetime
+    source_file_storage_key: str | None
 
 
 class ProductRepository:
@@ -313,6 +323,89 @@ class ProductRepository:
             )
         )
         await self.session.execute(delete(ProductImportTask).where(ProductImportTask.id == task_id))
+
+    async def stale_import_task_ids(self, *, stale_before: datetime, limit: int) -> list[uuid.UUID]:
+        statement = (
+            select(ProductImportTask.id)
+            .where(ProductImportTask.created_at < stale_before)
+            .order_by(ProductImportTask.created_at, ProductImportTask.id)
+            .limit(limit)
+        )
+        return list((await self.session.scalars(statement)).all())
+
+    async def import_task_cleanup_snapshot_for_update(
+        self, task_id: uuid.UUID, *, skip_locked: bool
+    ) -> ProductImportCleanupSnapshot | None:
+        statement = (
+            select(
+                ProductImportTask.id,
+                ProductImportTask.status,
+                ProductImportTask.created_at,
+                ProductImportTask.source_file_storage_key,
+            )
+            .where(ProductImportTask.id == task_id)
+            .with_for_update(skip_locked=skip_locked)
+        )
+        row = (await self.session.execute(statement)).one_or_none()
+        if row is None:
+            return None
+        return ProductImportCleanupSnapshot(*row)
+
+    async def unimported_task_media(self, task_id: uuid.UUID) -> list[tuple[uuid.UUID, str]]:
+        statement = (
+            select(ProductImportRow.id, ProductImportRow.image_storage_key)
+            .where(
+                ProductImportRow.import_task_id == task_id,
+                ProductImportRow.is_imported.is_(False),
+                ProductImportRow.image_storage_key.is_not(None),
+            )
+            .order_by(ProductImportRow.id)
+        )
+        rows = (await self.session.execute(statement)).tuples()
+        return [(row_id, image_key) for row_id, image_key in rows if image_key is not None]
+
+    async def expire_import_task(self, task_id: uuid.UUID) -> None:
+        await self.session.execute(
+            update(ProductImportTask)
+            .where(ProductImportTask.id == task_id)
+            .values(status="EXPIRED")
+        )
+
+    async def clear_deleted_cleanup_media(
+        self,
+        *,
+        task_id: uuid.UUID,
+        source_key: str | None,
+        row_image_ids: list[uuid.UUID],
+    ) -> None:
+        if source_key is not None:
+            await self.session.execute(
+                update(ProductImportTask)
+                .where(
+                    ProductImportTask.id == task_id,
+                    ProductImportTask.source_file_storage_key == source_key,
+                )
+                .values(source_file_storage_key=None)
+            )
+        if row_image_ids:
+            await self.session.execute(
+                update(ProductImportRow)
+                .where(ProductImportRow.id.in_(row_image_ids))
+                .values(image_storage_key=None)
+            )
+
+    async def has_unimported_task_media(self, task_id: uuid.UUID) -> bool:
+        return (
+            await self.session.scalar(
+                select(ProductImportRow.id)
+                .where(
+                    ProductImportRow.import_task_id == task_id,
+                    ProductImportRow.is_imported.is_(False),
+                    ProductImportRow.image_storage_key.is_not(None),
+                )
+                .limit(1)
+            )
+        ) is not None
 
     async def products_by_supplier_sku(
         self, keys: set[tuple[uuid.UUID, str]], *, for_update: bool = False
