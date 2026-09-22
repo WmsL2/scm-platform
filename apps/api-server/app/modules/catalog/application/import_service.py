@@ -211,7 +211,6 @@ class ProductImportService:
         actor_id: uuid.UUID,
     ) -> ProductImportPreviewResponse:
         async with _workbook_semaphore():
-            await self._cleanup_expired_temp_media()
             self._validate_upload(filename, file_size)
             rows = await asyncio.to_thread(self._parse_rows, file_path)
             has_embedded_image_formula = any(
@@ -396,7 +395,6 @@ class ProductImportService:
         retired_image_keys: set[str] = set()
         completed_source: tuple[uuid.UUID, str] | None = None
         try:
-            await self._cleanup_expired_temp_media()
             task_for_image_staging = await self.repository.import_task_by_id(task_id)
             self._assert_editable_task(task_for_image_staging, actor_id)
             assert task_for_image_staging is not None
@@ -582,6 +580,8 @@ class ProductImportService:
             raise
         if completed_source is not None:
             await self._delete_completed_source(*completed_source)
+        if response.status == "CONFIRMED":
+            await self._delete_task_staging_if_media_cleared(task_id, {"CONFIRMED"})
         for key in retired_image_keys:
             try:
                 await self.storage.delete(key)
@@ -613,7 +613,40 @@ class ProductImportService:
             task.status = "EXPIRED"
             response = ProductImportDiscardResponse(id=task.id, status="EXPIRED")
         await self._delete_task_temp_media(task_id, source_key, image_keys)
+        await self._delete_task_staging_if_media_cleared(task_id, {"EXPIRED"})
         return response
+
+    async def purge_abandoned_task(
+        self, task_id: uuid.UUID, *, minimum_age_hours: int = 24
+    ) -> bool:
+        """Manually purge one abandoned import without scanning other import tasks."""
+        if minimum_age_hours <= 0:
+            raise ValueError("minimum_age_hours must be positive")
+        source_key: str | None = None
+        image_keys: list[str] = []
+        async with transaction_scope(self.session):
+            task = await self.repository.import_task_by_id_for_update(task_id)
+            if task is None:
+                raise AppError("PRODUCT_IMPORT_TASK_NOT_FOUND", "Import task not found", 404)
+            oldest_allowed = datetime.now() - timedelta(hours=minimum_age_hours)
+            if task.created_at > oldest_allowed:
+                raise AppError(
+                    "PRODUCT_IMPORT_TASK_TOO_RECENT",
+                    f"Only tasks at least {minimum_age_hours} hours old may be purged manually",
+                    409,
+                )
+            source_key = task.source_file_storage_key
+            if task.status != "CONFIRMED":
+                image_keys = [
+                    row.image_storage_key
+                    for row in task.rows
+                    if row.image_storage_key is not None and not row.is_imported
+                ]
+                task.status = "EXPIRED"
+        await self._delete_task_temp_media(task_id, source_key, image_keys)
+        return await self._delete_task_staging_if_media_cleared(
+            task_id, {"EXPIRED", "CONFIRMED"}
+        )
 
     def _validate_upload(self, filename: str, file_size: int) -> None:
         if not filename.lower().endswith(".xlsx"):
@@ -1118,40 +1151,6 @@ class ProductImportService:
             finally:
                 source_path.unlink(missing_ok=True)
 
-    async def _cleanup_expired_temp_media(self) -> None:
-        cutoff = datetime.now() - timedelta(
-            days=get_settings().product_import_unconfirmed_retention_days
-        )
-        async with transaction_scope(self.session):
-            tasks = await self.repository.temporary_media_cleanup_tasks_for_update(
-                stale_before=cutoff
-            )
-            cleanup_targets: list[tuple[uuid.UUID, str | None, list[str]]] = []
-            for task in tasks:
-                if task.status in {
-                    "VALIDATED",
-                    "NEEDS_RESOLUTION",
-                    "READY_TO_CONFIRM",
-                    "PARTIALLY_CONFIRMED",
-                }:
-                    task.status = "EXPIRED"
-                if task.status == "EXPIRED":
-                    cleanup_targets.append(
-                        (
-                            task.id,
-                            task.source_file_storage_key,
-                            [
-                                row.image_storage_key
-                                for row in task.rows
-                                if row.image_storage_key is not None and not row.is_imported
-                            ],
-                        )
-                    )
-                elif task.status == "CONFIRMED" and task.source_file_storage_key:
-                    cleanup_targets.append((task.id, task.source_file_storage_key, []))
-        for task_id, source_key, image_keys in cleanup_targets:
-            await self._delete_task_temp_media(task_id, source_key, image_keys)
-
     async def _delete_completed_source(self, task_id: uuid.UUID, source_key: str) -> None:
         await self._delete_task_temp_media(task_id, source_key, [])
 
@@ -1184,6 +1183,23 @@ class ProductImportService:
                 for row in task.rows:
                     if not row.is_imported and row.image_storage_key in deleted_images:
                         row.image_storage_key = None
+
+    async def _delete_task_staging_if_media_cleared(
+        self, task_id: uuid.UUID, permitted_statuses: set[str]
+    ) -> bool:
+        """Drop a terminal staging task only after its retryable temporary media is gone."""
+        async with transaction_scope(self.session):
+            task = await self.repository.import_task_by_id_for_update(task_id)
+            if task is None or task.status not in permitted_statuses:
+                return False
+            if task.source_file_storage_key is not None:
+                return False
+            if task.status == "EXPIRED" and any(
+                row.image_storage_key is not None and not row.is_imported for row in task.rows
+            ):
+                return False
+            await self.repository.delete_import_task_staging(task_id)
+            return True
 
     async def _stage_images(
         self,

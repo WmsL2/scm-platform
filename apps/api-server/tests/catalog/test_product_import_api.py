@@ -507,9 +507,15 @@ async def test_product_import_saves_required_category_text_without_category_bind
             updated_preview = await client.get(
                 f"/api/v1/products/imports/{duplicate_data['id']}", headers=headers
             )
-            assert updated_preview.status_code == 200
-            assert updated_preview.json()["data"]["rows"][0]["is_imported"] is True
-            assert updated_preview.json()["data"]["rows"][0]["write_action"] == "UPDATE"
+            assert updated_preview.status_code == 404
+
+            async with SessionLocal() as session:
+                updated_product = await session.scalar(
+                    select(Product).where(Product.created_by == user_id)
+                )
+                assert updated_product is not None
+                assert updated_product.product_name == "更新后商品"
+                assert updated_product.cost_price == Decimal("222")
 
             duplicate_rows_preview = await client.post(
                 "/api/v1/products/imports/preview",
@@ -909,7 +915,17 @@ async def test_product_import_defers_formula_image_storage_until_confirm() -> No
 
             async with SessionLocal() as session:
                 task = await session.get(ProductImportTask, data["id"])
-                assert task is not None and task.source_file_storage_key is None
+                row = await session.scalar(
+                    select(ProductImportRow).where(ProductImportRow.import_task_id == data["id"])
+                )
+                match = await session.scalar(
+                    select(ProductImportSupplierMatch).where(
+                        ProductImportSupplierMatch.import_task_id == data["id"]
+                    )
+                )
+                assert task is None
+                assert row is None
+                assert match is None
     finally:
         await _cleanup_import_data(supplier_id, user_id, (category_id,))
         await _cleanup_import_user(user_id)
@@ -948,12 +964,51 @@ async def test_product_import_discard_deletes_temporary_workbook() -> None:
 
             async with SessionLocal() as session:
                 task = await session.get(ProductImportTask, task_id)
-                assert task is not None
-                assert task.status == "EXPIRED"
-                assert task.source_file_storage_key is None
+                row = await session.scalar(
+                    select(ProductImportRow).where(ProductImportRow.import_task_id == task_id)
+                )
+                match = await session.scalar(
+                    select(ProductImportSupplierMatch).where(
+                        ProductImportSupplierMatch.import_task_id == task_id
+                    )
+                )
+                assert task is None
+                assert row is None
+                assert match is None
     finally:
         await _cleanup_import_data(supplier_id, user_id, (category_id,))
         await _cleanup_import_user(user_id)
+
+
+async def test_manual_purge_deletes_one_abandoned_import_task() -> None:
+    task_id = uuid.uuid4()
+    task = ProductImportTask(
+        id=task_id,
+        original_filename="abandoned-products.xlsx",
+        status="VALIDATED",
+        total_rows=0,
+        valid_rows=0,
+        update_rows=0,
+        invalid_rows=0,
+        imported_rows=0,
+        created_by=uuid.uuid4(),
+        created_at=datetime.now() - timedelta(hours=25),
+    )
+    async with SessionLocal() as session:
+        session.add(task)
+        await session.commit()
+    try:
+        async with SessionLocal() as session:
+            deleted = await ProductImportService(session).purge_abandoned_task(task_id)
+        assert deleted is True
+        async with SessionLocal() as session:
+            assert await session.get(ProductImportTask, task_id) is None
+    finally:
+        async with SessionLocal() as session:
+            existing = await session.get(ProductImportTask, task_id)
+            if existing is not None:
+                await session.delete(existing)
+                await session.commit()
 
 
 async def test_product_import_rejects_formula_when_embedded_image_is_missing() -> None:
