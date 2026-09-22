@@ -54,6 +54,24 @@ class SupplierRepository:
             ),
         )
 
+    async def by_id_for_update(self, supplier_id: uuid.UUID) -> Supplier | None:
+        return cast(
+            Supplier | None,
+            await self.session.scalar(
+                select(Supplier)
+                .options(selectinload(Supplier.contacts))
+                .where(Supplier.id == supplier_id)
+                .with_for_update()
+            ),
+        )
+
+    async def supplier_name_records(self) -> list[tuple[uuid.UUID, str, bool]]:
+        """Only load the columns needed for supplier-master duplicate detection."""
+        result = await self.session.execute(
+            select(Supplier.id, Supplier.supplier_name, Supplier.is_deleted)
+        )
+        return list(result.tuples().all())
+
     async def active_supplier_names(self, supplier_names: set[str]) -> set[str]:
         if not supplier_names:
             return set()
@@ -136,9 +154,11 @@ class SupplierRepository:
             count_statement = count_statement.where(
                 Supplier.cooperation_status == cooperation_status
             )
-        statement = statement.order_by(Supplier.created_at.desc(), Supplier.id.desc()).offset(
-            (page_params.page - 1) * page_params.page_size
-        ).limit(page_params.page_size)
+        statement = (
+            statement.order_by(Supplier.created_at.desc(), Supplier.id.desc())
+            .offset((page_params.page - 1) * page_params.page_size)
+            .limit(page_params.page_size)
+        )
         suppliers = list((await self.session.scalars(statement)).all())
         total = cast(int, await self.session.scalar(count_statement))
         return suppliers, total
