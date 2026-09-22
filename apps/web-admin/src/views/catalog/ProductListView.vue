@@ -182,6 +182,7 @@ const syncingSelection = ref(false)
 const selectingAll = ref(false)
 const exportDialogVisible = ref(false)
 const exporting = ref(false)
+let exportAbortController: AbortController | undefined
 const exportColumnStorageKey = "scm.product-export.columns.v1"
 function initialExportColumns(): ProductExportColumnKey[] {
   return restoreExportColumns(localStorage.getItem(exportColumnStorageKey))
@@ -247,15 +248,44 @@ async function clearAllFilteredProductSelection(): Promise<void> {
   await restoreCurrentPageSelection()
 }
 async function exportSelected(): Promise<void> {
+  const controller = new AbortController()
+  exportAbortController = controller
+  const productIds = [...selectedProductIds.value]
+  const columns = [...exportColumns.value]
   exporting.value = true
   try {
-    const blob = await operationTimer.measure("商品导出", () => productApi.exportSelected([...selectedProductIds.value], exportColumns.value))
+    const blob = await operationTimer.measure("商品导出", () => productApi.exportSelected(productIds, columns, controller.signal))
+    if (controller.signal.aborted) return
     const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "商品主数据导出.xlsx"; link.click(); URL.revokeObjectURL(link.href)
     localStorage.setItem(exportColumnStorageKey, JSON.stringify(exportColumns.value))
     exportDialogVisible.value = false
     ElMessage.success("商品导出成功，文件已开始下载")
-  } catch (error) { ElMessage.error(error instanceof HttpError ? error.response.message : "导出失败") }
-  finally { exporting.value = false }
+  } catch (error) {
+    if (isAbortError(error)) ElMessage.info("已取消商品导出")
+    else ElMessage.error(error instanceof HttpError ? error.response.message : "导出失败")
+  } finally {
+    if (exportAbortController === controller) {
+      exportAbortController = undefined
+      exporting.value = false
+    }
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError"
+}
+
+function cancelProductExport(): void {
+  if (exporting.value) {
+    exportAbortController?.abort()
+    operationTimer.cancel()
+  }
+  exportDialogVisible.value = false
+}
+
+function handleExportDialogBeforeClose(done: () => void): void {
+  cancelProductExport()
+  done()
 }
 
 async function loadProducts(targetPage = page.value): Promise<void> {
@@ -987,7 +1017,7 @@ onMounted(() => { void loadProducts() })
       </div>
     </el-card>
 
-    <el-dialog v-model="exportDialogVisible" title="选择导出字段" width="680px">
+    <el-dialog v-model="exportDialogVisible" title="选择导出字段" width="680px" :before-close="handleExportDialogBeforeClose">
       <div class="table-heading">
         <p>已选择 {{ selectedProductIds.size }} 条商品</p>
         <div class="table-actions">
@@ -998,7 +1028,7 @@ onMounted(() => { void loadProducts() })
       <el-checkbox-group v-model="exportColumns" class="column-picker">
         <el-checkbox v-for="column in PRODUCT_EXPORT_COLUMN_DEFINITIONS" :key="column.key" :label="column.key">{{ column.label }}</el-checkbox>
       </el-checkbox-group>
-      <template #footer><el-button @click="exportDialogVisible = false">取消</el-button><el-button type="primary" :disabled="exportColumns.length === 0" :loading="exporting" @click="exportSelected">确认导出</el-button><OperationDuration v-if="operationTimer.state.label === '商品导出'" :timing="operationTimer.state" /></template>
+      <template #footer><el-button @click="cancelProductExport">取消</el-button><el-button type="primary" :disabled="exportColumns.length === 0" :loading="exporting" @click="exportSelected">确认导出</el-button><OperationDuration v-if="operationTimer.state.label === '商品导出'" :timing="operationTimer.state" /></template>
     </el-dialog>
 
     <el-dialog

@@ -21,7 +21,7 @@ Last Updated：2026-09-22
 - [x] 导入确认采用原子持久化：锁定并直接读取批次行，Supplier 写入 `flush` 成功且数量一致后才标记 `CONFIRMED`；异常整批回滚
 
 ## Frontend
-- [x] Supplier Excel Export：支持单选、多选与跨页回显；表头 checkbox 仅选择当前页，“全选全部供应商（N）”经当前筛选条件的 ID 集合选择全部。导出仅提交 selected supplier_ids，使用 `supplier:list`，不新增权限
+- [x] Supplier Excel Export：支持单选、多选与跨页回显；表头 checkbox 仅选择当前页，“全选全部供应商（N）”经当前筛选条件的 ID 集合选择全部。导出仅提交 selected supplier_ids，使用 `supplier:list`，不新增权限；导出复用 Supplier Import 下载模板，仅输出供应商名称、主营品牌、主要优势、联系人、联系电话，多联系人以中文分号拼接，不输出编码、状态或审计字段
 - [x] 供应商列表：真实分页、关键字/双状态筛选、详情跳转
 - [x] 新增、详情、编辑：真实 Supplier API 调用、归档状态选择与错误反馈；新增表单仅校验供应商名称，主营品牌和主要优势明确标记为选填
 - [x] 多联系人表单：符合 `contacts` 请求契约；联系人可空且每条至少姓名或电话

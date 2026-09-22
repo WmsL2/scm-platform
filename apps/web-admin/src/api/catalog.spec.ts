@@ -79,12 +79,13 @@ describe("product import api", () => {
     http.postBlob.mockResolvedValue(new Blob(["export"]))
     const { productApi } = await import("./catalog")
 
-    await productApi.exportSelected(["product-1"], ["sku", "product_name"])
+    const controller = new AbortController()
+    await productApi.exportSelected(["product-1"], ["sku", "product_name"], controller.signal)
 
     expect(http.postBlob).toHaveBeenCalledWith(
       "/api/v1/products/export",
       { product_ids: ["product-1"], columns: ["sku", "product_name"] },
-      { timeoutMs: 300_000 },
+      { timeoutMs: 300_000, signal: controller.signal },
     )
   })
 
