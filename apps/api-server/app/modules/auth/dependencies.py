@@ -6,7 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError
-from app.core.database import get_db_session
+from app.core.database import FunctionSessionDep, get_db_session
 from app.modules.auth.repository import AuthSessionRepository
 from app.modules.auth.schemas import CurrentUser
 from app.modules.auth.security import decode_token
@@ -19,6 +19,19 @@ bearer = HTTPBearer(auto_error=False)
 async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> CurrentUser:
+    return await _current_user(credentials, session)
+
+
+async def get_current_user_before_response(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+    session: FunctionSessionDep,
+) -> CurrentUser:
+    return await _current_user(credentials, session)
+
+
+async def _current_user(
+    credentials: HTTPAuthorizationCredentials | None, session: AsyncSession,
 ) -> CurrentUser:
     if credentials is None:
         raise AppError("AUTH_UNAUTHORIZED", "Authentication required", 401)
@@ -52,6 +65,17 @@ async def get_current_user(
 
 def require_permission(permission_code: str) -> Callable[..., object]:
     async def dependency(current: Annotated[CurrentUser, Depends(get_current_user)]) -> CurrentUser:
+        if permission_code not in current.permissions:
+            raise AppError("AUTH_FORBIDDEN", "Permission denied", 403)
+        return current
+
+    return dependency
+
+
+def require_permission_before_response(permission_code: str) -> Callable[..., object]:
+    async def dependency(
+        current: Annotated[CurrentUser, Depends(get_current_user_before_response)],
+    ) -> CurrentUser:
         if permission_code not in current.permissions:
             raise AppError("AUTH_FORBIDDEN", "Permission denied", 403)
         return current

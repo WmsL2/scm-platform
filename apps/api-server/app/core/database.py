@@ -1,5 +1,7 @@
 from collections.abc import AsyncIterator
+from typing import Annotated
 
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
@@ -12,6 +14,9 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
     async with SessionLocal() as session:
         async with session.begin():
             yield session
+
+
+FunctionSessionDep = Annotated[AsyncSession, Depends(get_db_session, scope="function")]
 
 
 async def close_database() -> None:
