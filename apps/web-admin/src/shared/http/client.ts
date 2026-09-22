@@ -31,6 +31,15 @@ export interface RequestOptions {
   headers?: HeadersInit
   requestId?: string
   timeoutMs?: number
+  signal?: AbortSignal
+}
+
+function linkAbortSignal(controller: AbortController, signal?: AbortSignal): () => void {
+  if (!signal) return () => undefined
+  const abort = () => controller.abort()
+  if (signal.aborted) abort()
+  else signal.addEventListener("abort", abort, { once: true })
+  return () => signal.removeEventListener("abort", abort)
 }
 
 function createRequestId(): string {
@@ -56,6 +65,7 @@ export class HttpClient {
     const timeout = setTimeout(
       () => controller.abort(), requestOptions.timeoutMs ?? this.options.timeoutMs ?? 10_000,
     )
+    const unlinkAbortSignal = linkAbortSignal(controller, requestOptions.signal)
     try {
       const isFormData = body instanceof FormData
       const authorization = requestOptions.authenticated === false
@@ -113,6 +123,7 @@ export class HttpClient {
       return envelope.data
     } finally {
       clearTimeout(timeout)
+      unlinkAbortSignal()
     }
   }
 
@@ -131,6 +142,7 @@ export class HttpClient {
     const timeout = setTimeout(
       () => controller.abort(), requestOptions.timeoutMs ?? this.options.timeoutMs ?? 10_000,
     )
+    const unlinkAbortSignal = linkAbortSignal(controller, requestOptions.signal)
     try {
       const authorization = requestOptions.authenticated === false
         ? undefined
@@ -174,6 +186,7 @@ export class HttpClient {
       return response.blob()
     } finally {
       clearTimeout(timeout)
+      unlinkAbortSignal()
     }
   }
 

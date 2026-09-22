@@ -1,5 +1,4 @@
 import uuid
-from datetime import datetime
 from io import BytesIO
 
 import pytest
@@ -1159,32 +1158,47 @@ async def test_supplier_excel_export_contract_and_filters() -> None:
             assert ".xlsx" in response.headers["content-disposition"]
             workbook = load_workbook(BytesIO(response.content))
             sheet = workbook.active
-            assert sheet.title == "供应商"
+            assert sheet.title == "供应商导入"
             assert tuple(cell.value for cell in sheet[1]) == (
-                "供应商编码", "供应商名称", "主营品牌", "主要优势", "联系人", "联系电话",
-                "归档状态", "合作状态", "创建时间", "更新时间",
+                "供应商名称", "主营品牌", "主要优势", "联系人", "联系电话",
             )
+            assert sheet.max_column == 5
+            assert sheet.freeze_panes == "A2"
+            assert sheet.auto_filter.ref == f"A1:E{sheet.max_row}"
             exported_rows = list(sheet.iter_rows(min_row=2, values_only=False))
-            test_rows = [row for row in exported_rows if suffix in row[1].value]
+            test_rows = [
+                row
+                for row in exported_rows
+                if isinstance(row[0].value, str) and suffix in row[0].value
+            ]
             assert len(test_rows) == 25  # 26 created records less the logical deletion.
             target_row = next(
-                row for row in exported_rows if row[1].value == target["supplier_name"]
+                row for row in exported_rows if row[0].value == target["supplier_name"]
             )
-            assert isinstance(target_row[0].value, str)
-            assert target_row[0].value.startswith("SUP")
-            exported_contacts = target_row[4].value.split("；")
-            exported_phones = target_row[5].value.split("；")
+            assert target_row[1].value == f"品牌-{suffix}"
+            assert target_row[2].value == "导出专项测试"
+            exported_contacts = target_row[3].value.split("；")
+            exported_phones = target_row[4].value.split("；")
             assert set(exported_contacts) == {"联系人 A", "联系人 B"}
             assert dict(zip(exported_contacts, exported_phones, strict=True)) == {
                 "联系人 A": "0013800000000",
                 "联系人 B": "0023800000000",
             }
-            assert isinstance(target_row[5].value, str)
-            assert target_row[6].value == "已归档"
-            assert target_row[7].value == "正常合作"
-            assert isinstance(target_row[8].value, datetime)
-            assert isinstance(target_row[9].value, datetime)
-            assert all(row[1].value != deleted["supplier_name"] for row in exported_rows)
+            assert isinstance(target_row[4].value, str)
+            assert all(row[0].value != deleted["supplier_name"] for row in exported_rows)
+
+            template = await client.get("/api/v1/suppliers/imports/template", headers=headers)
+            template_sheet = load_workbook(BytesIO(template.content)).active
+            assert tuple(cell.value for cell in template_sheet[1]) == tuple(
+                cell.value for cell in sheet[1]
+            )
+            assert template_sheet.title == sheet.title
+            assert template_sheet.freeze_panes == sheet.freeze_panes
+            template_widths = tuple(
+                template_sheet.column_dimensions[column].width for column in "ABCDE"
+            )
+            export_widths = tuple(sheet.column_dimensions[column].width for column in "ABCDE")
+            assert template_widths == export_widths
 
             archived = await client.get(
                 "/api/v1/suppliers/selection-ids?archive_status=ARCHIVED", headers=headers
@@ -1194,7 +1208,7 @@ async def test_supplier_excel_export_contract_and_filters() -> None:
                 "/api/v1/suppliers/export", headers=headers, json={"supplier_ids": archived_ids}
             )
             archived_sheet = load_workbook(BytesIO(archived_export.content)).active
-            assert all(row[6].value == "已归档" for row in archived_sheet.iter_rows(min_row=2))
+            assert archived_sheet.max_column == 5
             normal = await client.get(
                 "/api/v1/suppliers/selection-ids?cooperation_status=NORMAL", headers=headers
             )
@@ -1204,7 +1218,7 @@ async def test_supplier_excel_export_contract_and_filters() -> None:
                 json={"supplier_ids": normal.json()["data"]["ids"]},
             )
             normal_sheet = load_workbook(BytesIO(normal_export.content)).active
-            assert all(row[7].value == "正常合作" for row in normal_sheet.iter_rows(min_row=2))
+            assert normal_sheet.max_column == 5
 
             combined = await client.get(
                 f"/api/v1/suppliers/selection-ids?keyword={target['supplier_name']}&archive_status=ARCHIVED&cooperation_status=NORMAL",
@@ -1216,7 +1230,7 @@ async def test_supplier_excel_export_contract_and_filters() -> None:
                 json={"supplier_ids": combined.json()["data"]["ids"]},
             )
             combined_sheet = load_workbook(BytesIO(combined_export.content)).active
-            assert [row[1].value for row in combined_sheet.iter_rows(min_row=2)] == [
+            assert [row[0].value for row in combined_sheet.iter_rows(min_row=2)] == [
                 target["supplier_name"]
             ]
             empty = await client.get(

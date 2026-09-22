@@ -1,6 +1,6 @@
 import { onBeforeUnmount, reactive } from "vue"
 
-export type OperationPhase = "idle" | "running" | "done" | "failed"
+export type OperationPhase = "idle" | "running" | "done" | "failed" | "cancelled"
 
 export interface OperationTiming {
   label: string
@@ -31,12 +31,17 @@ export function useOperationTimer() {
     interval = setInterval(tick, 250)
   }
 
-  function finish(phase: "done" | "failed" = "done"): void {
+  function finish(phase: "done" | "failed" | "cancelled" = "done"): void {
     if (state.phase !== "running") return
     tick()
     if (interval !== undefined) clearInterval(interval)
     interval = undefined
     state.phase = phase
+  }
+
+  function cancel(): void {
+    if (state.phase === "running") finish("cancelled")
+    else if (state.phase !== "idle") state.phase = "cancelled"
   }
 
   async function measure<T>(label: string, action: () => Promise<T>): Promise<T> {
@@ -55,7 +60,7 @@ export function useOperationTimer() {
     if (interval !== undefined) clearInterval(interval)
   })
 
-  return { state, measure }
+  return { state, measure, cancel }
 }
 
 export type OperationTimer = ReturnType<typeof useOperationTimer>

@@ -6,6 +6,7 @@ const props = defineProps<{ timing: OperationTiming }>()
 const description = computed(() => {
   if (props.timing.phase === "running") return "进行中，已耗时"
   if (props.timing.phase === "failed") return "失败，耗时"
+  if (props.timing.phase === "cancelled") return "已取消，耗时"
   return "耗时"
 })
 </script>

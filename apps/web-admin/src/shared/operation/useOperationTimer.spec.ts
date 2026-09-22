@@ -43,6 +43,16 @@ describe("import and export operation timing", () => {
     app.unmount()
   })
 
+  it("can mark an active operation as cancelled", () => {
+    let timer!: ReturnType<typeof useOperationTimer>
+    const app = createApp({ setup() { timer = useOperationTimer(); return () => h("div") } })
+    app.mount(document.createElement("div"))
+    void timer.measure("商品导出", () => new Promise<void>(() => undefined))
+    timer.cancel()
+    expect(timer.state).toMatchObject({ label: "商品导出", phase: "cancelled" })
+    app.unmount()
+  })
+
   it("covers imports, exports and bid file downloads, but not template downloads", () => {
     for (const [source, labels] of [
       [productListSource, ["商品导入预览", "商品确认导入", "商品导出", "不通过行导出"]],

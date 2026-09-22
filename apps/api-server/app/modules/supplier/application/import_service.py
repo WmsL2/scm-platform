@@ -2,13 +2,15 @@ import uuid
 from datetime import datetime
 from io import BytesIO
 
-from openpyxl import Workbook, load_workbook
-from openpyxl.comments import Comment
-from openpyxl.styles import Font, PatternFill
+from openpyxl import load_workbook
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError
 from app.core.transaction import transaction_scope
+from app.modules.supplier.application.excel_template import (
+    SUPPLIER_EXCEL_HEADERS,
+    create_supplier_excel_workbook,
+)
 from app.modules.supplier.domain.matching import supplier_name_identity_key
 from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
 from app.modules.supplier.infrastructure.models import (
@@ -25,7 +27,7 @@ from app.modules.supplier.schemas import (
 )
 from app.modules.system.service import BusinessSequenceService
 
-IMPORT_HEADERS = ("供应商名称", "主营品牌", "主要优势", "联系人", "联系电话")
+IMPORT_HEADERS = SUPPLIER_EXCEL_HEADERS
 MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024
 MAX_IMPORT_ROWS = 1_000
 
@@ -36,22 +38,9 @@ class SupplierImportService:
         self.repository = SupplierRepository(session)
 
     def build_template(self) -> bytes:
-        workbook = Workbook()
-        worksheet = workbook.active
-        assert worksheet is not None
-        worksheet.title = "供应商导入"
-        worksheet.append(IMPORT_HEADERS)
-        worksheet.freeze_panes = "A2"
-        worksheet.auto_filter.ref = "A1:E1"
-        for column, width in zip(("A", "B", "C", "D", "E"), (28, 30, 40, 20, 22), strict=True):
-            worksheet.column_dimensions[column].width = width
-        for cell in worksheet[1]:
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = PatternFill("solid", fgColor="1F4E78")
-        worksheet["A1"].comment = Comment(
-            "必填：供应商名称。主营品牌、主要优势、联系人和联系电话均可留空。", "系统"
+        workbook, _ = create_supplier_excel_workbook(
+            include_import_comment=True, include_phone_format_seed=True
         )
-        worksheet["E2"].number_format = "@"
         output = BytesIO()
         workbook.save(output)
         return output.getvalue()

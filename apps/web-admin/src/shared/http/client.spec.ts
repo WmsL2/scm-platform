@@ -165,4 +165,22 @@ describe("HttpClient", () => {
     expect(retried).toMatchObject({ method: "POST", body: JSON.stringify({ product_ids: ["product-a"], columns: ["sku", "cost_price"] }) })
     expect(retried.headers).toMatchObject({ Authorization: "Bearer refreshed-token", "Content-Type": "application/json", Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "X-Request-ID": "export-request-1" })
   })
+
+  it("aborts JSON and Blob requests when an external signal is cancelled", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init: RequestInit) => new Promise((_, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true })
+    }))
+    vi.stubGlobal("fetch", fetchMock)
+    const client = new HttpClient()
+    const jsonController = new AbortController()
+    const jsonRequest = client.get("/slow-json", { signal: jsonController.signal })
+    jsonController.abort()
+    await expect(jsonRequest).rejects.toMatchObject({ name: "AbortError" })
+
+    const blobController = new AbortController()
+    const blobRequest = client.postBlob("/slow-blob", { id: "export" }, { signal: blobController.signal })
+    blobController.abort()
+    await expect(blobRequest).rejects.toMatchObject({ name: "AbortError" })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
 })
