@@ -1,6 +1,7 @@
 import { ElLoading, ElMessage } from "element-plus"
-import { onBeforeUnmount, onMounted, ref } from "vue"
+import { onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { onBeforeRouteLeave } from "vue-router"
+import { formatOperationSeconds, type OperationTimer } from "../operation/useOperationTimer"
 
 export const EXCEL_IMPORT_LOCK_MESSAGE =
   "Excel 正在上传并处理，请勿切换页面、刷新或关闭浏览器。大文件处理可能需要数分钟。"
@@ -19,7 +20,7 @@ export function protectExcelImportBeforeUnload(
   return true
 }
 
-export function useExcelImportNavigationLock() {
+export function useExcelImportNavigationLock(timer?: OperationTimer) {
   const inProgress = ref(false)
   let loading: ReturnType<typeof ElLoading.service> | null = null
 
@@ -33,6 +34,12 @@ export function useExcelImportNavigationLock() {
       background: "rgba(15, 23, 42, 0.72)",
     })
   }
+
+  watch(() => timer?.state.seconds, () => {
+    if (loading && timer?.state.phase === "running") {
+      loading.setText(`${EXCEL_IMPORT_LOCK_MESSAGE} 已耗时 ${formatOperationSeconds(timer.state.seconds)}`)
+    }
+  })
 
   function stop(): void {
     loading?.close()

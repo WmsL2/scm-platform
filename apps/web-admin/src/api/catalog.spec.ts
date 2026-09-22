@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-const http = vi.hoisted(() => ({ get: vi.fn(), getBlob: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() }))
+const http = vi.hoisted(() => ({ get: vi.fn(), getBlob: vi.fn(), post: vi.fn(), postBlob: vi.fn(), patch: vi.fn(), delete: vi.fn() }))
 vi.mock("../shared/http/runtime", () => ({ http }))
 
 describe("product import api", () => {
@@ -8,6 +8,7 @@ describe("product import api", () => {
     http.get.mockReset()
     http.getBlob.mockReset()
     http.post.mockReset()
+    http.postBlob.mockReset()
     http.patch.mockReset()
     http.delete.mockReset()
   })
@@ -71,6 +72,19 @@ describe("product import api", () => {
 
     expect(http.post).toHaveBeenCalledWith(
       "/api/v1/products/imports/task-1/discard",
+    )
+  })
+
+  it("allows five minutes for a selected-product Excel export", async () => {
+    http.postBlob.mockResolvedValue(new Blob(["export"]))
+    const { productApi } = await import("./catalog")
+
+    await productApi.exportSelected(["product-1"], ["sku", "product_name"])
+
+    expect(http.postBlob).toHaveBeenCalledWith(
+      "/api/v1/products/export",
+      { product_ids: ["product-1"], columns: ["sku", "product_name"] },
+      { timeoutMs: 300_000 },
     )
   })
 

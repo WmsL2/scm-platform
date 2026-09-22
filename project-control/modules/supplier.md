@@ -26,6 +26,7 @@ Last Updated：2026-09-21
 - [x] 提交归档、归档、停止合作、黑名单、恢复合作、移出黑名单：按实时权限和状态机显示，全部合作状态操作收集原因
 - [x] 按权限显示删除按钮；下载模板、上传校验结果、归档状态选择与显式确认；错误文件保留逐行提示供修正后重传
 - [x] Excel 上传预览和 Confirm 均接入通用全屏导入锁，处理中阻止站内跳转，并对刷新或关闭页面触发浏览器原生提醒
+- [x] 供应商 Excel 预览与 Confirm 显示本次浏览器请求耗时，模板下载不计时；导入遮罩同步显示已耗时，结束后保留结果（无 API 或权限变更）
 
 ## Permissions
 - [x] `supplier:list/detail/create/update/submit/archive/stop/blacklist/resume/unblacklist/delete` 已入权限目录并由后端强制校验

@@ -14,6 +14,7 @@ Last Updated：2026-09-16
 
 ## Frontend
 - [x] 文件版本、下载、导出、标记投标及结果操作界面已实现；状态：IMPLEMENTED / TEMPLATE_DATA_GATE_BLOCKED。
+- [x] 投标项目 Excel 上传建项、报价文件导出及已有文件下载显示本次浏览器请求耗时；上传建项的导入遮罩同步显示已耗时。
 
 ## Permissions
 - [x] `bid:export`、`bid:file:download`、`bid:submit` 已创建。

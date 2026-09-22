@@ -7,6 +7,8 @@ import { useRoute, useRouter } from "vue-router"
 import { productApi } from "../../api/catalog"
 import { HttpError } from "../../shared/http"
 import { useExcelImportNavigationLock } from "../../shared/import/excelImportNavigationLock"
+import OperationDuration from "../../shared/operation/OperationDuration.vue"
+import { useOperationTimer } from "../../shared/operation/useOperationTimer"
 import { useAuthStore } from "../../stores/auth"
 import { PRODUCT_EXPORT_COLUMN_DEFINITIONS, PRODUCT_EXPORT_COLUMNS } from "../../types/catalog"
 import {
@@ -158,7 +160,8 @@ const categorySelections = computed(() => [
 ])
 const importInput = ref<HTMLInputElement>()
 const importing = ref(false)
-const importNavigationLock = useExcelImportNavigationLock()
+const operationTimer = useOperationTimer()
+const importNavigationLock = useExcelImportNavigationLock(operationTimer)
 const importDialogVisible = ref(false)
 const importPreview = ref<ProductImportPreview>()
 const supplierCandidates = ref<ProductImportSupplierCandidate[]>([])
@@ -240,10 +243,11 @@ async function clearAllFilteredProductSelection(): Promise<void> {
 async function exportSelected(): Promise<void> {
   exporting.value = true
   try {
-    const blob = await productApi.exportSelected([...selectedProductIds.value], exportColumns.value)
+    const blob = await operationTimer.measure("商品导出", () => productApi.exportSelected([...selectedProductIds.value], exportColumns.value))
     const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "商品主数据导出.xlsx"; link.click(); URL.revokeObjectURL(link.href)
     localStorage.setItem(exportColumnStorageKey, JSON.stringify(exportColumns.value))
     exportDialogVisible.value = false
+    ElMessage.success("商品导出成功，文件已开始下载")
   } catch (error) { ElMessage.error(error instanceof HttpError ? error.response.message : "导出失败") }
   finally { exporting.value = false }
 }
@@ -562,7 +566,7 @@ async function previewImport(event: Event): Promise<void> {
   importing.value = true
   importNavigationLock.start()
   try {
-    importPreview.value = await productApi.previewImport(file)
+    importPreview.value = await operationTimer.measure("商品导入预览", () => productApi.previewImport(file))
     importRowFilter.value = "ALL"
     if (auth.hasPermission("product:import:resolve")) {
       supplierCandidates.value = await productApi.importSupplierCandidates()
@@ -598,9 +602,10 @@ async function loadImportRows(targetPage = 1): Promise<void> {
 
 async function exportFailedImportRows(): Promise<void> {
   if (!importPreview.value || importPreview.value.invalid_rows === 0) return
+  const taskId = importPreview.value.id
   failedRowsExporting.value = true
   try {
-    const blob = await productApi.exportFailedImportRows(importPreview.value.id)
+    const blob = await operationTimer.measure("不通过行导出", () => productApi.exportFailedImportRows(taskId))
     const url = URL.createObjectURL(blob)
     const link = document.createElement("a")
     link.href = url
@@ -635,10 +640,11 @@ async function resolveSupplier(matchId: string): Promise<void> {
 
 async function confirmImport(): Promise<void> {
   if (!importPreview.value) return
+  const taskId = importPreview.value.id
   importing.value = true
   importNavigationLock.start()
   try {
-    const result = await productApi.confirmImport(importPreview.value.id)
+    const result = await operationTimer.measure("商品确认导入", () => productApi.confirmImport(taskId))
     await loadImportRows(1)
     ElMessage.success(`本次新增 ${result.created_count} 条，更新 ${result.updated_count} 条商品`)
     if (result.status === "CONFIRMED") {
@@ -728,25 +734,31 @@ onMounted(() => { void loadProducts() })
         <h1>商品主数据</h1>
         <span>查询正式商品；停用商品保留 SKU 防重键，永久删除后才能重新导入同键商品。</span>
       </div>
-      <div class="header-actions">
-        <el-button
-          v-if="auth.hasPermission('product:import')"
-          :icon="Download"
-          :loading="importing"
-          @click="downloadImportTemplate"
-        >
-          下载模板
-        </el-button>
-        <el-button
-          v-if="auth.hasPermission('product:import')"
-          type="primary"
-          :icon="Upload"
-          :loading="importing"
-          @click="openImport"
-        >
-          导入 Excel
-        </el-button>
-        <input ref="importInput" class="file-input" type="file" accept=".xlsx" @change="previewImport" />
+      <div class="header-action-group">
+        <div class="header-actions">
+          <el-button
+            v-if="auth.hasPermission('product:import')"
+            :icon="Download"
+            :loading="importing"
+            @click="downloadImportTemplate"
+          >
+            下载模板
+          </el-button>
+          <el-button
+            v-if="auth.hasPermission('product:import')"
+            type="primary"
+            :icon="Upload"
+            :loading="importing"
+            @click="openImport"
+          >
+            导入 Excel
+          </el-button>
+          <input ref="importInput" class="file-input" type="file" accept=".xlsx" @change="previewImport" />
+        </div>
+        <OperationDuration
+          v-if="['商品导入预览', '商品确认导入'].includes(operationTimer.state.label)"
+          :timing="operationTimer.state"
+        />
       </div>
     </header>
 
@@ -855,6 +867,7 @@ onMounted(() => { void loadProducts() })
             </el-popover>
           </div>
         </div>
+        <OperationDuration v-if="operationTimer.state.label === '商品导出'" :timing="operationTimer.state" />
       </template>
       <el-table ref="productTableRef" v-if="activeTab === 'products'" v-loading="loading" :data="products" row-key="id" @selection-change="syncSelection" empty-text="暂无正式商品数据">
         <el-table-column type="selection" width="48" reserve-selection />
@@ -952,7 +965,7 @@ onMounted(() => { void loadProducts() })
       <el-checkbox-group v-model="exportColumns" class="column-picker">
         <el-checkbox v-for="column in PRODUCT_EXPORT_COLUMN_DEFINITIONS" :key="column.key" :label="column.key">{{ column.label }}</el-checkbox>
       </el-checkbox-group>
-      <template #footer><el-button @click="exportDialogVisible = false">取消</el-button><el-button type="primary" :disabled="exportColumns.length === 0" :loading="exporting" @click="exportSelected">确认导出</el-button></template>
+      <template #footer><el-button @click="exportDialogVisible = false">取消</el-button><el-button type="primary" :disabled="exportColumns.length === 0" :loading="exporting" @click="exportSelected">确认导出</el-button><OperationDuration v-if="operationTimer.state.label === '商品导出'" :timing="operationTimer.state" /></template>
     </el-dialog>
 
     <el-dialog
@@ -1047,6 +1060,7 @@ onMounted(() => { void loadProducts() })
         <el-button type="primary" :loading="importing" :disabled="!importPreview || importPreview.valid_rows + importPreview.update_rows === 0" @click="confirmImport">
           确认新增/更新 {{ (importPreview?.valid_rows ?? 0) + (importPreview?.update_rows ?? 0) }} 行
         </el-button>
+        <OperationDuration v-if="['商品导入预览', '商品确认导入', '不通过行导出'].includes(operationTimer.state.label)" :timing="operationTimer.state" />
       </template>
     </el-dialog>
   </div>
@@ -1070,6 +1084,7 @@ onMounted(() => { void loadProducts() })
 .table-card strong { color: #344054; }
 .pagination { display: flex; justify-content: flex-end; margin-top: 16px; }
 .header-actions { display: flex; align-items: flex-start; }
+.header-action-group { display: flex; flex-direction: column; align-items: flex-end; }
 .product-tabs { margin-bottom: -4px; }
 .file-input { display: none; }
 .import-warning { display: block; margin-top: 5px; color: var(--text-secondary); }

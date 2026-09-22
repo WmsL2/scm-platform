@@ -4,6 +4,8 @@ import { Delete, Download, Edit, Plus, Refresh, Search, Upload } from "@element-
 import { ElMessage, ElMessageBox } from "element-plus"
 import { categoryApi } from "../../api/category"
 import { useExcelImportNavigationLock } from "../../shared/import/excelImportNavigationLock"
+import OperationDuration from "../../shared/operation/OperationDuration.vue"
+import { useOperationTimer } from "../../shared/operation/useOperationTimer"
 import { useAuthStore } from "../../stores/auth"
 import {
   deductionRateToPurchaseCoefficient,
@@ -20,7 +22,8 @@ const total = ref(0)
 const loading = ref(false)
 const saving = ref(false)
 const importing = ref(false)
-const importNavigationLock = useExcelImportNavigationLock()
+const operationTimer = useOperationTimer()
+const importNavigationLock = useExcelImportNavigationLock(operationTimer)
 const importVisible = ref(false)
 const formVisible = ref(false)
 const editingId = ref<string | null>(null)
@@ -197,10 +200,11 @@ async function submitImport() {
     return
   }
 
+  const file = importFile.value
   importing.value = true
   importNavigationLock.start()
   try {
-    importResult.value = await categoryApi.import(importFile.value, deductionRatePercent)
+    importResult.value = await operationTimer.measure("类目导入", () => categoryApi.import(file, deductionRatePercent))
     if (importResult.value.failed === 0) {
       page.value = 1
       await loadCategories()
@@ -225,10 +229,13 @@ onMounted(loadCategories)
         <h1>类目管理</h1>
         <span>维护商城三级类目、启用状态及采购价系数规则。</span>
       </div>
-      <div class="header-actions">
-        <el-button v-if="auth.hasPermission('product:import')" @click="downloadTemplate"><el-icon><Download /></el-icon>下载模板</el-button>
-        <el-button v-if="auth.hasPermission('product:import')" @click="importVisible = true"><el-icon><Upload /></el-icon>导入 Excel</el-button>
-        <el-button v-if="auth.hasPermission('category:create')" type="primary" @click="openCreate"><el-icon><Plus /></el-icon>新增类目</el-button>
+      <div class="header-action-group">
+        <div class="header-actions">
+          <el-button v-if="auth.hasPermission('product:import')" @click="downloadTemplate"><el-icon><Download /></el-icon>下载模板</el-button>
+          <el-button v-if="auth.hasPermission('product:import')" @click="importVisible = true"><el-icon><Upload /></el-icon>导入 Excel</el-button>
+          <el-button v-if="auth.hasPermission('category:create')" type="primary" @click="openCreate"><el-icon><Plus /></el-icon>新增类目</el-button>
+        </div>
+        <OperationDuration :timing="operationTimer.state" />
       </div>
     </header>
 
@@ -297,7 +304,7 @@ onMounted(loadCategories)
       <el-table v-if="importResult?.errors.length" :data="importResult.errors" max-height="220">
         <el-table-column prop="row_number" label="行号" width="70" /><el-table-column prop="field" label="字段" /><el-table-column prop="value" label="值" /><el-table-column prop="reason" label="原因" min-width="160" />
       </el-table>
-      <template #footer><el-button @click="importVisible = false">取消</el-button><el-button type="primary" :loading="importing" @click="submitImport">导入</el-button></template>
+      <template #footer><el-button @click="importVisible = false">取消</el-button><el-button type="primary" :loading="importing" @click="submitImport">导入</el-button><OperationDuration v-if="operationTimer.state.label === '类目导入'" :timing="operationTimer.state" /></template>
     </el-dialog>
   </section>
 </template>
@@ -306,6 +313,7 @@ onMounted(loadCategories)
 .category-page { display: grid; gap: 18px; }
 .page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 24px 28px; border: 1px solid #dce9fa; border-radius: 14px; background: linear-gradient(115deg, #fff, #edf5ff); }
 .header-actions { display: flex; gap: 8px; }
+.header-action-group { display: flex; flex-direction: column; align-items: flex-end; }
 .page-heading p { margin: 0 0 6px; color: var(--brand-600); font-size: 12px; font-weight: 700; letter-spacing: .08em; }
 .page-heading h1 { margin: 0 0 8px; color: #172b4d; font-size: 26px; }
 .page-heading span, .import-tip { color: var(--text-secondary); }

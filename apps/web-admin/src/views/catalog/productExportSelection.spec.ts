@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import productListSource from "./ProductListView.vue?raw"
 import { PRODUCT_EXPORT_COLUMN_DEFINITIONS, PRODUCT_EXPORT_COLUMNS } from "../../types/catalog"
 import {
   clearProductSelection,
@@ -8,6 +9,11 @@ import {
 } from "./productExportSelection"
 
 describe("product export selection", () => {
+  it("confirms when the selected-product workbook starts downloading", () => {
+    expect(productListSource).toContain('ElMessage.success("商品导出成功，文件已开始下载")')
+    expect(productListSource.indexOf('ElMessage.success("商品导出成功，文件已开始下载")'))
+      .toBeGreaterThan(productListSource.indexOf("await productApi.exportSelected("))
+  })
   it("restores only valid fields and falls back to all 43", () => {
     expect(restoreExportColumns(null)).toHaveLength(43)
     expect(restoreExportColumns('["sku","product_name","cost_price"]')).toEqual(["sku", "product_name", "cost_price"])

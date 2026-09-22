@@ -1,11 +1,16 @@
 # ruff: noqa: E501,E701,E702
 # mypy: ignore-errors
 import asyncio
+import colorsys
 import logging
 from io import BytesIO
+from pathlib import Path
+from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 import xlsxwriter
+from openpyxl import load_workbook
+from openpyxl.styles.colors import Color
 from PIL import Image as PillowImage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +28,58 @@ logger = logging.getLogger(__name__)
 _MAX_IMAGE_DIMENSION = 80
 _IMAGE_ROW_HEIGHT = 60
 _IMAGE_COLUMN_WIDTH = 16
+_PRODUCT_MASTER_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "resources" / "product-master-template.xlsx"
+_THEME_COLOR_NAMES = ("lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink")
+_DRAWING_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+
+def _template_color(color: Color, theme_colors: dict[str, str]) -> str | None:
+    if color.type == "rgb" and isinstance(color.rgb, str):
+        return f"#{color.rgb[-6:]}"
+    if color.type != "theme" or color.theme is None:
+        return None
+    base = theme_colors.get(_THEME_COLOR_NAMES[color.theme])
+    if base is None:
+        return None
+    tint = color.tint or 0
+    if not tint:
+        return f"#{base}"
+    red, green, blue = (int(base[index:index + 2], 16) / 255 for index in (0, 2, 4))
+    hue, lightness, saturation = colorsys.rgb_to_hls(red, green, blue)
+    lightness = lightness * (1 + tint) if tint < 0 else lightness * (1 - tint) + tint
+    return "#%02X%02X%02X" % tuple(round(channel * 255) for channel in colorsys.hls_to_rgb(hue, lightness, saturation))
+
+
+def _template_header_styles(columns: list) -> tuple[list[dict], float | None]:
+    template = load_workbook(_PRODUCT_MASTER_TEMPLATE_PATH, read_only=False)
+    try:
+        sheet = template.active
+        theme = ElementTree.fromstring(template.loaded_theme)
+        scheme = theme.find(f".//{_DRAWING_NS}clrScheme")
+        theme_colors = {
+            element.tag.removeprefix(_DRAWING_NS): element[0].get("val", element[0].get("lastClr", ""))
+            for element in scheme if len(element)
+        } if scheme is not None else {}
+        headers = {cell.value: cell for cell in sheet[1]}
+        styles = []
+        for column in columns:
+            cell = headers[column.header]
+            style = {
+                "font_name": cell.font.name or "宋体",
+                "font_size": cell.font.sz or 11,
+                "bold": bool(cell.font.bold),
+                "align": cell.alignment.horizontal or "center",
+                "valign": "vcenter",
+                "text_wrap": bool(cell.alignment.wrap_text),
+                "border": 1,
+            }
+            fill = _template_color(cell.fill.fgColor, theme_colors)
+            if cell.fill.patternType == "solid" and fill:
+                style.update({"pattern": 1, "fg_color": fill})
+            styles.append(style)
+        return styles, sheet.row_dimensions[1].height
+    finally:
+        template.close()
 
 
 class ProductExportService:
@@ -69,13 +126,18 @@ class ProductExportService:
         workbook = xlsxwriter.Workbook(output, {"in_memory": True})
         sheet = workbook.add_worksheet("商品主数据")
         sheet.freeze_panes(1, 0)
-        sheet.write_row(0, 0, [column.header for column in columns])
+        header_styles, header_height = _template_header_styles(columns)
+        if header_height is not None:
+            sheet.set_row(0, header_height)
+        for index, (column, style) in enumerate(zip(columns, header_styles)):
+            sheet.write(0, index, column.header, workbook.add_format(style))
         image_column_index = next(
             (index for index, column in enumerate(columns) if column.key == "image_reference"),
             None,
         )
-        image_format = workbook.add_format({"align": "center", "valign": "vcenter"})
-        date_format = workbook.add_format({"num_format": "yyyy-mm-dd"})
+        cell_format = workbook.add_format({"border": 1})
+        image_format = workbook.add_format({"border": 1, "align": "center", "valign": "vcenter"})
+        date_format = workbook.add_format({"border": 1, "num_format": "yyyy-mm-dd"})
         image_sources: list[BytesIO] = []
         for row_index, (product, supplier) in enumerate(rows, start=1):
             for column_index, column in enumerate(columns):
@@ -85,7 +147,9 @@ class ProductExportService:
                 if column.key == "listed_at" and value is not None:
                     sheet.write_datetime(row_index, column_index, value, date_format)
                 elif value is not None:
-                    sheet.write(row_index, column_index, value)
+                    sheet.write(row_index, column_index, value, cell_format)
+                else:
+                    sheet.write_blank(row_index, column_index, None, cell_format)
             if image_column_index is not None:
                 image_source = ProductExportService._prepare_embedded_image(
                     image_bytes_by_reference.get(product.image_reference)
@@ -99,6 +163,8 @@ class ProductExportService:
                     )
                     image_sources.append(image_source)
                     sheet.set_row(row_index, _IMAGE_ROW_HEIGHT)
+                else:
+                    sheet.write_blank(row_index, image_column_index, None, image_format)
         sheet.autofilter(0, 0, len(rows), max(len(columns) - 1, 0))
         sheet.set_column(0, max(len(columns) - 1, 0), 18)
         if image_column_index is not None:
