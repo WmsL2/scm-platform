@@ -4,6 +4,8 @@ import { ElMessage, ElMessageBox } from "element-plus"
 import { useRoute, useRouter } from "vue-router"
 import { bidApi } from "../../api/bid"
 import { HttpError } from "../../shared/http"
+import OperationDuration from "../../shared/operation/OperationDuration.vue"
+import { useOperationTimer } from "../../shared/operation/useOperationTimer"
 import { useAuthStore } from "../../stores/auth"
 import {
   FILE_TYPE_LABELS,
@@ -19,6 +21,7 @@ const id = String(route.params.id)
 const project = ref<BidProjectDetail>()
 const loading = ref(false)
 const saving = ref(false)
+const operationTimer = useOperationTimer()
 const editVisible = ref(false)
 const voidVisible = ref(false)
 const submitVisible = ref(false)
@@ -136,7 +139,7 @@ async function startMatching() {
 async function exportFile() {
   saving.value = true
   try {
-    await bidApi.export(id)
+    await operationTimer.measure("报价文件导出", () => bidApi.export(id))
     ElMessage.success("报价文件已生成")
     await load()
   } catch (error) {
@@ -173,13 +176,17 @@ async function recordResult(win: boolean) {
 }
 
 async function download(file: { id: string; original_filename: string }) {
-  const blob = await bidApi.download(id, file.id)
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement("a")
-  link.href = url
-  link.download = file.original_filename
-  link.click()
-  URL.revokeObjectURL(url)
+  try {
+    const blob = await operationTimer.measure("投标文件下载", () => bidApi.download(id, file.id))
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = file.original_filename
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    ElMessage.error(messageFor(error, "下载文件失败"))
+  }
 }
 
 onMounted(() => void load())
@@ -198,6 +205,7 @@ onMounted(() => void load())
       <el-button v-if="canRecordResult" type="success" @click="recordResult(true)">标记中标</el-button>
       <el-button v-if="canRecordResult" type="warning" @click="recordResult(false)">标记未中标</el-button>
     </div>
+    <OperationDuration :timing="operationTimer.state" />
 
     <el-descriptions title="项目详情" :column="3" border>
       <el-descriptions-item label="项目编号">{{ project.project_code }}</el-descriptions-item>

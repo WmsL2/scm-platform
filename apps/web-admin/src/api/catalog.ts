@@ -118,7 +118,7 @@ export const productApi = {
     return http.getBlob(path("/imports/template"))
   },
   exportSelected(productIds: string[], columns: ProductExportColumnKey[]): Promise<Blob> {
-    return http.postBlob(path("/export"), { product_ids: productIds, columns }, { timeoutMs: 60_000 })
+    return http.postBlob(path("/export"), { product_ids: productIds, columns }, { timeoutMs: 300_000 })
   },
 
   exportFailedImportRows(taskId: string): Promise<Blob> {

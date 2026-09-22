@@ -6,6 +6,8 @@ import { ElMessage, ElMessageBox } from "element-plus"
 import { supplierApi } from "../../api/supplier"
 import { HttpError } from "../../shared/http"
 import { useExcelImportNavigationLock } from "../../shared/import/excelImportNavigationLock"
+import OperationDuration from "../../shared/operation/OperationDuration.vue"
+import { useOperationTimer } from "../../shared/operation/useOperationTimer"
 import { useAuthStore } from "../../stores/auth"
 import {
   ARCHIVE_STATUS_LABELS,
@@ -26,7 +28,8 @@ const importInput = ref<HTMLInputElement>()
 const importPreview = ref<SupplierImportPreview | null>(null)
 const importDialogVisible = ref(false)
 const importing = ref(false)
-const importNavigationLock = useExcelImportNavigationLock()
+const operationTimer = useOperationTimer()
+const importNavigationLock = useExcelImportNavigationLock(operationTimer)
 const importArchiveStatus = ref<ArchiveStatus>("ARCHIVED")
 const filters = reactive<{
   keyword: string
@@ -110,7 +113,7 @@ async function previewImport(event: Event): Promise<void> {
   importing.value = true
   importNavigationLock.start()
   try {
-    importPreview.value = await supplierApi.previewImport(file)
+    importPreview.value = await operationTimer.measure("供应商导入预览", () => supplierApi.previewImport(file))
     importDialogVisible.value = true
     if (importPreview.value.invalid_rows) {
       ElMessage.warning(`发现 ${importPreview.value.invalid_rows} 行错误，请修正 Excel 后重新上传`)
@@ -126,10 +129,11 @@ async function previewImport(event: Event): Promise<void> {
 
 async function confirmImport(): Promise<void> {
   if (!importPreview.value || importPreview.value.invalid_rows) return
+  const batchId = importPreview.value.id
   importing.value = true
   importNavigationLock.start()
   try {
-    const result = await supplierApi.confirmImport(importPreview.value.id, importArchiveStatus.value)
+    const result = await operationTimer.measure("供应商确认导入", () => supplierApi.confirmImport(batchId, importArchiveStatus.value))
     ElMessage.success(`成功导入 ${result.imported_count} 家供应商`)
     importDialogVisible.value = false
     importPreview.value = null
@@ -153,13 +157,16 @@ onMounted(() => void loadSuppliers())
         <h1>供应商管理</h1>
         <span>维护供应商基础资料与归档、合作状态。</span>
       </div>
-      <div class="header-actions">
-        <el-button v-if="auth.hasPermission('supplier:create')" :icon="Download" @click="downloadTemplate">下载模板</el-button>
-        <el-button v-if="auth.hasPermission('supplier:create')" :icon="Upload" :loading="importing" @click="openImportDialog">导入 Excel</el-button>
-        <input ref="importInput" class="file-input" type="file" accept=".xlsx" @change="previewImport" />
-        <RouterLink v-if="auth.hasPermission('supplier:create')" to="/suppliers/new">
-          <el-button type="primary" :icon="Plus">新增供应商</el-button>
-        </RouterLink>
+      <div class="header-action-group">
+        <div class="header-actions">
+          <el-button v-if="auth.hasPermission('supplier:create')" :icon="Download" @click="downloadTemplate">下载模板</el-button>
+          <el-button v-if="auth.hasPermission('supplier:create')" :icon="Upload" :loading="importing" @click="openImportDialog">导入 Excel</el-button>
+          <input ref="importInput" class="file-input" type="file" accept=".xlsx" @change="previewImport" />
+          <RouterLink v-if="auth.hasPermission('supplier:create')" to="/suppliers/new">
+            <el-button type="primary" :icon="Plus">新增供应商</el-button>
+          </RouterLink>
+        </div>
+        <OperationDuration :timing="operationTimer.state" />
       </div>
     </header>
 
@@ -236,6 +243,7 @@ onMounted(() => void loadSuppliers())
       <template #footer>
         <el-button @click="importDialogVisible = false">关闭</el-button>
         <el-button v-if="importPreview && !importPreview.invalid_rows" type="primary" :loading="importing" @click="confirmImport">确认导入</el-button>
+        <OperationDuration :timing="operationTimer.state" />
       </template>
     </el-dialog>
   </div>
@@ -245,6 +253,7 @@ onMounted(() => void loadSuppliers())
 .supplier-page { display: grid; gap: 18px; }
 .page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 24px 28px; border: 1px solid #dce9fa; border-radius: 14px; background: linear-gradient(115deg, #fff, #edf5ff); }
 .header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.header-action-group { display: flex; flex-direction: column; align-items: flex-end; }
 .file-input { display: none; }
 .page-heading p { margin: 0 0 6px; color: var(--brand-600); font-size: 12px; font-weight: 700; letter-spacing: .08em; }
 .page-heading h1 { margin: 0 0 8px; color: #172b4d; font-size: 26px; }

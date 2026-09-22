@@ -1,8 +1,10 @@
 # ruff: noqa: E501
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from hashlib import sha256
 from io import BytesIO
+from types import SimpleNamespace
 from zipfile import ZipFile
 
 from httpx import ASGITransport, AsyncClient
@@ -14,6 +16,7 @@ from app.core.database import SessionLocal
 from app.main import app
 from app.modules.auth.security import create_token, hash_password
 from app.modules.catalog.application.export_service import ProductExportService
+from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMNS
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Category, Product, ProductPurgeAudit
 from app.modules.catalog.infrastructure.repository import ProductRepository
@@ -29,6 +32,65 @@ PRODUCT_PERMISSIONS = (
     "product:disable",
     "product:purge",
 )
+
+
+def test_product_export_header_matches_download_template_style() -> None:
+    from app.modules.catalog.application.export_service import (
+        _PRODUCT_MASTER_TEMPLATE_PATH,
+        _template_color,
+    )
+
+    columns = list(PRODUCT_EXPORT_COLUMNS)
+    exported = load_workbook(BytesIO(ProductExportService._build(columns, [], {}))).active
+    template = load_workbook(_PRODUCT_MASTER_TEMPLATE_PATH)
+    try:
+        template_headers = {cell.value: cell for cell in template.active[1]}
+        assert exported.row_dimensions[1].height == template.active.row_dimensions[1].height
+        assert [cell.value for cell in exported[1]] == [column.header for column in columns]
+        for exported_cell in exported[1]:
+            original = template_headers[exported_cell.value]
+            assert exported_cell.font.name == original.font.name
+            assert exported_cell.font.sz == original.font.sz
+            assert exported_cell.font.bold == original.font.bold
+            assert exported_cell.alignment.horizontal == original.alignment.horizontal
+            assert exported_cell.alignment.vertical == original.alignment.vertical
+            assert exported_cell.alignment.wrap_text == original.alignment.wrap_text
+            assert exported_cell.border.left.style == original.border.left.style
+            if original.fill.fgColor.type == "rgb":
+                assert exported_cell.fill.fgColor.rgb[-6:] == original.fill.fgColor.rgb[-6:]
+            else:
+                assert exported_cell.fill.fgColor.type == "rgb"
+                assert exported_cell.fill.fgColor.rgb[-6:] == _template_color(
+                    original.fill.fgColor, {"accent1": "4874CB", "accent2": "EE822F"}
+                )[-6:]
+    finally:
+        template.close()
+
+
+def test_product_export_draws_borders_around_values_blanks_dates_and_images() -> None:
+    selected_keys = {"listed_at", "image_reference", "sku", "cost_price"}
+    columns = [column for column in PRODUCT_EXPORT_COLUMNS if column.key in selected_keys]
+    with_image = SimpleNamespace(
+        listed_at=datetime(2026, 9, 22), image_reference="image-1", sku="SKU-1", cost_price=Decimal("12.5")
+    )
+    without_image = SimpleNamespace(
+        listed_at=None, image_reference=None, sku="SKU-2", cost_price=None
+    )
+    supplier = SimpleNamespace(supplier_name="测试供应商")
+    content = ProductExportService._build(
+        columns, [(with_image, supplier), (without_image, supplier)], {"image-1": png_bytes()}
+    )
+    sheet = load_workbook(BytesIO(content)).active
+
+    assert sheet.max_row == 3
+    assert [sheet.cell(2, column).value for column in (1, 3, 4)] == [datetime(2026, 9, 22), "SKU-1", "12.5"]
+    assert [cell.value for cell in sheet[3]] == [None, None, "SKU-2", None]
+    for row in sheet.iter_rows(min_row=2, max_row=3):
+        for cell in row:
+            assert all(
+                side.style == "thin"
+                for side in (cell.border.left, cell.border.right, cell.border.top, cell.border.bottom)
+            )
 
 
 def test_product_price_json_keeps_significant_digits_and_legacy_minimum() -> None:
