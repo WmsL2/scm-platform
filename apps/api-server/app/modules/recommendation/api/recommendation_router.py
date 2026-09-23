@@ -8,10 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import ApiResponse, success
 from app.core.database import get_db_session
+from app.jobs.recommendation_agent import execute_recommendation_agent_inline
 from app.modules.auth.dependencies import require_permission
 from app.modules.auth.schemas import CurrentUser
 from app.modules.recommendation.application.service import RecommendationService
 from app.modules.recommendation.schemas import (
+    BatchConfirmationRequest,
     ConfirmationUpdateRequest,
     RecommendationCandidateResponse,
     RecommendationConfirmationResponse,
@@ -28,8 +30,10 @@ async def create_run(
     current: Annotated[CurrentUser, Depends(require_permission("recommendation:run"))],
     session: SessionDep,
 ) -> ApiResponse[RecommendationRunResponse]:
-    """Create a queued run only; C's AgentRunner starts AI processing separately."""
-    return success(await RecommendationService(session).create_run(project_id, current.user_id))
+    service = RecommendationService(session)
+    run = await service.create_run(project_id, current.user_id)
+    await execute_recommendation_agent_inline(run.id, session)
+    return success(await service.get_run(run.id))
 
 
 @router.get("/{project_id}/runs", response_model=ApiResponse[list[RecommendationRunResponse]])
@@ -74,5 +78,22 @@ async def confirm_candidate(
     return success(
         await RecommendationService(session).confirm_candidate(
             candidate_id, payload, current.user_id
+        )
+    )
+
+
+@router.post(
+    "/runs/{run_id}/confirmations",
+    response_model=ApiResponse[list[RecommendationConfirmationResponse]],
+)
+async def confirm_candidates(
+    run_id: uuid.UUID,
+    payload: BatchConfirmationRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("recommendation:review"))],
+    session: SessionDep,
+) -> ApiResponse[list[RecommendationConfirmationResponse]]:
+    return success(
+        await RecommendationService(session).confirm_candidates(
+            run_id, payload, current.user_id
         )
     )

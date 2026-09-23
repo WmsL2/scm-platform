@@ -20,9 +20,14 @@ StructuredModel = TypeVar("StructuredModel", bound=BaseModel)
 
 
 class StructuredProvider(Protocol):
-    provider: str
-    model: str
-    prompt_version: str
+    @property
+    def provider(self) -> str: ...
+
+    @property
+    def model(self) -> str: ...
+
+    @property
+    def prompt_version(self) -> str: ...
 
     async def structured_completion(
         self,
@@ -34,6 +39,8 @@ class StructuredProvider(Protocol):
 
 
 class RecommendationTools(Protocol):
+    async def prepare(self, analysis: RequirementAnalysis) -> None: ...
+
     async def list_categories(
         self, keywords: Sequence[str], *, limit: int
     ) -> list[CategoryOption]: ...
@@ -74,8 +81,16 @@ class AgentRunner:
         analysis = await self._complete(
             RequirementAnalysis,
             system=(
-                "你是企业采购需求分析助手。只分析用户文字，不编造商品、供应商或数据库信息。"
-                "严格返回符合 JSON Schema 的对象；信息不足时 needs_input=true 并给出问题。"
+                "你是企业职工福利自由推品需求分析助手。只分析用户文字，不编造商品、供应商或数据库信息。"
+                "自由推品允许需求方不指定类目、品牌、单价、预算和数量；这些字段缺失或写明暂无时，"
+                "保留为空并继续推荐，绝不能仅因此设置 needs_input=true。category_keywords 只填写"
+                "需求方"
+                "明确限定的商品类目词，节日、活动、特价、人群等放入 keywords 或 scenarios。只有需求"
+                "无法形成任何可执行场景、硬性条件互相矛盾或存在必须由需求方决策的合规问题时，才设置"
+                " needs_input=true，并分别使用 UNUSABLE_REQUIREMENT、CONTRADICTORY_CONSTRAINTS 或"
+                " COMPLIANCE_DECISION_REQUIRED 作为 blocking_reasons；不得创建其他原因。毛利率 6%"
+                " 必须表示为 0.06。一件代发写入"
+                " fulfillment_mode。严格返回符合 JSON Schema 的对象。"
             ),
             user=requirement,
         )
@@ -90,9 +105,12 @@ class AgentRunner:
                 tool_call_count=self._tool_calls,
             )
 
+        await self.tools.prepare(analysis)
         await self._check_cancelled(is_cancelled)
         await self._report(report_progress, "RETRIEVING", 30, "正在读取可用商品类目")
-        categories = await self._call_list_categories(analysis.keywords)
+        categories = await self._call_list_categories(
+            analysis.category_keywords or analysis.keywords
+        )
         if not categories:
             return AgentRecommendationResult(
                 analysis=analysis,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue"
-import { ElMessage } from "element-plus"
+import { ElMessage, ElMessageBox } from "element-plus"
 import { useRoute, useRouter } from "vue-router"
 import { bidApi } from "../../api/bid"
 import { recommendationApi } from "../../api/recommendation"
@@ -26,15 +26,19 @@ const project = ref<BidProjectDetail>()
 const templates = ref<RecommendationTemplateFile[]>([])
 const mapping = ref<RecommendationTemplateMapping>()
 const run = ref<RecommendationRun | null>(null)
+const runHistory = ref<RecommendationRun[]>([])
+const selectedCandidates = ref<RecommendationCandidate[]>([])
 const confirmVisible = ref(false)
 const selectedCandidate = ref<RecommendationCandidate>()
+const supplementText = ref("")
 const confirmation = reactive({ campaign_price: "", fulfillment: "", evidence: "" })
 let pollTimer: ReturnType<typeof setInterval> | undefined
 
 const mappingConfirmed = computed(() => Boolean(mapping.value?.confirmed_at))
 const activeRun = computed(() => run.value && ["QUEUED", "ANALYZING", "RETRIEVING", "RANKING"].includes(run.value.status))
 const canStart = computed(() => mappingConfirmed.value && !activeRun.value && auth.hasPermission("recommendation:run"))
-const canExport = computed(() => run.value?.status === "CONFIRMED" && mappingConfirmed.value && auth.hasPermission("recommendation:export"))
+const canExport = computed(() => false)
+const resultStatuses = new Set(["CANDIDATES_READY", "WAITING_CONFIRMATION", "CONFIRMED", "EXPORTED"])
 
 async function load() {
   loading.value = true
@@ -49,7 +53,11 @@ async function load() {
     const latest = templates.value.at(-1)
     if (latest) mapping.value = await bidApi.recommendationTemplateMapping(projectId, latest.id)
     try {
-      run.value = await recommendationApi.detail(projectId)
+      runHistory.value = await recommendationApi.runs(projectId)
+      const preferred = runHistory.value.find((item) =>
+        resultStatuses.has(item.status) || ["QUEUED", "ANALYZING", "RETRIEVING", "RANKING"].includes(item.status),
+      ) ?? runHistory.value[0]
+      run.value = preferred ? await recommendationApi.run(preferred.id) : null
     } catch (error) {
       if (!(error instanceof HttpError && error.status === 404)) throw error
       run.value = null
@@ -84,10 +92,26 @@ async function saveMapping() {
 
 async function startRun() {
   if (!mappingConfirmed.value) return ElMessage.warning("请先确认模板字段映射")
+  if (run.value?.candidates.length) {
+    try {
+      await ElMessageBox.confirm(
+        "重新生成会创建一条新的推荐记录，当前候选和确认结果仍会保留在历史记录中。是否继续？",
+        "确认重新生成",
+        { type: "warning", confirmButtonText: "继续生成", cancelButtonText: "取消" },
+      )
+    } catch {
+      return
+    }
+  }
   acting.value = true
   try {
     run.value = await recommendationApi.start(projectId)
-    ElMessage.success("自由推品任务已启动")
+    await refreshRun(run.value.id)
+    runHistory.value = await recommendationApi.runs(projectId)
+    if (run.value?.status === "FAILED") ElMessage.error(run.value.error ?? "自由推品任务执行失败")
+    else if (run.value?.status === "NEEDS_INPUT") ElMessage.warning(run.value.error ?? "请补充需求信息")
+    else if (run.value?.status === "NO_CANDIDATES") ElMessage.warning("没有找到满足当前需求的候选商品")
+    else ElMessage.success("自由推品候选已生成")
     syncPolling()
   } catch (error) {
     ElMessage.error(messageFor(error, "启动推荐任务失败"))
@@ -96,26 +120,56 @@ async function startRun() {
   }
 }
 
-async function refreshRun() {
+async function submitSupplement() {
+  const value = supplementText.value.trim()
+  if (!project.value || !run.value) return
+  if (value.length < 5) return ElMessage.warning("请填写至少 5 个字符的补充说明")
+  acting.value = true
   try {
-    run.value = await recommendationApi.detail(projectId)
+    const remark = `${run.value.raw_requirement_snapshot.trim()}\n\n补充信息：${value}`
+    project.value = await bidApi.update(projectId, {
+      project_name: project.value.project_name,
+      buyer_name: project.value.buyer_name,
+      start_at: project.value.start_at,
+      deadline_at: project.value.deadline_at,
+      remark,
+    })
+    supplementText.value = ""
+    ElMessage.success("补充信息已保存，正在创建新的推荐任务")
+  } catch (error) {
+    ElMessage.error(messageFor(error, "补充信息保存失败"))
+    acting.value = false
+    return
+  }
+  acting.value = false
+  await startRun()
+}
+
+async function refreshRun(runId = run.value?.id) {
+  if (!runId) return
+  try {
+    run.value = await recommendationApi.run(runId)
+    runHistory.value = runHistory.value.map((item) =>
+      item.id === run.value?.id ? { ...item, ...run.value, candidates: [] } : item,
+    )
+    selectedCandidates.value = []
     syncPolling()
   } catch (error) {
     if (!(error instanceof HttpError && error.status === 404)) ElMessage.error(messageFor(error, "刷新推荐进度失败"))
   }
 }
 
-async function cancelRun() {
-  if (!run.value) return
-  acting.value = true
+async function switchRun(runId: string) {
+  if (run.value?.id === runId) return
+  loading.value = true
   try {
-    run.value = await recommendationApi.cancel(run.value.id)
-    ElMessage.success("已提交取消请求")
+    run.value = await recommendationApi.run(runId)
+    selectedCandidates.value = []
     syncPolling()
   } catch (error) {
-    ElMessage.error(messageFor(error, "取消推荐任务失败"))
+    ElMessage.error(messageFor(error, "加载推荐记录失败"))
   } finally {
-    acting.value = false
+    loading.value = false
   }
 }
 
@@ -131,12 +185,12 @@ async function saveConfirmation() {
   if (!selectedCandidate.value) return
   acting.value = true
   try {
-    run.value = await recommendationApi.confirm(selectedCandidate.value.id, {
-      selected: true,
+    await recommendationApi.confirm(selectedCandidate.value.id, {
       campaign_price: confirmation.campaign_price || null,
-      fulfillment: confirmation.fulfillment || null,
+      fulfillment_cycle: confirmation.fulfillment || null,
       evidence: confirmation.evidence || null,
     })
+    await refreshRun(run.value?.id)
     confirmVisible.value = false
     ElMessage.success("人工确认已保存")
   } catch (error) {
@@ -146,20 +200,29 @@ async function saveConfirmation() {
   }
 }
 
-async function exportResult() {
-  if (!run.value) return
+function handleCandidateSelection(rows: RecommendationCandidate[]) {
+  selectedCandidates.value = rows.filter((item) => !item.confirmation)
+}
+
+function canSelectCandidate(candidate: RecommendationCandidate): boolean {
+  return !candidate.confirmation
+}
+
+async function confirmSelectedCandidates() {
+  if (!run.value || selectedCandidates.value.length === 0) {
+    return ElMessage.warning("请先勾选需要确认的候选商品")
+  }
   acting.value = true
   try {
-    const blob = await recommendationApi.export(run.value.id)
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = `${project.value?.project_name ?? "自由推品"}-推荐结果.xlsx`
-    link.click()
-    URL.revokeObjectURL(url)
-    ElMessage.success("推荐结果导出成功")
+    const count = selectedCandidates.value.length
+    await recommendationApi.confirmMany(
+      run.value.id,
+      selectedCandidates.value.map((item) => item.id),
+    )
+    await refreshRun(run.value.id)
+    ElMessage.success(`已批量确认 ${count} 件商品`)
   } catch (error) {
-    ElMessage.error(messageFor(error, "导出推荐结果失败"))
+    ElMessage.error(messageFor(error, "批量确认选品失败"))
   } finally {
     acting.value = false
   }
@@ -187,7 +250,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
   <div v-loading="loading" class="workspace">
     <header>
       <div><p>FREE RECOMMENDATION</p><h1>{{ project?.project_name ?? "自由推品 Agent" }}</h1><span>{{ project?.remark }}</span></div>
-      <div class="actions"><el-button @click="router.push('/bid-projects')">返回项目</el-button><el-button v-if="activeRun" :loading="acting" @click="cancelRun">取消任务</el-button><el-button type="primary" :disabled="!canStart" :loading="acting" @click="startRun">{{ run ? "重新生成推荐" : "开始生成推荐" }}</el-button><el-button type="success" :disabled="!canExport" :loading="acting" @click="exportResult">导出确认结果</el-button></div>
+      <div class="actions"><el-button @click="router.push('/bid-projects')">返回项目</el-button><el-button type="primary" :disabled="!canStart" :loading="acting" @click="startRun">{{ run ? "重新生成推荐" : "开始生成推荐" }}</el-button><el-tooltip content="导出合同等待后端迁移和接口完成"><span><el-button type="success" :disabled="!canExport">导出确认结果</el-button></span></el-tooltip></div>
     </header>
 
     <el-alert v-if="!mappingConfirmed" title="开始推荐前必须人工确认本项目模板的字段映射。毛利、厂直和物流等歧义字段不会由系统自动猜测。" type="warning" :closable="false" />
@@ -199,16 +262,26 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
     </el-card>
 
     <el-card v-if="run">
-      <template #header><div class="card-header"><strong>Agent 运行状态</strong><el-tag>{{ RUN_STATUS_LABELS[run.status] }}</el-tag></div></template>
+      <template #header><div class="card-header"><strong>Agent 运行状态</strong><div class="run-actions"><el-select :model-value="run.id" style="width: 260px" @change="switchRun"><el-option v-for="item in runHistory" :key="item.id" :label="`${new Date(item.created_at).toLocaleString()} · ${RUN_STATUS_LABELS[item.status]}`" :value="item.id" /></el-select><el-tag>{{ RUN_STATUS_LABELS[run.status] }}</el-tag></div></div></template>
       <el-progress :percentage="run.progress_percent ?? (activeRun ? 50 : 100)" :status="run.status === 'FAILED' ? 'exception' : undefined" />
       <p class="muted">{{ run.progress_message ?? run.error ?? `模型：${run.provider ?? '-'} / ${run.model ?? '-'}` }}</p>
       <el-descriptions v-if="run.parsed_requirement" title="需求理解" :column="2" border>
-        <el-descriptions-item label="需求摘要" :span="2">{{ run.parsed_requirement.summary }}</el-descriptions-item>
-        <el-descriptions-item label="关键词">{{ run.parsed_requirement.keywords.join('、') }}</el-descriptions-item>
-        <el-descriptions-item label="场景">{{ run.parsed_requirement.scenarios.join('、') || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="偏好品牌">{{ run.parsed_requirement.preferred_brands.join('、') || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="预算">{{ run.parsed_requirement.budget_min ?? '不限' }} ～ {{ run.parsed_requirement.budget_max ?? '不限' }}</el-descriptions-item>
+        <el-descriptions-item label="本次读取的需求" :span="2">{{ run.raw_requirement_snapshot }}</el-descriptions-item>
+        <el-descriptions-item label="类目关键词">{{ run.parsed_requirement.category_keywords.join('、') || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="场景关键词">{{ run.parsed_requirement.scenario_keywords.join('、') || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="偏好品牌">{{ run.parsed_requirement.brand_keywords.join('、') || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="京东价范围">{{ run.parsed_requirement.jd_price_min ?? '不限' }} ～ {{ run.parsed_requirement.jd_price_max ?? '不限' }}</el-descriptions-item>
+        <el-descriptions-item label="最低毛利率">{{ run.parsed_requirement.gross_margin_min ?? '-' }}</el-descriptions-item>
+        <el-descriptions-item label="履约方式">{{ run.parsed_requirement.fulfillment_mode ?? '-' }}</el-descriptions-item>
       </el-descriptions>
+      <el-descriptions v-else title="本次 Agent 实际读取的需求" :column="1" border>
+        <el-descriptions-item label="需求快照">{{ run.raw_requirement_snapshot }}</el-descriptions-item>
+      </el-descriptions>
+      <div v-if="run.status === 'NEEDS_INPUT'" class="supplement-box">
+        <el-alert :title="run.error ?? '请补充需求信息'" type="warning" :closable="false" />
+        <el-input v-model="supplementText" type="textarea" :rows="4" maxlength="3000" show-word-limit placeholder="在这里回答上面的问题。保存后会创建新的 Run，旧需求快照不会被覆盖。" />
+        <el-button v-if="auth.hasPermission('bid:update') && auth.hasPermission('recommendation:run')" type="primary" :loading="acting" @click="submitSupplement">保存补充说明并重新生成</el-button>
+      </div>
     </el-card>
 
     <el-card v-if="run?.category_choices.length">
@@ -217,8 +290,9 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
     </el-card>
 
     <el-card v-if="run?.candidates.length">
-      <template #header><div class="card-header"><strong>候选商品与人工确认</strong><span class="muted">Agent 只提供排序建议，最终价格与履约信息由人工确认。</span></div></template>
-      <el-table :data="run.candidates">
+      <template #header><div class="card-header"><div><strong>候选商品与人工确认</strong><span class="muted"> Agent 只提供排序建议，最终结果由人工确认。</span></div><el-button type="primary" :disabled="selectedCandidates.length === 0" :loading="acting" @click="confirmSelectedCandidates">批量确认选中（{{ selectedCandidates.length }}）</el-button></div></template>
+      <el-table :data="run.candidates" @selection-change="handleCandidateSelection">
+        <el-table-column type="selection" width="48" :selectable="canSelectCandidate" />
         <el-table-column prop="rank" label="排名" width="70" />
         <el-table-column label="商品" min-width="220"><template #default="{ row }"><strong>{{ productValue(row, 'product_name') }}</strong><div class="muted">{{ productValue(row, 'brand') }} / {{ productValue(row, 'model') }}</div></template></el-table-column>
         <el-table-column label="协议价"><template #default="{ row }">¥ {{ productValue(row, 'agreement_price') }}</template></el-table-column>
@@ -240,6 +314,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
 </template>
 
 <style scoped>
-.workspace { display: grid; gap: 18px; }.workspace header { display: flex; justify-content: space-between; gap: 20px; padding: 24px 28px; border-radius: 14px; background: linear-gradient(135deg, #edf5ff, #f2f8f5); }.workspace h1 { margin: 4px 0; }.workspace header p { margin: 0; color: #2670ca; font-weight: 700; }.actions, .card-header, .mapping-meta, .card-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }.card-header { justify-content: space-between; }.mapping-meta { margin-bottom: 16px; }.mapping-meta .el-input { width: 280px; }.mapping-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }.card-actions { justify-content: flex-end; margin-top: 16px; }.category-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }.category-card { display: grid; gap: 10px; padding: 16px; border: 1px solid #e4e7ed; border-radius: 10px; }.muted { color: #909399; font-size: 13px; }.el-progress + .muted { margin-bottom: 18px; }
+.workspace { display: grid; gap: 18px; }.workspace header { display: flex; justify-content: space-between; gap: 20px; padding: 24px 28px; border-radius: 14px; background: linear-gradient(135deg, #edf5ff, #f2f8f5); }.workspace h1 { margin: 4px 0; }.workspace header p { margin: 0; color: #2670ca; font-weight: 700; }.actions, .card-header, .run-actions, .mapping-meta, .card-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }.card-header { justify-content: space-between; }.mapping-meta { margin-bottom: 16px; }.mapping-meta .el-input { width: 280px; }.mapping-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }.card-actions { justify-content: flex-end; margin-top: 16px; }.category-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }.category-card { display: grid; gap: 10px; padding: 16px; border: 1px solid #e4e7ed; border-radius: 10px; }.muted { color: #909399; font-size: 13px; }.el-progress + .muted { margin-bottom: 18px; }
+.supplement-box { display: grid; gap: 12px; margin-top: 18px; justify-items: start; }.supplement-box .el-textarea { width: 100%; }
 @media (max-width: 767px) { .workspace header { flex-direction: column; }.mapping-grid { grid-template-columns: 1fr; } }
 </style>

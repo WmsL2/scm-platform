@@ -19,6 +19,7 @@ from app.modules.recommendation.application.agent_schemas import (
     ProductSearchRequest,
     RankedCandidate,
     RequirementAnalysis,
+    RequirementBlockingReason,
 )
 
 
@@ -30,6 +31,7 @@ class FakeProvider:
     def __init__(self, responses: list[BaseModel | Exception]) -> None:
         self.responses = responses
         self.calls = 0
+        self.system_prompts: list[str] = []
 
     async def structured_completion(
         self,
@@ -38,7 +40,8 @@ class FakeProvider:
         user_prompt: str,
         response_model: type[BaseModel],
     ) -> Any:
-        del system_prompt, user_prompt
+        del user_prompt
+        self.system_prompts.append(system_prompt)
         response = self.responses[self.calls]
         self.calls += 1
         if isinstance(response, Exception):
@@ -51,6 +54,10 @@ class FakeTools:
     def __init__(self, product: ProductCandidate) -> None:
         self.product = product
         self.searches: list[ProductSearchRequest] = []
+        self.prepared: RequirementAnalysis | None = None
+
+    async def prepare(self, analysis: RequirementAnalysis) -> None:
+        self.prepared = analysis
 
     async def list_categories(self, keywords: list[str], *, limit: int) -> list[CategoryOption]:
         assert keywords == ["会议", "显示"]
@@ -122,14 +129,20 @@ async def test_agent_uses_real_category_keys_and_only_ranks_returned_products() 
 
     assert result.candidates[0].product_id == product_id
     assert result.tool_call_count == 2
+    assert tools.prepared == analysis()
     assert tools.searches[0].agreement_price_max == Decimal("10000")
     assert progress[-1] == ("CANDIDATES_READY", 100)
+    assert "不指定类目、品牌、单价、预算和数量" in provider.system_prompts[0]
 
 
 @pytest.mark.asyncio
 async def test_agent_retries_provider_once() -> None:
     need_input = analysis().model_copy(
-        update={"needs_input": True, "questions": ["请补充预计采购数量"]}
+        update={
+            "needs_input": True,
+            "blocking_reasons": [RequirementBlockingReason.COMPLIANCE_DECISION_REQUIRED],
+            "questions": ["请确认是否涉及必须人工审批的合规限制"],
+        }
     )
     provider = FakeProvider([RuntimeError("temporary"), need_input])
     result = await AgentRunner(provider, FakeTools(_unused_product())).run(

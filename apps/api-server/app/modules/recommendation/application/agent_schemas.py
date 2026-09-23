@@ -1,7 +1,14 @@
 from decimal import Decimal
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class RequirementBlockingReason(StrEnum):
+    UNUSABLE_REQUIREMENT = "UNUSABLE_REQUIREMENT"
+    CONTRADICTORY_CONSTRAINTS = "CONTRADICTORY_CONSTRAINTS"
+    COMPLIANCE_DECISION_REQUIRED = "COMPLIANCE_DECISION_REQUIRED"
 
 
 class RequirementAnalysis(BaseModel):
@@ -9,12 +16,16 @@ class RequirementAnalysis(BaseModel):
 
     summary: str = Field(min_length=1, max_length=1000)
     keywords: list[str] = Field(min_length=1, max_length=20)
+    category_keywords: list[str] = Field(default_factory=list, max_length=20)
     scenarios: list[str] = Field(default_factory=list, max_length=10)
     preferred_brands: list[str] = Field(default_factory=list, max_length=20)
     budget_min: Decimal | None = Field(default=None, ge=0)
     budget_max: Decimal | None = Field(default=None, ge=0)
+    gross_margin_min: Decimal = Field(default=Decimal("0.06"), ge=0, le=1)
     constraints: list[str] = Field(default_factory=list, max_length=20)
+    fulfillment_mode: str | None = Field(default=None, max_length=64)
     needs_input: bool = False
+    blocking_reasons: list[RequirementBlockingReason] = Field(default_factory=list, max_length=3)
     questions: list[str] = Field(default_factory=list, max_length=5)
 
     @model_validator(mode="after")
@@ -24,6 +35,10 @@ class RequirementAnalysis(BaseModel):
                 raise ValueError("budget_min cannot exceed budget_max")
         if self.needs_input and not self.questions:
             raise ValueError("questions are required when needs_input is true")
+        if self.needs_input and not self.blocking_reasons:
+            raise ValueError("blocking_reasons are required when needs_input is true")
+        if not self.needs_input and self.blocking_reasons:
+            raise ValueError("blocking_reasons require needs_input to be true")
         return self
 
 

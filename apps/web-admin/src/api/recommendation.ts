@@ -1,22 +1,99 @@
 import { http } from "../shared/http/runtime"
-import type { RecommendationConfirmationUpdate, RecommendationRun } from "../types/recommendation"
+import type {
+  ParsedRequirement,
+  RecommendationCandidate,
+  RecommendationConfirmationUpdate,
+  RecommendationRun,
+  RecommendationRunStatus,
+} from "../types/recommendation"
 
-const base = "/api/v1/recommendations"
+const base = "/api/v1/recommendation-projects"
+
+interface CoreRun {
+  id: string
+  project_id: string
+  status: RecommendationRunStatus
+  raw_requirement_snapshot: string
+  parsed_requirement: ParsedRequirement | null
+  provider: string | null
+  model: string | null
+  prompt_version: string | null
+  error: string | null
+  created_at: string
+  updated_at: string
+}
+
+interface CoreCandidate {
+  id: string
+  run_id: string
+  product_id: string
+  rank: number
+  score: string | null
+  reason: string | null
+  product_snapshot: Record<string, unknown>
+  supplier_snapshot: Record<string, unknown>
+  price_snapshot: Record<string, unknown>
+  confirmation_id: string | null
+}
+
+interface CoreConfirmation {
+  id: string
+  campaign_price: string | null
+  delivery_status: string | null
+  inventory_status: string | null
+  fulfillment_cycle: string | null
+  evidence: string | null
+  confirmed_by: string | null
+  confirmed_at: string | null
+}
+
+function adaptRun(run: CoreRun, candidates: CoreCandidate[] = []): RecommendationRun {
+  return {
+    ...run,
+    category_choices: [],
+    candidates: candidates.map((candidate): RecommendationCandidate => ({
+      ...candidate,
+      confirmation: candidate.confirmation_id ? {
+        id: candidate.confirmation_id,
+        campaign_price: null,
+        fulfillment: null,
+        evidence: null,
+        confirmed_by: null,
+        confirmed_at: null,
+      } : null,
+    })),
+  }
+}
+
+async function loadRun(runId: string): Promise<RecommendationRun> {
+  const run = await http.get<CoreRun>(`${base}/runs/${runId}`)
+  const candidates = await http.get<CoreCandidate[]>(`${base}/runs/${runId}/candidates`)
+  return adaptRun(run, candidates)
+}
 
 export const recommendationApi = {
-  detail(projectId: string): Promise<RecommendationRun | null> {
-    return http.get(`${base}/projects/${projectId}`)
+  async runs(projectId: string): Promise<RecommendationRun[]> {
+    const runs = await http.get<CoreRun[]>(`${base}/${projectId}/runs`)
+    return runs.map((run) => adaptRun(run))
   },
-  start(projectId: string): Promise<RecommendationRun> {
-    return http.post(`${base}/runs`, { project_id: projectId })
+  async run(runId: string): Promise<RecommendationRun> {
+    return loadRun(runId)
   },
-  cancel(runId: string): Promise<RecommendationRun> {
-    return http.post(`${base}/runs/${runId}/cancel`)
+  async detail(projectId: string): Promise<RecommendationRun | null> {
+    const runs = await http.get<CoreRun[]>(`${base}/${projectId}/runs`)
+    const latest = runs[0]
+    if (!latest) return null
+    return loadRun(latest.id)
   },
-  confirm(candidateId: string, body: RecommendationConfirmationUpdate): Promise<RecommendationRun> {
+  async start(projectId: string): Promise<RecommendationRun> {
+    return adaptRun(
+      await http.post<CoreRun>(`${base}/${projectId}/runs`, undefined, { timeoutMs: 300_000 }),
+    )
+  },
+  confirm(candidateId: string, body: RecommendationConfirmationUpdate): Promise<CoreConfirmation> {
     return http.patch(`${base}/candidates/${candidateId}/confirmation`, body)
   },
-  export(runId: string): Promise<Blob> {
-    return http.postBlob(`${base}/runs/${runId}/export`, undefined, { timeoutMs: 300_000 })
+  confirmMany(runId: string, candidateIds: string[]): Promise<CoreConfirmation[]> {
+    return http.post(`${base}/runs/${runId}/confirmations`, { candidate_ids: candidateIds })
   },
 }

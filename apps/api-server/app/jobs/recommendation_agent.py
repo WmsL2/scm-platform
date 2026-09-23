@@ -1,12 +1,19 @@
 from typing import Protocol
 from uuid import UUID
 
-from app.integrations.deepseek.client import DeepSeekConfigurationError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.integrations.deepseek.client import DeepSeekClient, DeepSeekConfigurationError
 from app.modules.recommendation.application.agent_runner import (
     AgentRunner,
     RecommendationAgentCancelled,
 )
 from app.modules.recommendation.application.agent_schemas import AgentRecommendationResult
+from app.modules.recommendation.application.agent_service_adapter import (
+    RecommendationServiceJobPort,
+    RecommendationServiceTools,
+)
+from app.modules.recommendation.application.service import RecommendationService
 
 
 class RecommendationJobPort(Protocol):
@@ -56,3 +63,22 @@ async def execute_recommendation_agent(
         await job_port.fail(run_id, str(exc))
     except Exception:
         await job_port.fail(run_id, "推荐任务执行失败，请稍后重试")
+
+
+async def execute_recommendation_agent_inline(run_id: UUID, session: AsyncSession) -> None:
+    """Local-first execution wired only through B's public RecommendationService."""
+
+    provider = DeepSeekClient()
+    service = RecommendationService(session)
+    tools = RecommendationServiceTools(
+        run_id,
+        service,
+        provider=provider.provider,
+        model=provider.model,
+        prompt_version=provider.prompt_version,
+    )
+    await execute_recommendation_agent(
+        run_id,
+        runner=AgentRunner(provider, tools),
+        job_port=RecommendationServiceJobPort(service),
+    )

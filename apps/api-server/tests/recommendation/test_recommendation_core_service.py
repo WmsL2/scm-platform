@@ -19,6 +19,7 @@ from app.modules.catalog.infrastructure.models import Product
 from app.modules.recommendation.application.service import RecommendationService
 from app.modules.recommendation.infrastructure.models import RecommendationCandidate
 from app.modules.recommendation.schemas import (
+    BatchConfirmationRequest,
     CategoryChoiceInput,
     CategoryPath,
     ConfirmationUpdateRequest,
@@ -106,7 +107,21 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
             gross_margin=Decimal("0.05"),
             status=ProductStatus.ACTIVE.value,
         )
-        session.add_all([eligible, low_margin])
+        eligible_second = Product(
+            source_supplier_id=supplier.id,
+            sku=f"SKU2-{token[:8]}",
+            product_name="国庆活动测试商品",
+            brand="测试品牌",
+            category_level1_name="食品饮料",
+            category_level2_name="休闲食品",
+            category_level3_name="坚果",
+            jd_price=Decimal("120"),
+            agreement_price=Decimal("108"),
+            profit=Decimal("10"),
+            gross_margin=Decimal("0.09"),
+            status=ProductStatus.ACTIVE.value,
+        )
+        session.add_all([eligible, eligible_second, low_margin])
         await session.flush()
 
         service = RecommendationService(session)
@@ -124,7 +139,7 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
         )
         pool = await service.category_pool(run.id)
         assert [(item.level1_name, item.level3_name, item.candidate_count) for item in pool] == [
-            ("食品饮料", "坚果", 1)
+            ("食品饮料", "坚果", 2)
         ]
         path = CategoryPath(level1_name="食品饮料", level2_name="休闲食品", level3_name="坚果")
         await service.record_category_choices(
@@ -141,13 +156,19 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
             ],
         )
         rows = await service.search_products(run.id, [path])
-        assert [row.product_id for row in rows] == [eligible.id]
+        assert {row.product_id for row in rows} == {eligible.id, eligible_second.id}
 
         saved = await service.persist_ranked_candidates(
             run.id,
             PersistCandidatesRequest(
                 candidates=[
-                    {"product_id": eligible.id, "rank": 1, "score": "98.5", "reason": "毛利达标"}
+                    {"product_id": eligible.id, "rank": 1, "score": "98.5", "reason": "毛利达标"},
+                    {
+                        "product_id": eligible_second.id,
+                        "rank": 2,
+                        "score": "96.5",
+                        "reason": "节日场景匹配",
+                    },
                 ]
             ),
         )
@@ -167,6 +188,12 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
         assert confirmed.candidate_id == saved[0].id
         assert confirmed.campaign_price == Decimal("88")
         assert (await service.get_run(run.id)).status == "CONFIRMED"
+        batch_confirmed = await service.confirm_candidates(
+            run.id,
+            BatchConfirmationRequest(candidate_ids=[saved[1].id]),
+            actor_id,
+        )
+        assert [item.candidate_id for item in batch_confirmed] == [saved[1].id]
         assert (await session.get(RecommendationCandidate, saved[0].id)) is not None
         await session.rollback()
 

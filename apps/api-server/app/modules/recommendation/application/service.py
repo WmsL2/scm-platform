@@ -17,6 +17,7 @@ from app.modules.recommendation.infrastructure.models import (
 )
 from app.modules.recommendation.infrastructure.repository import RecommendationRepository
 from app.modules.recommendation.schemas import (
+    BatchConfirmationRequest,
     CandidateRankInput,
     CategoryChoiceInput,
     CategoryPath,
@@ -228,6 +229,12 @@ class RecommendationService:
             run.error = error.strip()[:4000] or None
         return self._run_response(run)
 
+    async def mark_cancelled(self, run_id: uuid.UUID) -> RecommendationRunResponse:
+        async with transaction_scope(self.session):
+            run = await self._run_or_404_for_update(run_id)
+            self._transition(run, RecommendationRunStatus.CANCELLED)
+        return self._run_response(run)
+
     async def list_candidates(self, run_id: uuid.UUID) -> list[RecommendationCandidateResponse]:
         await self._run_or_404(run_id)
         return [
@@ -281,6 +288,62 @@ class RecommendationService:
             await self.session.flush()
             await self.session.refresh(confirmation)
         return self._confirmation_response(confirmation)
+
+    async def confirm_candidates(
+        self,
+        run_id: uuid.UUID,
+        payload: BatchConfirmationRequest,
+        actor_id: uuid.UUID,
+    ) -> list[RecommendationConfirmationResponse]:
+        async with transaction_scope(self.session):
+            run = await self._run_or_404_for_update(run_id)
+            if run.status not in {
+                RecommendationRunStatus.CANDIDATES_READY.value,
+                RecommendationRunStatus.WAITING_CONFIRMATION.value,
+                RecommendationRunStatus.CONFIRMED.value,
+                RecommendationRunStatus.EXPORTED.value,
+            }:
+                raise AppError(
+                    "RECOMMENDATION_CONFIRMATION_NOT_ALLOWED", "当前推品任务不能人工确认", 409
+                )
+            rows = await self.repository.candidates_with_confirmations_for_update(
+                run_id, payload.candidate_ids
+            )
+            if len(rows) != len(payload.candidate_ids):
+                raise AppError(
+                    "RECOMMENDATION_CANDIDATE_NOT_FOUND",
+                    "部分推品候选不存在或不属于当前任务",
+                    404,
+                )
+            requirement = self._parsed_requirement(run)
+            product_ids = [candidate.product_id for candidate, _ in rows]
+            eligible = await self.repository.eligible_products_by_ids(
+                requirement, product_ids
+            )
+            if len(eligible) != len(product_ids):
+                raise AppError(
+                    "RECOMMENDATION_CANDIDATE_INELIGIBLE",
+                    "部分候选商品或供应商当前不可用",
+                    409,
+                )
+            confirmed_at = datetime.now(UTC).replace(tzinfo=None)
+            confirmations: list[RecommendationConfirmation] = []
+            for candidate, confirmation in rows:
+                if confirmation is None:
+                    confirmation = RecommendationConfirmation(candidate_id=candidate.id)
+                    self.session.add(confirmation)
+                confirmation.confirmed_by = actor_id
+                confirmation.confirmed_at = confirmed_at
+                confirmations.append(confirmation)
+            if run.status in {
+                RecommendationRunStatus.CANDIDATES_READY.value,
+                RecommendationRunStatus.WAITING_CONFIRMATION.value,
+            }:
+                self._transition(run, RecommendationRunStatus.CONFIRMED)
+            await self.session.flush()
+            for confirmation in confirmations:
+                await self.session.refresh(confirmation)
+        return [self._confirmation_response(item) for item in confirmations]
 
     async def _run_or_404_for_update(self, run_id: uuid.UUID) -> RecommendationRun:
         run = await self.repository.run_for_update(run_id)

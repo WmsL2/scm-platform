@@ -8,19 +8,18 @@
 - `apps/web-admin/src/views/bid/RecommendationWorkspaceView.vue`：类型4工作台。
 - 类型4项目创建和 A 模板映射 API 已接通。
 
-## B 对接点
+## B 对接结果
 
-1. 为 AgentRunner 提供 `RecommendationTools`：
-   - `list_categories(keywords, limit)` 只返回商品主数据中真实存在的三级文本路径；
-   - `search_products(request)` 只返回受控 `ProductCandidate` 投影。
-2. 为 Job 提供 `RecommendationJobPort`：读取 Run 需求、取消标记、进度、完成、失败和取消持久化。
-3. 完成 Run/detail/cancel/confirmation/export 后，对齐前端 `src/api/recommendation.ts`；页面禁止直接增加散落 URL。
-4. B 保存 Agent 结果前仍需重新校验 Product ID、价格和商品状态，并生成不可变快照。
+1. `RecommendationServiceTools` 已将 AgentRunner 对接 B 的类目池和商品检索，只返回受控商品投影。
+2. `RecommendationServiceJobPort` 已通过 B Service 保存结构化需求、类目选择、候选、失败和取消状态。
+3. 前端已对齐 Run 列表/创建、候选和确认接口；取消与导出因 B 尚未提供而不发起请求。
+4. B 保存 Agent 结果前继续重新校验 Product ID、价格和商品状态，并生成不可变快照。
+5. 人工确认后前端固定刷新原 Run，并提供历史 Run 选择；新增批量确认 API，可一次原子确认最多 30 个属于同一 Run 的候选。
 
 ## A5 对接点
 
-- B Router 完成后由 A5 注册；C 未修改 B Router 或 API 聚合。
-- `TASK_MODE=inline` 可直接 enqueue `execute_recommendation_agent`；ARQ 模式由基础设施适配器提供依赖实例，业务代码不直接依赖 Redis。
+- B Router 已注册到 API V1；C 在 create Run 后调用 Inline Agent 集成入口。
+- 正式 ARQ 模式仍由基础设施适配器提供依赖实例，业务代码不直接依赖 Redis。
 
 ## 环境变量
 
