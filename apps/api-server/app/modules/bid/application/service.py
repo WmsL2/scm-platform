@@ -21,6 +21,7 @@ from app.modules.bid.domain.lifecycle import (
     BidImportStatus,
     BidItemStatus,
     BidProjectStatus,
+    BidProjectType,
     ensure_transition,
 )
 from app.modules.bid.infrastructure.models import (
@@ -40,6 +41,12 @@ from app.modules.bid.schemas import (
     BidProjectItemResponse,
     BidProjectListItem,
     BidProjectStatusResponse,
+)
+from app.modules.recommendation.template.models import RecommendationTemplateMapping
+from app.modules.recommendation.template.schemas import (
+    RecommendationTemplateFileResponse,
+    RecommendationTemplateMappingResponse,
+    RecommendationTemplateMappingUpdateRequest,
 )
 from app.modules.system.service import BusinessSequenceService
 
@@ -61,32 +68,86 @@ class BidProjectService:
         start_at: datetime | None,
         deadline_at: datetime | None,
         remark: str | None,
-        filename: str,
-        file_bytes: bytes,
+        filename: str | None,
+        file_bytes: bytes | None,
+        recommendation_template_filename: str | None = None,
+        recommendation_template_bytes: bytes | None = None,
+        project_type: BidProjectType = BidProjectType.FILTER_RECOMMENDATION,
         actor_id: uuid.UUID,
     ) -> BidProjectCreateResponse:
         if start_at is not None and deadline_at is not None and start_at > deadline_at:
             raise AppError("BID_PROJECT_INVALID_TIME_RANGE", "项目开始时间不能晚于截止时间", 422)
-        self._validate_upload(filename, file_bytes)
+        if project_type == BidProjectType.PPT_SOLUTION:
+            raise AppError("BID_PROJECT_TYPE_NOT_AVAILABLE", "PPT 方案项目暂未开放", 409)
+        if project_type == BidProjectType.FILTER_RECOMMENDATION:
+            if (
+                recommendation_template_filename is not None
+                or recommendation_template_bytes is not None
+            ):
+                raise AppError(
+                    "RECOMMENDATION_TEMPLATE_NOT_ALLOWED",
+                    "筛选推品项目不接受自由推品模板",
+                    422,
+                )
+            if filename is None or file_bytes is None:
+                raise AppError("BID_EXCEL_REQUIRED", "筛选推品必须上传客户需求 Excel", 422)
+            self._validate_upload(filename, file_bytes)
+        else:
+            if not remark or len(remark.strip()) < 20:
+                raise AppError(
+                    "FREE_RECOMMENDATION_REMARK_REQUIRED",
+                    "自由推品需求说明至少需要 20 个有效字符",
+                    422,
+                )
+            if recommendation_template_filename is None or recommendation_template_bytes is None:
+                raise AppError("RECOMMENDATION_TEMPLATE_REQUIRED", "自由推品必须上传推荐模板", 422)
+            self._validate_recommendation_template(
+                recommendation_template_filename, recommendation_template_bytes
+            )
         project_id = uuid.uuid4()
         template: BidTemplate | None = None
         parsed_rows: list[dict[str, Any]] = []
         import_status = BidImportStatus.MAPPING_REQUIRED.value
         import_error: str | None = "未识别到已启用模板，需要完成字段映射后再解析"
-        try:
-            template = await self._recognize_template(file_bytes)
-            if template is not None:
-                parsed_rows = self._parse_rows(file_bytes, template)
-                import_status = BidImportStatus.PARSED.value
-                import_error = None
-        except AppError as exc:
-            import_status = BidImportStatus.FAILED.value
-            import_error = exc.message
+        if project_type == BidProjectType.FILTER_RECOMMENDATION:
+            assert file_bytes is not None
+            try:
+                template = await self._recognize_template(file_bytes)
+                if template is not None:
+                    parsed_rows = self._parse_rows(file_bytes, template)
+                    import_status = BidImportStatus.PARSED.value
+                    import_error = None
+            except AppError as exc:
+                import_status = BidImportStatus.FAILED.value
+                import_error = exc.message
+        else:
+            import_status = BidImportStatus.NOT_REQUIRED.value
+            import_error = None
 
-        storage_key = await self.storage.save(
-            f"bid-projects/{project_id}/original/source.xlsx", file_bytes
-        )
+        analysis = None
+        if project_type == BidProjectType.FREE_RECOMMENDATION:
+            from app.modules.recommendation.template.analyzer import analyze_template
+
+            assert recommendation_template_bytes is not None
+            analysis = analyze_template(recommendation_template_bytes)
+
+        saved_keys: list[str] = []
         try:
+            storage_key: str | None = None
+            template_storage_key: str | None = None
+            if project_type == BidProjectType.FILTER_RECOMMENDATION:
+                assert file_bytes is not None
+                storage_key = await self.storage.save(
+                    f"bid-projects/{project_id}/original/source.xlsx", file_bytes
+                )
+                saved_keys.append(storage_key)
+            else:
+                assert recommendation_template_bytes is not None
+                template_storage_key = await self.storage.save(
+                    f"bid-projects/{project_id}/recommendation-templates/v1.xlsx",
+                    recommendation_template_bytes,
+                )
+                saved_keys.append(template_storage_key)
             async with transaction_scope(self.session):
                 project_code = await BusinessSequenceService(self.session).issue_code("BID_PROJECT")
                 project = BidProject(
@@ -100,6 +161,7 @@ class BidProjectService:
                     template_id=template.id if template else None,
                     template_version=template.version if template else None,
                     status=BidProjectStatus.IMPORTED.value,
+                    project_type=project_type.value,
                     import_status=import_status,
                     import_error=import_error,
                     total_item_count=len(parsed_rows),
@@ -107,18 +169,46 @@ class BidProjectService:
                     created_by=actor_id,
                 )
                 self.session.add(project)
-                self.session.add(
-                    BidProjectFile(
+                if file_bytes is not None and filename is not None and storage_key is not None:
+                    self.session.add(
+                        BidProjectFile(
+                            project_id=project_id,
+                            file_type=BidFileType.ORIGINAL.value,
+                            version_no=1,
+                            original_filename=Path(filename).name[:255],
+                            storage_key=storage_key,
+                            file_size=len(file_bytes),
+                            sha256=hashlib.sha256(file_bytes).hexdigest(),
+                            created_by=actor_id,
+                        )
+                    )
+                if template_storage_key is not None:
+                    assert recommendation_template_bytes is not None
+                    assert recommendation_template_filename is not None
+                    assert analysis is not None
+                    template_file = BidProjectFile(
                         project_id=project_id,
-                        file_type=BidFileType.ORIGINAL.value,
+                        file_type=BidFileType.RECOMMENDATION_TEMPLATE.value,
                         version_no=1,
-                        original_filename=Path(filename).name[:255],
-                        storage_key=storage_key,
-                        file_size=len(file_bytes),
-                        sha256=hashlib.sha256(file_bytes).hexdigest(),
+                        original_filename=Path(recommendation_template_filename).name[:255],
+                        storage_key=template_storage_key,
+                        file_size=len(recommendation_template_bytes),
+                        sha256=hashlib.sha256(recommendation_template_bytes).hexdigest(),
                         created_by=actor_id,
                     )
-                )
+                    self.session.add(template_file)
+                    await self.session.flush()
+                    self.session.add(
+                        RecommendationTemplateMapping(
+                            project_id=project_id,
+                            template_file_id=template_file.id,
+                            template_sha256=template_file.sha256,
+                            sheet_name=analysis.sheet_name,
+                            header_row=analysis.header_row,
+                            data_start_row=analysis.data_start_row,
+                            mapping_json=analysis.mapping_json,
+                        )
+                    )
                 for row in parsed_rows:
                     self.session.add(BidProjectItem(project_id=project_id, **row))
                 self._add_event(
@@ -131,13 +221,15 @@ class BidProjectService:
                 )
                 await self.session.flush()
         except Exception:
-            await self.storage.delete(storage_key)
+            for saved_key in saved_keys:
+                await self.storage.delete(saved_key)
             raise
         return BidProjectCreateResponse(
             id=project_id,
             project_code=project_code,
             status=BidProjectStatus.IMPORTED,
             import_status=BidImportStatus(import_status),
+            project_type=project_type,
             import_error=import_error,
             template_id=template.id if template else None,
             template_version=template.version if template else None,
@@ -159,6 +251,124 @@ class BidProjectService:
             page=page_params.page,
             page_size=page_params.page_size,
         )
+
+    async def add_recommendation_template(
+        self, project_id: uuid.UUID, filename: str, file_bytes: bytes, actor_id: uuid.UUID
+    ) -> RecommendationTemplateFileResponse:
+        self._validate_recommendation_template(filename, file_bytes)
+        project = await self._project_or_404(project_id)
+        self._ensure_free_project(project)
+        from app.modules.recommendation.template.analyzer import analyze_template
+
+        analysis = analyze_template(file_bytes)
+        storage_key: str | None = None
+        try:
+            async with transaction_scope(self.session):
+                project = await self._project_or_404(project_id, lock=True)
+                self._ensure_free_project(project)
+                version = await self._next_template_version(project_id)
+                storage_key = await self.storage.save(
+                    f"bid-projects/{project_id}/recommendation-templates/v{version}.xlsx",
+                    file_bytes,
+                )
+                file = BidProjectFile(
+                    project_id=project_id,
+                    file_type=BidFileType.RECOMMENDATION_TEMPLATE.value,
+                    version_no=version,
+                    original_filename=Path(filename).name[:255],
+                    storage_key=storage_key,
+                    file_size=len(file_bytes),
+                    sha256=hashlib.sha256(file_bytes).hexdigest(),
+                    created_by=actor_id,
+                )
+                self.session.add(file)
+                await self.session.flush()
+                self.session.add(
+                    RecommendationTemplateMapping(
+                        project_id=project_id,
+                        template_file_id=file.id,
+                        template_sha256=file.sha256,
+                        sheet_name=analysis.sheet_name,
+                        header_row=analysis.header_row,
+                        data_start_row=analysis.data_start_row,
+                        mapping_json=analysis.mapping_json,
+                    )
+                )
+                await self.session.flush()
+                await self.session.refresh(file)
+                response = RecommendationTemplateFileResponse(
+                    **self._file_response(file).model_dump(), mapping_confirmed=False
+                )
+        except Exception:
+            if storage_key is not None:
+                await self.storage.delete(storage_key)
+            raise
+        return response
+
+    async def recommendation_templates(
+        self, project_id: uuid.UUID
+    ) -> list[RecommendationTemplateFileResponse]:
+        project = await self._project_or_404(project_id)
+        self._ensure_free_project(project)
+        rows = await self.session.execute(
+            select(BidProjectFile, RecommendationTemplateMapping)
+            .outerjoin(
+                RecommendationTemplateMapping,
+                RecommendationTemplateMapping.template_file_id == BidProjectFile.id,
+            )
+            .where(
+                BidProjectFile.project_id == project_id,
+                BidProjectFile.file_type == BidFileType.RECOMMENDATION_TEMPLATE.value,
+            )
+            .order_by(BidProjectFile.version_no.asc())
+        )
+        return [
+            RecommendationTemplateFileResponse(
+                **self._file_response(file).model_dump(),
+                mapping_confirmed=mapping is not None and mapping.confirmed_at is not None,
+            )
+            for file, mapping in rows.all()
+        ]
+
+    async def recommendation_template_mapping(
+        self, project_id: uuid.UUID, file_id: uuid.UUID
+    ) -> RecommendationTemplateMappingResponse:
+        file, mapping = await self._recommendation_mapping_or_error(project_id, file_id)
+        return self._mapping_response(file, mapping)
+
+    async def update_recommendation_template_mapping(
+        self,
+        project_id: uuid.UUID,
+        file_id: uuid.UUID,
+        payload: RecommendationTemplateMappingUpdateRequest,
+        actor_id: uuid.UUID,
+    ) -> RecommendationTemplateMappingResponse:
+        async with transaction_scope(self.session):
+            file, mapping = await self._recommendation_mapping_or_error(
+                project_id, file_id, lock=True
+            )
+            mapping.sheet_name = payload.sheet_name.strip()
+            mapping.header_row = payload.header_row
+            mapping.data_start_row = payload.data_start_row
+            mapping.mapping_json = payload.mapping_json
+            content = await self.storage.read(file.storage_key)
+            if (
+                hashlib.sha256(content).hexdigest() != file.sha256
+                or file.sha256 != mapping.template_sha256
+            ):
+                raise AppError("RECOMMENDATION_TEMPLATE_MAPPING_INVALID", "模板摘要校验失败", 422)
+            from app.modules.recommendation.template.analyzer import validate_mapping_contract
+
+            validate_mapping_contract(
+                content,
+                sheet_name=mapping.sheet_name,
+                header_row=mapping.header_row,
+                data_start_row=mapping.data_start_row,
+                mapping_json=mapping.mapping_json,
+            )
+            mapping.confirmed_by = actor_id
+            mapping.confirmed_at = datetime.now()
+        return self._mapping_response(file, mapping)
 
     async def get(self, project_id: uuid.UUID) -> BidProjectDetailResponse:
         project = await self._project_or_404(project_id)
@@ -535,6 +745,58 @@ class BidProjectService:
             raise AppError("BID_PROJECT_NOT_FOUND", "投标项目不存在", 404)
         return project
 
+    @staticmethod
+    def _ensure_free_project(project: BidProject) -> None:
+        if project.project_type != BidProjectType.FREE_RECOMMENDATION.value:
+            raise AppError("PROJECT_TYPE_NOT_SUPPORTED", "该项目类型不支持推荐模板", 409)
+
+    async def _next_template_version(self, project_id: uuid.UUID) -> int:
+        latest = await self.session.scalar(
+            select(func.max(BidProjectFile.version_no)).where(
+                BidProjectFile.project_id == project_id,
+                BidProjectFile.file_type == BidFileType.RECOMMENDATION_TEMPLATE.value,
+            )
+        )
+        return (latest or 0) + 1
+
+    async def _recommendation_mapping_or_error(
+        self, project_id: uuid.UUID, file_id: uuid.UUID, *, lock: bool = False
+    ) -> tuple[BidProjectFile, RecommendationTemplateMapping]:
+        project = await self._project_or_404(project_id, lock=lock)
+        self._ensure_free_project(project)
+        statement = (
+            select(BidProjectFile, RecommendationTemplateMapping)
+            .join(
+                RecommendationTemplateMapping,
+                RecommendationTemplateMapping.template_file_id == BidProjectFile.id,
+            )
+            .where(BidProjectFile.id == file_id, BidProjectFile.project_id == project_id)
+        )
+        if lock:
+            statement = statement.with_for_update()
+        row = (await self.session.execute(statement)).first()
+        if row is None:
+            raise AppError("RECOMMENDATION_TEMPLATE_NOT_FOUND", "推荐模板或映射不存在", 404)
+        file, mapping = row
+        if file.file_type != BidFileType.RECOMMENDATION_TEMPLATE.value:
+            raise AppError(
+                "RECOMMENDATION_TEMPLATE_PROJECT_MISMATCH", "文件不是该项目的推荐模板", 409
+            )
+        return file, mapping
+
+    def _mapping_response(
+        self, file: BidProjectFile, mapping: RecommendationTemplateMapping
+    ) -> RecommendationTemplateMappingResponse:
+        return RecommendationTemplateMappingResponse(
+            template_file=self._file_response(file),
+            sheet_name=mapping.sheet_name,
+            header_row=mapping.header_row,
+            data_start_row=mapping.data_start_row,
+            mapping_json=mapping.mapping_json,
+            confirmed_by=mapping.confirmed_by,
+            confirmed_at=mapping.confirmed_at,
+        )
+
     def _transition(
         self,
         project: BidProject,
@@ -577,6 +839,13 @@ class BidProjectService:
             raise AppError("BID_EXCEL_EMPTY", "上传文件不能为空", 422)
         if len(file_bytes) > MAX_FILE_BYTES:
             raise AppError("BID_EXCEL_TOO_LARGE", "上传文件超过大小限制", 422)
+
+    @staticmethod
+    def _validate_recommendation_template(filename: str, file_bytes: bytes) -> None:
+        if Path(filename).suffix.lower() != ".xlsx" or not file_bytes:
+            raise AppError("RECOMMENDATION_TEMPLATE_INVALID", "推荐模板必须是非空 .xlsx 文件", 422)
+        if len(file_bytes) > MAX_FILE_BYTES:
+            raise AppError("RECOMMENDATION_TEMPLATE_INVALID", "推荐模板超过大小限制", 422)
 
     @staticmethod
     def _fingerprint(sheet_name: str, header_row: int, headers: list[str | None]) -> str:
