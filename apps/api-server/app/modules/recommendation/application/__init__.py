@@ -1,1 +1,1 @@
-"""Application orchestration owned by the recommendation Agent workstream."""
+"""Application services and Agent orchestration for free recommendations."""
