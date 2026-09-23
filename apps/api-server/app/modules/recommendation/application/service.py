@@ -23,6 +23,7 @@ from app.modules.recommendation.schemas import (
     CategoryPath,
     CategoryPoolItem,
     ConfirmationUpdateRequest,
+    FactoryDirectStatus,
     ParsedRequirement,
     PersistCandidatesRequest,
     ProductCandidateRow,
@@ -483,7 +484,9 @@ class RecommendationService:
             supplier_snapshot=candidate.supplier_snapshot,
             price_snapshot=candidate.price_snapshot,
             confirmation_id=confirmation.id if confirmation else None,
-            factory_direct=confirmation.factory_direct if confirmation else None,
+            factory_direct=(
+                FactoryDirectStatus(confirmation.factory_direct) if confirmation else None
+            ),
             created_at=candidate.created_at,
         )
 
@@ -497,7 +500,7 @@ class RecommendationService:
             campaign_price=confirmation.campaign_price,
             delivery_status=confirmation.delivery_status,
             inventory_status=confirmation.inventory_status,
-            factory_direct=confirmation.factory_direct,
+            factory_direct=FactoryDirectStatus(confirmation.factory_direct),
             fulfillment_cycle=confirmation.fulfillment_cycle,
             evidence=confirmation.evidence,
             confirmed_by=confirmation.confirmed_by,

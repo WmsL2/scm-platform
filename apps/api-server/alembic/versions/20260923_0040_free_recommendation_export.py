@@ -47,7 +47,10 @@ def upgrade() -> None:
         sa.Column("version_no", sa.Integer(), nullable=False),
         sa.Column("exported_by", _uuid(), nullable=False),
         sa.Column(
-            "exported_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "exported_at",
+            sa.DateTime(),
+            nullable=False,
+            server_default=sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.ForeignKeyConstraint(["project_id"], ["scm_bid_project.id"], ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(["run_id"], ["scm_recommendation_run.id"], ondelete="RESTRICT"),

@@ -5,7 +5,7 @@ from copy import copy
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from openpyxl import load_workbook
@@ -203,8 +203,8 @@ class RecommendationExportService:
                 if target_row > data_start_row:
                     cls._copy_template_row(sheet, data_start_row, target_row)
                 for field, column in columns.items():
-                    sheet.cell(target_row, column).value = cls._value(
-                        field, candidate, confirmation
+                    sheet.cell(target_row, column).value = cast(
+                        Any, cls._value(field, candidate, confirmation)
                     )
             output = BytesIO()
             workbook.save(output)
