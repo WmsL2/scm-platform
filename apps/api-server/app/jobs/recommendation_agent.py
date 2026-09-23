@@ -1,12 +1,19 @@
+import logging
 from typing import Protocol
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.integrations.deepseek.client import DeepSeekClient, DeepSeekConfigurationError
+from app.integrations.deepseek.client import (
+    DeepSeekClient,
+    DeepSeekConfigurationError,
+    DeepSeekProviderError,
+    DeepSeekStructuredOutputError,
+)
 from app.modules.recommendation.application.agent_runner import (
     AgentRunner,
     RecommendationAgentCancelled,
+    RecommendationAgentContractError,
 )
 from app.modules.recommendation.application.agent_schemas import AgentRecommendationResult
 from app.modules.recommendation.application.agent_service_adapter import (
@@ -14,6 +21,14 @@ from app.modules.recommendation.application.agent_service_adapter import (
     RecommendationServiceTools,
 )
 from app.modules.recommendation.application.service import RecommendationService
+
+logger = logging.getLogger(__name__)
+
+_STRUCTURED_FAILURE_MESSAGES = {
+    "CandidateRanking": "候选排序结果格式异常，已自动重试仍失败，请重新生成推荐",
+    "RequirementAnalysis": "需求解析结果格式异常，已自动重试仍失败，请重新生成推荐",
+    "CategoryChoiceList": "类目选择结果格式异常，已自动重试仍失败，请重新生成推荐",
+}
 
 
 class RecommendationJobPort(Protocol):
@@ -61,7 +76,38 @@ async def execute_recommendation_agent(
         await job_port.cancelled(run_id)
     except DeepSeekConfigurationError as exc:
         await job_port.fail(run_id, str(exc))
-    except Exception:
+    except DeepSeekStructuredOutputError as exc:
+        logger.warning(
+            "recommendation structured output failed run_id=%s "
+            "stage=%s attempt=%s error_kind=%s validation=%s",
+            run_id,
+            exc.response_model_name,
+            AgentRunner.MAX_PROVIDER_ATTEMPTS,
+            exc.error_kind,
+            exc.safe_validation_summary,
+        )
+        await job_port.fail(
+            run_id,
+            _STRUCTURED_FAILURE_MESSAGES.get(
+                exc.response_model_name, "推荐结果格式异常，已自动重试仍失败，请重新生成推荐"
+            ),
+        )
+    except DeepSeekProviderError as exc:
+        logger.warning(
+            "recommendation provider failed run_id=%s error_class=%s",
+            run_id,
+            type(exc).__name__,
+        )
+        await job_port.fail(run_id, str(exc))
+    except RecommendationAgentContractError as exc:
+        logger.warning("recommendation contract failed run_id=%s reason=%s", run_id, str(exc))
+        await job_port.fail(run_id, str(exc))
+    except Exception as exc:
+        logger.error(
+            "recommendation job failed run_id=%s error_class=%s",
+            run_id,
+            type(exc).__name__,
+        )
         await job_port.fail(run_id, "推荐任务执行失败，请稍后重试")
 
 

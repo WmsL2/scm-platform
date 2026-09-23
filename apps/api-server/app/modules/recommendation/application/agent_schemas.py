@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+MAX_RANKING_CANDIDATES = 30
+
 
 class RequirementBlockingReason(StrEnum):
     UNUSABLE_REQUIREMENT = "UNUSABLE_REQUIREMENT"
@@ -104,7 +106,7 @@ class RankedCandidate(BaseModel):
 class CandidateRanking(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    candidates: list[RankedCandidate] = Field(min_length=1, max_length=50)
+    candidates: list[RankedCandidate] = Field(min_length=1, max_length=MAX_RANKING_CANDIDATES)
 
 
 class AgentRecommendationResult(BaseModel):

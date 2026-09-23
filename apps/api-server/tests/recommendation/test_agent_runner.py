@@ -5,12 +5,14 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
+from app.integrations.deepseek.client import DeepSeekStructuredOutputError
 from app.modules.recommendation.application.agent_runner import (
     AgentRunner,
     RecommendationAgentCancelled,
     RecommendationAgentContractError,
 )
 from app.modules.recommendation.application.agent_schemas import (
+    MAX_RANKING_CANDIDATES,
     CandidateRanking,
     CategoryChoice,
     CategoryChoiceList,
@@ -32,6 +34,7 @@ class FakeProvider:
         self.responses = responses
         self.calls = 0
         self.system_prompts: list[str] = []
+        self.user_prompts: list[str] = []
 
     async def structured_completion(
         self,
@@ -40,8 +43,8 @@ class FakeProvider:
         user_prompt: str,
         response_model: type[BaseModel],
     ) -> Any:
-        del user_prompt
         self.system_prompts.append(system_prompt)
+        self.user_prompts.append(user_prompt)
         response = self.responses[self.calls]
         self.calls += 1
         if isinstance(response, Exception):
@@ -189,3 +192,103 @@ def _unused_product() -> ProductCandidate:
         product_name="占位商品",
         category_path="一级/二级/三级",
     )
+
+
+@pytest.mark.asyncio
+async def test_ranking_is_deterministically_capped_and_diverse_before_provider_call() -> None:
+    categories = [
+        CategoryOption(key=f"category-{index}", level1=f"一级{index}", product_count=20)
+        for index in range(5)
+    ]
+
+    class ManyProductsTools(FakeTools):
+        async def list_categories(self, _: list[str], *, limit: int) -> list[CategoryOption]:
+            assert limit == 100
+            return categories
+
+        async def search_products(self, request: ProductSearchRequest) -> list[ProductCandidate]:
+            self.searches.append(request)
+            category_index = int(request.category_key.removeprefix("category-"))
+            return [
+                ProductCandidate(
+                    product_id=UUID(int=category_index * 100 + product_index + 1),
+                    product_name=f"商品-{category_index}-{product_index}",
+                    category_path=f"一级{category_index}",
+                )
+                for product_index in range(20)
+            ]
+
+    choices = CategoryChoiceList(
+        choices=[
+            CategoryChoice(category_key=item.key, reason="覆盖方向", search_keywords=["会议"])
+            for item in categories
+        ]
+    )
+    expected_ids = [UUID(int=index * 100 + 1) for index in range(5)]
+    provider = FakeProvider(
+        [
+            analysis(),
+            choices,
+            CandidateRanking(
+                candidates=[
+                    RankedCandidate(product_id=product_id, score=Decimal("90"), reason="真实候选")
+                    for product_id in expected_ids
+                ]
+            ),
+        ]
+    )
+    result = await AgentRunner(provider, ManyProductsTools(_unused_product())).run(
+        "我们需要为企业员工提供适合会议与办公场景的可靠福利商品组合推荐"
+    )
+
+    ranking_prompt = provider.user_prompts[-1]
+    assert ranking_prompt.count('"product_id"') == MAX_RANKING_CANDIDATES
+    assert len(result.candidates) <= MAX_RANKING_CANDIDATES
+    actual_ids = {
+        UUID(int=index * 100 + product_index + 1)
+        for index in range(5)
+        for product_index in range(20)
+    }
+    assert {candidate.product_id for candidate in result.candidates}.issubset(actual_ids)
+    assert [UUID(int=index * 100 + 1) for index in range(5)] == expected_ids
+
+
+@pytest.mark.asyncio
+async def test_structured_ranking_failure_retries_with_safe_correction() -> None:
+    product = _unused_product()
+    error = DeepSeekStructuredOutputError(
+        response_model_name="CandidateRanking",
+        safe_validation_summary=(
+            "candidates.0.score: less_than_equal: Input should be less than or equal to 100"
+        ),
+        error_kind="SCHEMA_VALIDATION",
+    )
+    provider = FakeProvider(
+        [
+            analysis(),
+            CategoryChoiceList(
+                choices=[
+                    CategoryChoice(
+                        category_key="办公设备/会议设备/会议平板",
+                        reason="适合",
+                        search_keywords=["会议"],
+                    )
+                ]
+            ),
+            error,
+            CandidateRanking(
+                candidates=[
+                    RankedCandidate(
+                        product_id=product.product_id, score=Decimal("90"), reason="合法"
+                    )
+                ]
+            ),
+        ]
+    )
+    result = await AgentRunner(provider, FakeTools(product)).run(
+        "我们需要一套适合企业会议室使用的显示和无线协作设备，请优先考虑可靠性"
+    )
+    assert result.candidates[0].product_id == product.product_id
+    assert provider.calls == 4
+    assert "脱敏校验错误" in provider.user_prompts[-1]
+    assert "Input should be less than or equal to 100" in provider.user_prompts[-1]

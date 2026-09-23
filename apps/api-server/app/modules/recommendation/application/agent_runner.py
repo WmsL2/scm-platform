@@ -1,10 +1,16 @@
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Protocol, TypeVar
 
 from pydantic import BaseModel
 
-from app.integrations.deepseek.client import DeepSeekConfigurationError, compact_json
+from app.integrations.deepseek.client import (
+    DeepSeekConfigurationError,
+    DeepSeekStructuredOutputError,
+    compact_json,
+)
 from app.modules.recommendation.application.agent_schemas import (
+    MAX_RANKING_CANDIDATES,
     AgentRecommendationResult,
     CandidateRanking,
     CategoryChoiceList,
@@ -17,6 +23,7 @@ from app.modules.recommendation.application.agent_schemas import (
 ProgressReporter = Callable[[str, int, str], Awaitable[None]]
 CancellationChecker = Callable[[], Awaitable[bool]]
 StructuredModel = TypeVar("StructuredModel", bound=BaseModel)
+logger = logging.getLogger(__name__)
 
 
 class StructuredProvider(Protocol):
@@ -134,7 +141,7 @@ class AgentRunner:
             raise RecommendationAgentContractError("模型返回了商品主数据中不存在的类目")
 
         await self._check_cancelled(is_cancelled)
-        all_candidates: dict[str, ProductCandidate] = {}
+        category_candidates: list[list[ProductCandidate]] = []
         for index, choice in enumerate(choices.choices, start=1):
             await self._report(
                 report_progress,
@@ -149,11 +156,11 @@ class AgentRunner:
                 agreement_price_min=analysis.budget_min,
                 agreement_price_max=analysis.budget_max,
             )
-            for candidate in await self._call_search_products(request):
-                all_candidates[str(candidate.product_id)] = candidate
+            category_candidates.append(await self._call_search_products(request))
             await self._check_cancelled(is_cancelled)
 
-        if not all_candidates:
+        candidates = self._select_ranking_candidates(category_candidates)
+        if not candidates:
             return AgentRecommendationResult(
                 analysis=analysis,
                 category_choices=choices.choices,
@@ -165,12 +172,19 @@ class AgentRunner:
             )
 
         await self._report(report_progress, "RANKING", 75, "正在生成候选排序和推荐理由")
-        candidates = list(all_candidates.values())
+        logger.debug(
+            "recommendation provider call stage=CandidateRanking candidate_count=%s attempt=1",
+            len(candidates),
+        )
         ranking = await self._complete(
             CandidateRanking,
             system=(
-                "你只能对给定候选商品排序。只能返回候选中存在的 product_id，不得修改价格、"
-                "计算新价格或补充不存在的商品。score 范围为 0 到 100，理由必须基于已给字段。"
+                '只能返回 JSON object，顶层只能是 {"candidates":[...]}，不得输出 Markdown、'
+                "代码块或额外字段。每个 candidate 只能含 product_id、score、reason；product_id 必须"
+                "原样复制输入候选的 UUID，示例 UUID 仅表示结构，实际值只能来自输入。"
+                "score 必须为 0 到 100 的数字，reason 必须为非空字符串。"
+                "不得返回不存在或重复的 product_id，不得超过输入"
+                f"数量，也不得超过 {MAX_RANKING_CANDIDATES} 条。"
             ),
             user=f"需求={analysis.model_dump_json()}\n候选={compact_json(candidates)}",
         )
@@ -200,21 +214,65 @@ class AgentRunner:
         user: str,
     ) -> StructuredModel:
         last_error: Exception | None = None
+        retry_user = user
         for attempt in range(self.MAX_PROVIDER_ATTEMPTS):
             try:
                 return await self.provider.structured_completion(
                     system_prompt=system,
-                    user_prompt=user,
+                    user_prompt=retry_user,
                     response_model=response_model,
                 )
             except DeepSeekConfigurationError:
                 raise
+            except DeepSeekStructuredOutputError as exc:
+                last_error = exc
+                if attempt + 1 == self.MAX_PROVIDER_ATTEMPTS:
+                    raise
+                logger.warning(
+                    "recommendation structured output retry "
+                    "stage=%s attempt=%s error_kind=%s validation=%s",
+                    response_model.__name__,
+                    attempt + 1,
+                    exc.error_kind,
+                    exc.safe_validation_summary,
+                )
+                retry_user = (
+                    f"{user}\n\n上一次输出未通过 JSON Schema 校验。请重新生成完整 JSON。"
+                    f"以下是脱敏校验错误：{exc.safe_validation_summary}。"
+                    "不要解释，不要输出 Markdown，只输出合法 JSON。"
+                )
             except Exception as exc:
                 last_error = exc
                 if attempt + 1 == self.MAX_PROVIDER_ATTEMPTS:
                     raise
         assert last_error is not None
         raise last_error
+
+    @staticmethod
+    def _select_ranking_candidates(
+        category_candidates: Sequence[Sequence[ProductCandidate]],
+    ) -> list[ProductCandidate]:
+        """Round-robin deterministic repository-ordered candidates across AI choices."""
+        selected: list[ProductCandidate] = []
+        selected_ids: set[str] = set()
+        positions = [0] * len(category_candidates)
+        while len(selected) < MAX_RANKING_CANDIDATES:
+            progressed = False
+            for index, group in enumerate(category_candidates):
+                while positions[index] < len(group):
+                    candidate = group[positions[index]]
+                    positions[index] += 1
+                    if str(candidate.product_id) in selected_ids:
+                        continue
+                    selected.append(candidate)
+                    selected_ids.add(str(candidate.product_id))
+                    progressed = True
+                    break
+                if len(selected) == MAX_RANKING_CANDIDATES:
+                    break
+            if not progressed:
+                break
+        return selected
 
     async def _call_list_categories(self, keywords: Sequence[str]) -> list[CategoryOption]:
         self._consume_tool_call()
