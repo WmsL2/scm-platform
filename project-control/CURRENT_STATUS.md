@@ -92,6 +92,8 @@ Sprint 1 — Auth/RBAC + Supplier
 
 ## Workstreams / Implementation Context
 
+- Free Recommendation Ranking Stability：排序输入/输出/持久化已统一为最多 30 条。多个类目按确定性 round-robin 去重合并；DeepSeek 的结构化输出使用带 stage 与不含输入值摘要的安全错误，并仅自动纠错重试一次。无 Migration，前端既有 `run.error` 展示合同不变。
+
 - Auth Real API Integration：已完成真实 Auth API 联调；分支与合入状态以 GitHub / `main` 历史为准。
 - Business Sequence：`sys_biz_sequence` Migration、并发安全取号服务与 MySQL 并发测试已完成；分支与合入状态以 GitHub / `main` 历史为准。
 - Supplier：Backend MERGED / Frontend REAL_API_IMPLEMENTED；Delete & Import Patch MERGED / IMPLEMENTED（Revision `20260908_0005`），新增逻辑删除、`supplier:delete`、Excel 模板/校验预览和 Web Admin 控制。Name Uniqueness Patch IMPLEMENTED（Revision `20260910_0016`）：活动同名创建/编辑受阻，逻辑删除同名记录可恢复覆盖；Excel 活动重名/表内重名按行提示。ADR-0012 已冻结归档状态选择：新建、编辑和 Excel Confirm 可选择 `DRAFT` / `PENDING` / `ARCHIVED`；Excel 保持预览后由上传者显式确认，合作状态固定为 `NORMAL`。Import Confirm Integrity Fix IMPLEMENTED：确认时直接锁定批次行、flush 并核验实际处理数后才置为成功；历史异常确认批次不自动重放。

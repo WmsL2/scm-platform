@@ -20,6 +20,22 @@ class DeepSeekProviderError(RuntimeError):
     """Provider failure safe to surface without leaking credentials or response bodies."""
 
 
+class DeepSeekStructuredOutputError(DeepSeekProviderError):
+    """A safe, actionable failure while parsing a structured provider response."""
+
+    def __init__(
+        self,
+        *,
+        response_model_name: str,
+        safe_validation_summary: str,
+        error_kind: str,
+    ) -> None:
+        self.response_model_name = response_model_name
+        self.safe_validation_summary = safe_validation_summary
+        self.error_kind = error_kind
+        super().__init__(f"DeepSeek 返回的 {response_model_name} 结构不符合业务约束")
+
+
 class DeepSeekClient:
     """Small OpenAI-compatible DeepSeek adapter with strict structured-output validation."""
 
@@ -53,9 +69,7 @@ class DeepSeekClient:
     ) -> StructuredResult:
         api_key = self.settings.deepseek_api_key
         if api_key is None:
-            raise DeepSeekConfigurationError(
-                "DeepSeek 未配置，请设置 DEEPSEEK_API_KEY 后重试"
-            )
+            raise DeepSeekConfigurationError("DeepSeek 未配置，请设置 DEEPSEEK_API_KEY 后重试")
         schema = json.dumps(response_model.model_json_schema(), ensure_ascii=False)
         payload = {
             "model": self.model,
@@ -91,9 +105,32 @@ class DeepSeekClient:
 
         try:
             content = body["choices"][0]["message"]["content"]
-            return response_model.model_validate_json(self._strip_json_fence(content))
-        except (KeyError, IndexError, TypeError, ValidationError, json.JSONDecodeError) as exc:
-            raise DeepSeekProviderError("DeepSeek 返回的数据结构不符合业务约束") from exc
+        except (KeyError, IndexError, TypeError) as exc:
+            raise DeepSeekStructuredOutputError(
+                response_model_name=response_model.__name__,
+                safe_validation_summary=(
+                    "content: missing_content: Provider response has no text content"
+                ),
+                error_kind="MISSING_CONTENT",
+            ) from exc
+
+        try:
+            normalized_content = self._strip_json_fence(content)
+            json.loads(normalized_content)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise DeepSeekStructuredOutputError(
+                response_model_name=response_model.__name__,
+                safe_validation_summary="content: json_invalid: JSON decode failed",
+                error_kind="INVALID_JSON",
+            ) from exc
+        try:
+            return response_model.model_validate_json(normalized_content)
+        except ValidationError as exc:
+            raise DeepSeekStructuredOutputError(
+                response_model_name=response_model.__name__,
+                safe_validation_summary=self._safe_validation_summary(exc),
+                error_kind="SCHEMA_VALIDATION",
+            ) from exc
 
     @staticmethod
     def _strip_json_fence(content: Any) -> str:
@@ -102,6 +139,14 @@ class DeepSeekClient:
         value = content.strip()
         match = _FENCED_JSON.fullmatch(value)
         return match.group(1) if match else value
+
+    @staticmethod
+    def _safe_validation_summary(exc: ValidationError) -> str:
+        """Expose only location, type and message; never Pydantic's input value."""
+        return "; ".join(
+            ".".join(str(part) for part in error["loc"]) + f": {error['type']}: {error['msg']}"
+            for error in exc.errors(include_input=False, include_url=False)
+        )
 
 
 def compact_json(items: Sequence[BaseModel | dict[str, Any]]) -> str:

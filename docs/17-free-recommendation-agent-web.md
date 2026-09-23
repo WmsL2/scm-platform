@@ -38,7 +38,10 @@ API Key 为空不会阻止后端启动，但不能执行 Agent。错误日志和
 - 需求解析、类目选择和候选排序均使用严格 Pydantic JSON Schema。
 - 类目必须来自 `RecommendationTools.list_categories`。
 - 候选 ID 必须来自 `RecommendationTools.search_products`。
+- 数据库先按既有稳定规则筛选商品；最多 30 个真实候选以确定性 round-robin 跨类目合并后才送入 AI 排序。AI 只能排序这些 ID，最多返回 30 条。
 - 每次运行最多调用 8 次受控工具，Provider 失败最多重试一次。
+- `CandidateRanking` 只能返回顶层 `candidates` 的 JSON object，每项只含 `product_id`、`score`（0–100）和非空 `reason`。严格 Schema、未知字段、UUID、分数和重复 ID 校验均不放宽。
+- 结构化 JSON/Schema 错误会附带脱敏校验位置进行一次纠错重试；第二次仍失败时 Run 安全标记为 FAILED。不会持久化或记录原始 DeepSeek response、完整 Prompt 或候选商品 JSON。
 - Agent 不接收 SQL 工具，不接触数据库连接信息，不直接写正式业务库。
 - 正式商品状态、价格、确认、快照、审计和导出由后端确定性服务重新校验。
 

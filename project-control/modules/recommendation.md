@@ -14,3 +14,5 @@
 - 自由推品未指定类目、品牌、预算、价格或数量时按开放条件处理；仅需求不可执行、硬条件矛盾或存在必须人工决策的合规问题才进入 `NEEDS_INPUT`。页面支持补充说明后创建新 Run，并展示每次实际读取的需求快照。
 - Web 已支持类型1–3/类型4创建分流、类型5禁用、映射确认、运行状态、候选理由和人工确认，并已对齐 B 的 `/recommendation-projects` 合同。导出按钮保持禁用，等待 A 评审 B 提出的导出 Migration Requirement。
 - Web 人工确认固定刷新当前 Run，并提供 Run 历史切换，后续失败 Run 不再覆盖当前成功候选；候选支持逐条确认和最多 30 条原子批量确认，复用 `recommendation:review`。
+- CandidateRanking 现以单一 `MAX_RANKING_CANDIDATES = 30` 收敛输入、结构化输出和持久化上限。多个 AI 类目方向的商品按 Repository 既有稳定顺序以确定性 round-robin 去重合并，避免首个类目占满名额。
+- DeepSeek 结构化输出失败会保留 response model、错误类别和不含输入值的校验摘要；仅针对该类错误自动带脱敏纠错提示重试一次。两次失败会记录对应阶段的安全 FAILED 文案，日志不保存原始响应、Prompt 或候选 JSON。
