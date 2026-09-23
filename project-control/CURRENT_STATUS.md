@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-09-22
 
+> 2026-09-23：自由推品确认结果导出已在分支 `feat/free-recommendation-export` 实现，Migration `20260923_0040` 新增导出审计记录和人工 `factory_direct` 三态字段；复用 `recommendation:export`，导出保留上传模板格式并仅包含已确认候选。后端迁移和模块测试、前端类型检查/Vitest/生产构建已执行；真实浏览器导出验收仍需授权账号和实际确认 Run。
+
 > 2026-09-23：自由推品 Recommendation A1–A4 底座已合入 `main`，Migration `20260923_0039`；B 的确定性 Run/候选/人工确认核心正在 `feat/free-recommendation-core` 实现，C 的 Agent/Web 和 A 的最终 Router 聚合尚未接入。导出仍等待“导出文件记录、厂家直供人工确认”最小数据合同评审。
 
 > 2026-09-23：板块 C 已在 `feat/free-recommendation-agent-web` 实现 DeepSeek 适配器、受控 AgentRunner、任务执行入口和类型4 Web 工作台；真实商品检索、Run 持久化、确认和导出仍等待板块 B API 后统一对齐，DeepSeek 密钥由部署环境提供。

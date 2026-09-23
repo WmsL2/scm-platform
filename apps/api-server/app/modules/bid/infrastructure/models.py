@@ -118,7 +118,8 @@ class BidProjectFile(Base):
     __tablename__ = "scm_bid_project_file"
     __table_args__ = (
         CheckConstraint(
-            "file_type IN ('ORIGINAL', 'QUOTED_EXPORT', 'RECOMMENDATION_TEMPLATE')",
+            "file_type IN ('ORIGINAL', 'QUOTED_EXPORT', 'RECOMMENDATION_TEMPLATE', "
+            "'RECOMMENDATION_EXPORT')",
             name="ck_scm_bid_project_file_type",
         ),
         UniqueConstraint(

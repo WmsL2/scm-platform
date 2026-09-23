@@ -10,6 +10,7 @@ import type { BidProjectDetail } from "../../types/bid"
 import {
   RUN_STATUS_LABELS,
   TEMPLATE_MAPPING_FIELDS,
+  type FactoryDirectStatus,
   type RecommendationCandidate,
   type RecommendationRun,
   type RecommendationTemplateFile,
@@ -31,13 +32,23 @@ const selectedCandidates = ref<RecommendationCandidate[]>([])
 const confirmVisible = ref(false)
 const selectedCandidate = ref<RecommendationCandidate>()
 const supplementText = ref("")
-const confirmation = reactive({ campaign_price: "", fulfillment: "", evidence: "" })
+const confirmation = reactive({
+  campaign_price: "",
+  fulfillment: "",
+  evidence: "",
+  factory_direct: "PENDING" as FactoryDirectStatus,
+})
 let pollTimer: ReturnType<typeof setInterval> | undefined
 
 const mappingConfirmed = computed(() => Boolean(mapping.value?.confirmed_at))
 const activeRun = computed(() => run.value && ["QUEUED", "ANALYZING", "RETRIEVING", "RANKING"].includes(run.value.status))
 const canStart = computed(() => mappingConfirmed.value && !activeRun.value && auth.hasPermission("recommendation:run"))
-const canExport = computed(() => false)
+const canExport = computed(() => Boolean(
+  run.value
+  && ["CONFIRMED", "EXPORTED"].includes(run.value.status)
+  && run.value.candidates.some((item) => item.confirmation)
+  && auth.hasPermission("recommendation:export"),
+))
 const resultStatuses = new Set(["CANDIDATES_READY", "WAITING_CONFIRMATION", "CONFIRMED", "EXPORTED"])
 
 async function load() {
@@ -178,6 +189,7 @@ function openConfirmation(candidate: RecommendationCandidate) {
   confirmation.campaign_price = candidate.confirmation?.campaign_price ?? String(candidate.price_snapshot.campaign_price ?? "")
   confirmation.fulfillment = candidate.confirmation?.fulfillment ?? ""
   confirmation.evidence = candidate.confirmation?.evidence ?? ""
+  confirmation.factory_direct = candidate.factory_direct ?? "PENDING"
   confirmVisible.value = true
 }
 
@@ -187,6 +199,7 @@ async function saveConfirmation() {
   try {
     await recommendationApi.confirm(selectedCandidate.value.id, {
       campaign_price: confirmation.campaign_price || null,
+      factory_direct: confirmation.factory_direct,
       fulfillment_cycle: confirmation.fulfillment || null,
       evidence: confirmation.evidence || null,
     })
@@ -195,6 +208,27 @@ async function saveConfirmation() {
     ElMessage.success("人工确认已保存")
   } catch (error) {
     ElMessage.error(messageFor(error, "保存人工确认失败"))
+  } finally {
+    acting.value = false
+  }
+}
+
+async function exportConfirmedCandidates() {
+  if (!run.value || !canExport.value) return
+  acting.value = true
+  try {
+    const file = await recommendationApi.export(projectId, run.value.id)
+    const blob = await recommendationApi.downloadExport(run.value.id, file.id)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = file.original_filename
+    link.click()
+    URL.revokeObjectURL(url)
+    await refreshRun(run.value.id)
+    ElMessage.success("自由推品结果已导出")
+  } catch (error) {
+    ElMessage.error(messageFor(error, "导出确认结果失败"))
   } finally {
     acting.value = false
   }
@@ -250,7 +284,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
   <div v-loading="loading" class="workspace">
     <header>
       <div><p>FREE RECOMMENDATION</p><h1>{{ project?.project_name ?? "自由推品 Agent" }}</h1><span>{{ project?.remark }}</span></div>
-      <div class="actions"><el-button @click="router.push('/bid-projects')">返回项目</el-button><el-button type="primary" :disabled="!canStart" :loading="acting" @click="startRun">{{ run ? "重新生成推荐" : "开始生成推荐" }}</el-button><el-tooltip content="导出合同等待后端迁移和接口完成"><span><el-button type="success" :disabled="!canExport">导出确认结果</el-button></span></el-tooltip></div>
+      <div class="actions"><el-button @click="router.push('/bid-projects')">返回项目</el-button><el-button type="primary" :disabled="!canStart" :loading="acting" @click="startRun">{{ run ? "重新生成推荐" : "开始生成推荐" }}</el-button><el-button type="success" :disabled="!canExport" :loading="acting" @click="exportConfirmedCandidates">导出确认结果</el-button></div>
     </header>
 
     <el-alert v-if="!mappingConfirmed" title="开始推荐前必须人工确认本项目模板的字段映射。毛利、厂直和物流等歧义字段不会由系统自动猜测。" type="warning" :closable="false" />
@@ -307,7 +341,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
     <el-empty v-if="mappingConfirmed && !run" description="模板已确认，可以开始生成自由推品推荐" />
 
     <el-dialog v-model="confirmVisible" title="人工确认候选商品" width="min(640px, 92vw)">
-      <el-form label-position="top"><el-form-item label="活动价"><el-input v-model="confirmation.campaign_price" inputmode="decimal" /></el-form-item><el-form-item label="履约说明"><el-input v-model="confirmation.fulfillment" type="textarea" :rows="3" /></el-form-item><el-form-item label="依据与备注"><el-input v-model="confirmation.evidence" type="textarea" :rows="3" /></el-form-item></el-form>
+      <el-form label-position="top"><el-form-item label="活动价"><el-input v-model="confirmation.campaign_price" inputmode="decimal" /></el-form-item><el-form-item label="是否厂直"><el-select v-model="confirmation.factory_direct"><el-option label="待确认" value="PENDING" /><el-option label="是" value="YES" /><el-option label="否" value="NO" /></el-select></el-form-item><el-form-item label="履约说明"><el-input v-model="confirmation.fulfillment" type="textarea" :rows="3" /></el-form-item><el-form-item label="依据与备注"><el-input v-model="confirmation.evidence" type="textarea" :rows="3" /></el-form-item></el-form>
       <template #footer><el-button @click="confirmVisible = false">取消</el-button><el-button type="primary" :loading="acting" @click="saveConfirmation">确认保存</el-button></template>
     </el-dialog>
   </div>

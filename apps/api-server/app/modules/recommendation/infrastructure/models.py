@@ -21,11 +21,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.models import Base
 from app.common.uuid_type import UUIDChar36
-from app.modules.bid.infrastructure.models import BidProject
+from app.modules.bid.infrastructure.models import BidProject, BidProjectFile
 from app.modules.catalog.infrastructure.models import Product
 
 # Explicit imports ensure the referenced tables are registered when this module is loaded alone.
-RELATED_MODEL_TYPES = (BidProject, Product)
+RELATED_MODEL_TYPES = (BidProject, BidProjectFile, Product)
 
 
 class RecommendationRun(Base):
@@ -128,6 +128,9 @@ class RecommendationConfirmation(Base):
     campaign_price: Mapped[Decimal | None] = mapped_column(Numeric(65, 30), nullable=True)
     delivery_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     inventory_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    factory_direct: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="PENDING"
+    )
     fulfillment_cycle: Mapped[str | None] = mapped_column(String(255), nullable=True)
     evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
     confirmed_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
@@ -139,4 +142,41 @@ class RecommendationConfirmation(Base):
         DateTime,
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
+    )
+
+
+class RecommendationExport(Base):
+    __tablename__ = "scm_recommendation_export"
+    __table_args__ = (
+        UniqueConstraint("export_file_id", name="uq_scm_recommendation_export_file"),
+        UniqueConstraint(
+            "project_id", "run_id", "version_no", name="uq_scm_recommendation_export_version"
+        ),
+        Index("ix_scm_recommendation_export_project_id", "project_id"),
+        Index("ix_scm_recommendation_export_run_id", "run_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_bid_project.id", ondelete="RESTRICT"), nullable=False
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_recommendation_run.id", ondelete="RESTRICT"), nullable=False
+    )
+    template_file_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_bid_project_file.id", ondelete="RESTRICT"), nullable=False
+    )
+    template_mapping_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDChar36(),
+        ForeignKey("scm_recommendation_template_mapping.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    export_file_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_bid_project_file.id", ondelete="RESTRICT"), nullable=False
+    )
+    mapping_snapshot: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    version_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    exported_by: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), nullable=False)
+    exported_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )

@@ -15,6 +15,7 @@ from app.modules.catalog.infrastructure.models import Product
 from app.modules.recommendation.infrastructure.models import (
     RecommendationCandidate,
     RecommendationConfirmation,
+    RecommendationExport,
     RecommendationRun,
 )
 from app.modules.recommendation.schemas import CategoryPath, ParsedRequirement
@@ -53,6 +54,26 @@ class RecommendationRepository:
                 .where(RecommendationTemplateMapping.project_id == project_id)
                 .order_by(BidProjectFile.version_no.desc())
                 .limit(1)
+            )
+        ).first()
+        if row is None:
+            return None
+        return cast(tuple[RecommendationTemplateMapping, BidProjectFile], tuple(row))
+
+    async def latest_template_mapping_for_update(
+        self, project_id: uuid.UUID
+    ) -> tuple[RecommendationTemplateMapping, BidProjectFile] | None:
+        row = (
+            await self.session.execute(
+                select(RecommendationTemplateMapping, BidProjectFile)
+                .join(
+                    BidProjectFile,
+                    RecommendationTemplateMapping.template_file_id == BidProjectFile.id,
+                )
+                .where(RecommendationTemplateMapping.project_id == project_id)
+                .order_by(BidProjectFile.version_no.desc())
+                .limit(1)
+                .with_for_update()
             )
         ).first()
         if row is None:
@@ -212,6 +233,44 @@ class RecommendationRepository:
             .with_for_update()
         )
         return [(row[0], row[1]) for row in rows]
+
+    async def confirmed_candidates_for_export(
+        self, run_id: uuid.UUID
+    ) -> list[tuple[RecommendationCandidate, RecommendationConfirmation]]:
+        rows = await self.session.execute(
+            select(RecommendationCandidate, RecommendationConfirmation)
+            .join(
+                RecommendationConfirmation,
+                RecommendationConfirmation.candidate_id == RecommendationCandidate.id,
+            )
+            .where(RecommendationCandidate.run_id == run_id)
+            .order_by(RecommendationCandidate.rank)
+            .with_for_update()
+        )
+        return [(row[0], row[1]) for row in rows]
+
+    async def next_export_version(self, project_id: uuid.UUID) -> int:
+        latest = await self.session.scalar(
+            select(func.max(RecommendationExport.version_no)).where(
+                RecommendationExport.project_id == project_id,
+            )
+        )
+        return int(latest or 0) + 1
+
+    async def export_file_for_run(
+        self, run_id: uuid.UUID, file_id: uuid.UUID
+    ) -> BidProjectFile | None:
+        return cast(
+            BidProjectFile | None,
+            await self.session.scalar(
+                select(BidProjectFile)
+                .join(
+                    RecommendationExport,
+                    RecommendationExport.export_file_id == BidProjectFile.id,
+                )
+                .where(RecommendationExport.run_id == run_id, BidProjectFile.id == file_id)
+            ),
+        )
 
     @staticmethod
     def _eligibility_filters(requirement: ParsedRequirement) -> list[ColumnElement[bool]]:

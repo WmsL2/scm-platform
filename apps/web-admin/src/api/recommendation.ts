@@ -1,5 +1,6 @@
 import { http } from "../shared/http/runtime"
 import type {
+  FactoryDirectStatus,
   ParsedRequirement,
   RecommendationCandidate,
   RecommendationConfirmationUpdate,
@@ -34,6 +35,7 @@ interface CoreCandidate {
   supplier_snapshot: Record<string, unknown>
   price_snapshot: Record<string, unknown>
   confirmation_id: string | null
+  factory_direct: FactoryDirectStatus | null
 }
 
 interface CoreConfirmation {
@@ -58,6 +60,7 @@ function adaptRun(run: CoreRun, candidates: CoreCandidate[] = []): Recommendatio
         campaign_price: null,
         fulfillment: null,
         evidence: null,
+        factory_direct: candidate.factory_direct ?? "PENDING",
         confirmed_by: null,
         confirmed_at: null,
       } : null,
@@ -95,5 +98,11 @@ export const recommendationApi = {
   },
   confirmMany(runId: string, candidateIds: string[]): Promise<CoreConfirmation[]> {
     return http.post(`${base}/runs/${runId}/confirmations`, { candidate_ids: candidateIds })
+  },
+  export(projectId: string, runId: string): Promise<{ id: string; original_filename: string }> {
+    return http.post(`${base}/${projectId}/runs/${runId}/exports`)
+  },
+  downloadExport(runId: string, fileId: string): Promise<Blob> {
+    return http.getBlob(`${base}/runs/${runId}/exports/${fileId}/download`)
   },
 }
