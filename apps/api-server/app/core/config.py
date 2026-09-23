@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     initial_admin_password: SecretStr | None = None
     redis_enabled: bool = False
     minio_enabled: bool = False
+    deepseek_api_key: SecretStr | None = None
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-chat"
+    deepseek_timeout_seconds: int = 60
+    deepseek_max_tokens: int = 4096
+    deepseek_prompt_version: str = "free-recommendation-v1"
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -44,7 +50,9 @@ class Settings(BaseSettings):
         path = Path(value)
         return path if path.is_absolute() else PROJECT_ROOT / path
 
-    @field_validator("initial_admin_username", "initial_admin_password", mode="before")
+    @field_validator(
+        "initial_admin_username", "initial_admin_password", "deepseek_api_key", mode="before"
+    )
     @classmethod
     def blank_initial_admin_setting_is_unset(cls, value: str | None) -> str | None:
         return None if isinstance(value, str) and not value.strip() else value
@@ -58,6 +66,8 @@ class Settings(BaseSettings):
         "product_import_max_rows",
         "product_import_max_concurrent_workbooks",
         "product_import_max_image_mb",
+        "deepseek_timeout_seconds",
+        "deepseek_max_tokens",
     )
     @classmethod
     def positive_auth_duration(cls, value: int) -> int:

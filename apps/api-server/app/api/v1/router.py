@@ -8,6 +8,7 @@ from app.modules.catalog.api.category_router import router as category_router
 from app.modules.catalog.api.router import router as product_router
 from app.modules.dashboard.api.router import router as dashboard_router
 from app.modules.matching.api.router import router as matching_router
+from app.modules.recommendation.api.recommendation_router import router as recommendation_router
 from app.modules.supplier.api.router import router as supplier_router
 
 router = APIRouter(prefix="/api/v1")
@@ -20,3 +21,4 @@ router.include_router(category_router)
 router.include_router(dashboard_router)
 router.include_router(bid_project_router)
 router.include_router(matching_router)
+router.include_router(recommendation_router)

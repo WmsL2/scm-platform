@@ -1,0 +1,51 @@
+# 类型4自由推品 Agent 与 Web
+
+## 1. 使用流程
+
+1. 在投标与推品项目页面选择“类型4 · 自由推品 Agent”。
+2. 填写项目、需求方和不少于 20 字的场景需求说明。
+3. 上传本项目的推荐结果 `.xlsx` 模板。
+4. 创建后确认工作表、表头行、数据起始行和模板字段映射。
+5. 启动 Agent，查看需求理解、类目方向、候选排序和推荐理由。
+6. 运营人员确认候选的活动价、履约说明和依据。
+7. 全部满足服务端确认条件后导出推荐结果。
+
+自由推品允许类目、品牌、价格区间、预算和数量留空；系统会从满足硬性毛利与状态规则的正式商品中探索方向。节日、活动、人群和“特价”等属于场景词，不会错误地当成商品类目过滤。“一件代发”等明确履约信息会进入结构化需求。
+
+当状态为“需要补充信息”时，工作台展示 Agent 本次实际读取的需求快照和问题。运营可在页面填写补充说明并重新生成；系统更新项目备注并创建新的 Run，旧 Run 的需求快照和结果继续保留。
+
+工作台按当前 `run_id` 刷新状态和候选，人工确认后不会自动切换到项目中更新创建的其他 Run。运营可通过运行时间和状态下拉查看历史 Run；重新生成前会提示创建新记录，已有候选和确认结果不会被覆盖。候选既可逐条补充活动价与履约说明，也可勾选最多 30 条后一次原子批量确认。
+
+类型5 PPT 方案在当前阶段仅展示“暂未开放”，不能创建。
+
+## 2. DeepSeek 配置
+
+后端通过以下环境变量读取配置，API Key 留给部署人员填写：
+
+```env
+DEEPSEEK_API_KEY=
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_TIMEOUT_SECONDS=60
+DEEPSEEK_MAX_TOKENS=4096
+DEEPSEEK_PROMPT_VERSION=free-recommendation-v1
+```
+
+API Key 为空不会阻止后端启动，但不能执行 Agent。错误日志和业务错误不得包含密钥、Provider 原始响应或请求中的敏感信息。
+
+## 3. Agent 安全约束
+
+- 需求解析、类目选择和候选排序均使用严格 Pydantic JSON Schema。
+- 类目必须来自 `RecommendationTools.list_categories`。
+- 候选 ID 必须来自 `RecommendationTools.search_products`。
+- 每次运行最多调用 8 次受控工具，Provider 失败最多重试一次。
+- Agent 不接收 SQL 工具，不接触数据库连接信息，不直接写正式业务库。
+- 正式商品状态、价格、确认、快照、审计和导出由后端确定性服务重新校验。
+
+## 4. 前后端对接边界
+
+A 已冻结的项目创建与模板映射接口直接使用。B 已提供的 Run、详情、候选、逐条确认和批量确认接口均通过前端 `src/api/recommendation.ts` 调用，完整前缀为 `/api/v1/recommendation-projects`。批量确认由服务端在一个事务中重新校验全部候选的商品和供应商状态，任何一项失效都会整批拒绝。
+
+后端 Job 通过 `RecommendationServiceJobPort` 与 B 的持久化服务对接；AgentRunner 通过 `RecommendationServiceTools` 查询真实类目和商品。C 不依赖 B 的 Repository，也不直接访问数据库。
+
+当前本机 `TASK_MODE=inline` 时，创建 Run 的请求会等待 Agent 完成，前端超时为 5 分钟。正式 ARQ 后台执行仍需基础设施适配；取消接口尚未开放。导出因缺少专用导出记录和厂家直供人工确认字段保持禁用。

@@ -23,11 +23,11 @@ describe("bid api", () => {
   it("uses multipart create and long timeouts for every inline long operation", async () => {
     http.post.mockResolvedValue({ id: "p1" })
     const { bidApi } = await import("./bid")
-    await bidApi.create({ file: new File(["xlsx"], "request.xlsx"), project_name: "项目", buyer_name: "需求商", deadline_at: "2026-09-20T10:00:00", remark: "备注" })
+    await bidApi.create({ project_type: "FILTER_RECOMMENDATION", file: new File(["xlsx"], "request.xlsx"), project_name: "项目", buyer_name: "需求商", deadline_at: "2026-09-20T10:00:00", remark: "备注" })
     await bidApi.startMatching("p1"); await bidApi.export("p1")
     const form = http.post.mock.calls[0][1] as FormData
     expect(http.post.mock.calls[0][0]).toBe("/api/v1/bid-projects")
-    expect(form.get("file")).toBeInstanceOf(File); expect(form.get("project_name")).toBe("项目"); expect(form.get("buyer_name")).toBe("需求商")
+    expect(form.get("file")).toBeInstanceOf(File); expect(form.get("project_type")).toBe("FILTER_RECOMMENDATION"); expect(form.get("project_name")).toBe("项目"); expect(form.get("buyer_name")).toBe("需求商")
     expect(http.post.mock.calls[0][2]).toEqual({ timeoutMs: 300_000 })
     expect(http.post).toHaveBeenNthCalledWith(2, "/api/v1/bid-projects/p1/commands/start-matching", undefined, { timeoutMs: 300_000 })
     expect(http.post).toHaveBeenNthCalledWith(3, "/api/v1/bid-projects/p1/exports", undefined, { timeoutMs: 300_000 })

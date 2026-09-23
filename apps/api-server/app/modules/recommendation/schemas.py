@@ -152,6 +152,18 @@ class ConfirmationUpdateRequest(BaseModel):
         return value.strip() if value and value.strip() else None
 
 
+class BatchConfirmationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_ids: list[UUID] = Field(min_length=1, max_length=30)
+
+    @model_validator(mode="after")
+    def require_unique_candidates(self) -> "BatchConfirmationRequest":
+        if len(self.candidate_ids) != len(set(self.candidate_ids)):
+            raise ValueError("candidate_ids must be unique")
+        return self
+
+
 class RecommendationConfirmationResponse(BaseModel):
     id: UUID
     candidate_id: UUID

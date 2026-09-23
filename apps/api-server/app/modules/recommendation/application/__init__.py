@@ -1,1 +1,1 @@
-"""Application services for free recommendations."""
+"""Application services and Agent orchestration for free recommendations."""

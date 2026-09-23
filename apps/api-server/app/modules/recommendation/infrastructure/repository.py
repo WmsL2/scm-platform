@@ -195,6 +195,24 @@ class RecommendationRepository:
             tuple(row),
         )
 
+    async def candidates_with_confirmations_for_update(
+        self, run_id: uuid.UUID, candidate_ids: Sequence[uuid.UUID]
+    ) -> list[tuple[RecommendationCandidate, RecommendationConfirmation | None]]:
+        rows = await self.session.execute(
+            select(RecommendationCandidate, RecommendationConfirmation)
+            .outerjoin(
+                RecommendationConfirmation,
+                RecommendationConfirmation.candidate_id == RecommendationCandidate.id,
+            )
+            .where(
+                RecommendationCandidate.run_id == run_id,
+                RecommendationCandidate.id.in_(candidate_ids),
+            )
+            .order_by(RecommendationCandidate.rank)
+            .with_for_update()
+        )
+        return [(row[0], row[1]) for row in rows]
+
     @staticmethod
     def _eligibility_filters(requirement: ParsedRequirement) -> list[ColumnElement[bool]]:
         filters: list[ColumnElement[bool]] = [

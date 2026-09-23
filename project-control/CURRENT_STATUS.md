@@ -7,6 +7,12 @@ Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Su
 
 > 2026-09-23：自由推品 Recommendation A1–A4 底座已合入 `main`，Migration `20260923_0039`；B 的确定性 Run/候选/人工确认核心正在 `feat/free-recommendation-core` 实现，C 的 Agent/Web 和 A 的最终 Router 聚合尚未接入。导出仍等待“导出文件记录、厂家直供人工确认”最小数据合同评审。
 
+> 2026-09-23：板块 C 已在 `feat/free-recommendation-agent-web` 实现 DeepSeek 适配器、受控 AgentRunner、任务执行入口和类型4 Web 工作台；真实商品检索、Run 持久化、确认和导出仍等待板块 B API 后统一对齐，DeepSeek 密钥由部署环境提供。
+
+> 2026-09-23：`feat/free-recommendation-agent-web` 已合入最新 B 核心并完成第一轮 B/C 集成：Recommendation Router 注册至 API V1，Web 对齐 `/recommendation-projects`，Inline Agent 仅通过 B `RecommendationService` 完成需求保存、真实类目/商品检索和候选持久化。导出仍等待 Schema/Migration 决策。
+
+> 2026-09-23：自由推品人工确认已修复 Run 串台：前端按当前 `run_id` 刷新并支持历史 Run 切换；候选可勾选后通过单事务批量确认（最多 30 条），重新生成不会覆盖原候选与确认结果。
+
 ## Repository
 
 - Remote：GitHub
