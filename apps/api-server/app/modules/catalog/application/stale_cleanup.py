@@ -31,9 +31,14 @@ class ProductImportStaleCleanupService:
         if older_than_hours <= 0 or task_limit <= 0:
             raise ValueError("older_than_hours and task_limit must be positive")
         stale_before = datetime.now() - timedelta(hours=older_than_hours)
-        task_ids = await self.repository.stale_import_task_ids(
-            stale_before=stale_before, limit=task_limit
-        )
+        # A SELECT starts an implicit AsyncSession transaction.  End that read-only
+        # transaction before each task enters its own short write transaction; otherwise
+        # transaction_scope() would participate in the SELECT transaction and the job
+        # session close would roll its deletes back.
+        async with transaction_scope(self.session):
+            task_ids = await self.repository.stale_import_task_ids(
+                stale_before=stale_before, limit=task_limit
+            )
         deleted = retained = skipped = 0
         for task_id in task_ids:
             result = await self.purge_task(

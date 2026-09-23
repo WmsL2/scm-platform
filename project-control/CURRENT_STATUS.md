@@ -26,7 +26,7 @@ Sprint 1 — Auth/RBAC + Supplier
 商品导入数值安全、4,000+ 行分页与并发确认保护已在分支 `feat/product-import-safety-concurrency` 实现；Revision `20260918_0033` 为暂存行增加标准化值和 Product 版本快照，Revision `20260918_0034` 将六个正式价格字段扩展为 `DECIMAL(65,30)` 以无损保存 Excel 价格原值。Confirm 以供应商 + SKU 锁及版本冲突返回 409，重型工作簿操作默认每 API 进程并发 1。内嵌图片改为 Confirm 时逐张流式解码与保存，移除旧 50MB 累计截断；TIFF/EMF 等转 PNG，公式缺图或坏图按行阻止确认，单图默认上限 64MB（ADR-0029，无 Migration）。历史商品图片不自动回填，重新导入后生效。
 
 商品导入锁竞争控制已实现：Revision `20260922_0038` 添加 Import Task 的 `status + created_at` 索引；Confirm 先准备内嵌图片，再锁定 Task 并重新校验后写入，避免图片处理期间长期持有 Task 锁。立即暂存清理策略（ADR-0035）移除了预览/Confirm 的机会性历史清理：全部 Confirm 成功或用户 Discard 后，临时源 Excel 和该批 Staging 数据立即删除；超过五小时的异常遗留由 ADR-0036 的独立命令处理。
-商品导入超过五小时的异常遗留 Task 由独立命令清理（ADR-0036）：命令只投影读取 Task / 文件 Key 字段，逐条短锁并使用 `SKIP LOCKED`，由服务器 Windows 计划任务每 15 分钟调用；不重新进入预览或 Confirm 请求路径。
+商品导入超过五小时的异常遗留 Task 由独立命令清理（ADR-0036）：候选 Task ID 查询在独立只读事务结束后，逐条短锁并使用 `SKIP LOCKED` 和独立写事务实际提交删除；由服务器 Windows 计划任务每 15 分钟调用，不重新进入预览或 Confirm 请求路径。
 
 商品导入临时源 Excel 24 小时保留已在分支 `feat/product-import-confirm-reupload` 实现：含 `DISPIMG` 的预览暂存源文件，Confirm 成功后立即删除；关闭预览弹窗调用 discard 接口作废任务并立即删除。浏览器异常关闭、断网或进程中断时，未完成任务在后续导入操作中按 24 小时边界过期清理；无内嵌图片任务不保存源文件（ADR-0031，无 Migration）。
 
