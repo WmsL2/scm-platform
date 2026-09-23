@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-09-22
 
+> 2026-09-23：自由推品 Recommendation A1–A4 底座已在本地 `feat/free-recommendation-foundation` 实现，Migration `20260923_0039`；等待 B/C 接手 Run/Agent/Web，不包含 A5 集成。
+
 ## Repository
 
 - Remote：GitHub

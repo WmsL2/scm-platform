@@ -70,8 +70,12 @@ class BidProject(Base):
             name="ck_scm_bid_project_status",
         ),
         CheckConstraint(
-            "import_status IN ('PARSED', 'MAPPING_REQUIRED', 'FAILED')",
+            "import_status IN ('PARSED', 'MAPPING_REQUIRED', 'FAILED', 'NOT_REQUIRED')",
             name="ck_scm_bid_project_import_status",
+        ),
+        CheckConstraint(
+            "project_type IN ('FILTER_RECOMMENDATION', 'FREE_RECOMMENDATION', 'PPT_SOLUTION')",
+            name="ck_scm_bid_project_project_type",
         ),
         Index("ix_scm_bid_project_status", "status"),
         Index("ix_scm_bid_project_created_at", "created_at"),
@@ -90,6 +94,9 @@ class BidProject(Base):
     )
     template_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
+    project_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="FILTER_RECOMMENDATION"
+    )
     import_status: Mapped[str] = mapped_column(String(32), nullable=False)
     import_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     total_item_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
@@ -111,7 +118,8 @@ class BidProjectFile(Base):
     __tablename__ = "scm_bid_project_file"
     __table_args__ = (
         CheckConstraint(
-            "file_type IN ('ORIGINAL', 'QUOTED_EXPORT')", name="ck_scm_bid_project_file_type"
+            "file_type IN ('ORIGINAL', 'QUOTED_EXPORT', 'RECOMMENDATION_TEMPLATE')",
+            name="ck_scm_bid_project_file_type",
         ),
         UniqueConstraint(
             "project_id", "file_type", "version_no", name="uq_scm_bid_project_file_version"
