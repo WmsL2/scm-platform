@@ -1012,33 +1012,98 @@ async def test_manual_purge_deletes_one_abandoned_import_task() -> None:
                 await session.commit()
 
 
-async def test_stale_cleanup_purges_one_expired_import_without_loading_history() -> None:
+async def test_stale_cleanup_commits_partial_import_staging_and_media_deletion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     task_id = uuid.uuid4()
+    match_id = uuid.uuid4()
     task = ProductImportTask(
         id=task_id,
         original_filename="stale-products.xlsx",
-        status="READY_TO_CONFIRM",
-        total_rows=0,
-        valid_rows=0,
+        status="PARTIALLY_CONFIRMED",
+        total_rows=2,
+        valid_rows=1,
         update_rows=0,
-        invalid_rows=0,
-        imported_rows=0,
+        invalid_rows=1,
+        imported_rows=1,
+        source_file_storage_key="imports/stale-products.xlsx",
         created_by=uuid.uuid4(),
         created_at=datetime.now() - timedelta(hours=6),
     )
+    match = ProductImportSupplierMatch(
+        id=match_id,
+        import_task_id=task_id,
+        supplier_name_normalized="stale supplier",
+        match_status="UNMATCHED",
+    )
+    imported_row = ProductImportRow(
+        id=uuid.uuid4(),
+        import_task_id=task_id,
+        supplier_match_id=match_id,
+        source_row_number=2,
+        source_data={},
+        calculated_data={},
+        is_valid=True,
+        is_imported=True,
+        image_storage_key="products/already-imported.png",
+    )
+    remaining_row = ProductImportRow(
+        id=uuid.uuid4(),
+        import_task_id=task_id,
+        supplier_match_id=match_id,
+        source_row_number=3,
+        source_data={},
+        calculated_data={},
+        is_valid=False,
+        is_imported=False,
+        image_storage_key="imports/stale-row.png",
+    )
     async with SessionLocal() as session:
-        session.add(task)
+        session.add_all((task, match, imported_row, remaining_row))
         await session.commit()
     try:
+        storage = _RecordingStorage()
         async with SessionLocal() as session:
-            result = await ProductImportStaleCleanupService(session).purge_task(
-                task_id,
-                stale_before=datetime.now() - timedelta(hours=5),
-                skip_locked=False,
+            service = ProductImportStaleCleanupService(session, storage)
+
+            async def select_only_this_task(
+                *, stale_before: datetime, limit: int
+            ) -> list[uuid.UUID]:
+                del stale_before, limit
+                return list(
+                    (
+                        await session.scalars(
+                            select(ProductImportTask.id).where(ProductImportTask.id == task_id)
+                        )
+                    ).all()
+                )
+
+            monkeypatch.setattr(service.repository, "stale_import_task_ids", select_only_this_task)
+            report = await service.run(
+                older_than_hours=5,
+                task_limit=100,
             )
-        assert result == "DELETED"
+        assert report.selected_tasks == 1
+        assert report.deleted_tasks == 1
+        assert report.retained_tasks == 0
+        assert report.skipped_locked_tasks == 0
+        assert storage.deleted == ["imports/stale-products.xlsx", "imports/stale-row.png"]
         async with SessionLocal() as session:
             assert await session.get(ProductImportTask, task_id) is None
+            assert (
+                await session.scalar(
+                    select(ProductImportRow).where(ProductImportRow.import_task_id == task_id)
+                )
+                is None
+            )
+            assert (
+                await session.scalar(
+                    select(ProductImportSupplierMatch).where(
+                        ProductImportSupplierMatch.import_task_id == task_id
+                    )
+                )
+                is None
+            )
     finally:
         async with SessionLocal() as session:
             existing = await session.get(ProductImportTask, task_id)

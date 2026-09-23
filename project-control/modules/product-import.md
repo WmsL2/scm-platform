@@ -1,8 +1,8 @@
 # 商品大表导入
 
 状态：IMPLEMENTED / PRODUCT_MASTER_2026_43_COLUMNS / FAILED_ROWS_EXPORT
-Owner：codex/feat/product-import-stale-cleanup
-Last Updated：2026-09-22
+Owner：codex/fix/product-import-stale-cleanup-transaction
+Last Updated：2026-09-23
 
 ## Database
 - [x] `20260910_0013` 创建 `scm_product_import_task`、`scm_product_import_row`、`scm_product_import_supplier_match`
@@ -34,7 +34,7 @@ Last Updated：2026-09-22
 - [x] Confirm 浏览器请求允许等待 15 分钟；正式 Product 的供应商 + SKU 查询与锁定按稳定顺序每 500 组分批执行，避免 MySQL 超大复合 `IN` 的范围优化内存告警，同时保持事务原子性和并发冲突保护
 - [x] Confirm 不再使用 50MB 全工作簿图片累计上限；每次只解码和保存一张图片，浏览器不直接支持的 TIFF/EMF/BMP/WMF 转为 PNG，单图上限由 `PRODUCT_IMPORT_MAX_IMAGE_MB` 配置（默认 64MB）
 - [x] 预览与 Confirm 不再清理任何历史 Task，避免加载历史暂存行 JSON；未收到关闭请求的异常遗留任务由业务方手工处理
-- [x] 独立清理命令默认每轮处理最多 100 个创建超过五小时的 Task；只查询 Task / 文件 Key 投影字段、使用 `SKIP LOCKED`，由 Windows 计划任务每 15 分钟调用
+- [x] 独立清理命令默认每轮处理最多 100 个创建超过五小时的 Task；候选 ID 查询在独立只读事务结束后，逐条以独立短写事务和 `SKIP LOCKED` 清理，确保计划任务报告删除成功即已提交
 - [x] Confirm 在锁定 Task 前准备本次图片文件；锁定、重新校验通过后才将图片键写入 Staging 行并写正式 Product，冲突或失败时仅清理本次新建图片，临时源 Excel 的 24 小时保留与成功后删除规则不变
 
 ## Frontend
@@ -53,7 +53,7 @@ Last Updated：2026-09-22
 - [x] API 回归测试覆盖“所有行供应商为空”，要求返回 200 和空 `supplier_matches`，所有行保留“供应商不能为空”错误而不触发 `MissingGreenlet`
 - [x] 回归测试覆盖带 WPS `DISPIMG` 的失败行导出、43 列模板、错误说明及导出文件重新预览
 - [x] 通用前端单元测试覆盖无 Excel 导入时允许离开、处理中阻止路由及请求浏览器离开提醒
-- [x] Repository 回归测试覆盖终态 Task 按 Row、Supplier Match、Task 的外键顺序删除；图片暂存测试覆盖“准备阶段不写回 Staging 行”
+- [x] Repository 回归测试覆盖终态 Task 按 Row、Supplier Match、Task 的外键顺序删除；五小时清理回归测试覆盖 `PARTIALLY_CONFIRMED` 的 Task、Row、Supplier Match 实际提交删除，以及只删除未导入临时资源
 - [x] 全量后端测试、前端类型检查、单元测试与构建已执行
 
 ## Known Issues
