@@ -7,6 +7,8 @@ Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Su
 
 > 2026-09-23：自由推品 Recommendation A1–A4 底座已在本地 `feat/free-recommendation-foundation` 实现，Migration `20260923_0039`；等待 B/C 接手 Run/Agent/Web，不包含 A5 集成。
 
+> 2026-09-23：板块 C 已在 `feat/free-recommendation-agent-web` 实现 DeepSeek 适配器、受控 AgentRunner、任务执行入口和类型4 Web 工作台；真实商品检索、Run 持久化、确认和导出仍等待板块 B API 后统一对齐，DeepSeek 密钥由部署环境提供。
+
 ## Repository
 
 - Remote：GitHub
