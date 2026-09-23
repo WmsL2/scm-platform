@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest"
 import source from "./RecommendationWorkspaceView.vue?raw"
 
 describe("RecommendationWorkspaceView", () => {
-  it("requires confirmed template mapping before starting or exporting", () => {
+  it("requires confirmed template mapping and confirmed candidates before exporting", () => {
     expect(source).toContain("mappingConfirmed")
     expect(source).toContain("请先确认模板字段映射")
-    expect(source).toContain("导出合同等待后端迁移和接口完成")
-    expect(source).toContain("const canExport = computed(() => false)")
+    expect(source).toContain("recommendation:export")
+    expect(source).toContain("exportConfirmedCandidates")
+    expect(source).toContain("recommendationApi.downloadExport")
   })
 
   it("shows controlled Agent progress and human confirmation", () => {

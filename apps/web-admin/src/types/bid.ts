@@ -2,7 +2,7 @@ export type BidProjectStatus = "IMPORTED" | "MATCHING" | "SELECTING" | "READY" |
 export type BidImportStatus = "PARSED" | "MAPPING_REQUIRED" | "FAILED" | "NOT_REQUIRED"
 export type BidProjectType = "FILTER_RECOMMENDATION" | "FREE_RECOMMENDATION" | "PPT_SOLUTION"
 export type BidItemStatus = "PENDING" | "NO_MATCH" | "UNIQUE_MATCH" | "MULTIPLE_MATCH" | "SELECTED" | "NO_QUOTE"
-export type BidFileType = "ORIGINAL" | "QUOTED_EXPORT" | "RECOMMENDATION_TEMPLATE"
+export type BidFileType = "ORIGINAL" | "QUOTED_EXPORT" | "RECOMMENDATION_TEMPLATE" | "RECOMMENDATION_EXPORT"
 export type NoQuoteReason = "NO_PRODUCT_MATCH" | "BRAND_MODEL_MISMATCH" | "PRICE_NOT_MATCH" | "SUPPLIER_UNAVAILABLE" | "OTHER"
 
 export interface BidProjectListItem { id: string; project_code: string; project_name: string; buyer_name: string; start_at: string | null; deadline_at: string | null; status: BidProjectStatus; import_status: BidImportStatus; project_type: BidProjectType; total_item_count: number; processed_item_count: number; created_at: string }
@@ -22,5 +22,5 @@ export const PROJECT_STATUS_LABELS: Record<string, string> = { IMPORTED: "已导
 export const IMPORT_STATUS_LABELS: Record<string, string> = { PARSED: "已解析", MAPPING_REQUIRED: "待模板配置", FAILED: "导入失败", NOT_REQUIRED: "无需需求表" }
 export const PROJECT_TYPE_LABELS: Record<BidProjectType, string> = { FILTER_RECOMMENDATION: "条件筛选推品", FREE_RECOMMENDATION: "自由推品 Agent", PPT_SOLUTION: "PPT 方案（暂未开放）" }
 export const ITEM_STATUS_LABELS: Record<string, string> = { PENDING: "待匹配", NO_MATCH: "未匹配", UNIQUE_MATCH: "唯一候选", MULTIPLE_MATCH: "多个候选", SELECTED: "已选品", NO_QUOTE: "无法报价" }
-export const FILE_TYPE_LABELS: Record<string, string> = { ORIGINAL: "原始文件", QUOTED_EXPORT: "报价文件", RECOMMENDATION_TEMPLATE: "自由推品模板" }
+export const FILE_TYPE_LABELS: Record<string, string> = { ORIGINAL: "原始文件", QUOTED_EXPORT: "报价文件", RECOMMENDATION_TEMPLATE: "自由推品模板", RECOMMENDATION_EXPORT: "自由推品导出" }
 export const NO_QUOTE_REASON_LABELS: Record<string, string> = { NO_PRODUCT_MATCH: "无匹配商品", BRAND_MODEL_MISMATCH: "品牌或型号不满足", PRICE_NOT_MATCH: "价格不满足", SUPPLIER_UNAVAILABLE: "供应商无法供货", OTHER: "其他" }

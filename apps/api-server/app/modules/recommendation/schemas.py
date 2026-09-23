@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.modules.recommendation.template.schemas import RecommendationRunStatus
+
+
+class FactoryDirectStatus(StrEnum):
+    PENDING = "PENDING"
+    YES = "YES"
+    NO = "NO"
 
 
 class ParsedRequirement(BaseModel):
@@ -134,6 +141,7 @@ class RecommendationCandidateResponse(BaseModel):
     supplier_snapshot: dict[str, object]
     price_snapshot: dict[str, object]
     confirmation_id: UUID | None = None
+    factory_direct: FactoryDirectStatus | None = None
     created_at: datetime
 
 
@@ -143,6 +151,7 @@ class ConfirmationUpdateRequest(BaseModel):
     campaign_price: Decimal | None = Field(default=None, ge=0, max_digits=65, decimal_places=30)
     delivery_status: str | None = Field(default=None, max_length=32)
     inventory_status: str | None = Field(default=None, max_length=32)
+    factory_direct: FactoryDirectStatus = FactoryDirectStatus.PENDING
     fulfillment_cycle: str | None = Field(default=None, max_length=255)
     evidence: str | None = Field(default=None, max_length=4000)
 
@@ -170,6 +179,7 @@ class RecommendationConfirmationResponse(BaseModel):
     campaign_price: Decimal | None
     delivery_status: str | None
     inventory_status: str | None
+    factory_direct: FactoryDirectStatus
     fulfillment_cycle: str | None
     evidence: str | None
     confirmed_by: UUID | None

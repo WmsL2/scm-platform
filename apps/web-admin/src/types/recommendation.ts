@@ -7,10 +7,11 @@ export interface RecommendationTemplateMappingUpdate { sheet_name: string; heade
 export interface RecommendationTemplateMapping extends RecommendationTemplateMappingUpdate { template_file: BidProjectFile; confirmed_by: string | null; confirmed_at: string | null }
 export interface ParsedRequirement { gross_margin_min: string | null; jd_price_min: string | null; jd_price_max: string | null; category_keywords: string[]; brand_keywords: string[]; scenario_keywords: string[]; fulfillment_mode: string | null }
 export interface RecommendationCategoryChoice { id: string; level1_name: string | null; level2_name: string | null; level3_name: string | null; reason: string | null; candidate_count: number }
-export interface RecommendationConfirmation { id: string; campaign_price: string | null; fulfillment: string | null; evidence: string | null; confirmed_by: string | null; confirmed_at: string | null }
-export interface RecommendationCandidate { id: string; product_id: string; rank: number; score: string | null; reason: string | null; product_snapshot: Record<string, unknown>; supplier_snapshot: Record<string, unknown>; price_snapshot: Record<string, unknown>; confirmation: RecommendationConfirmation | null }
+export type FactoryDirectStatus = "PENDING" | "YES" | "NO"
+export interface RecommendationConfirmation { id: string; campaign_price: string | null; fulfillment: string | null; evidence: string | null; factory_direct: FactoryDirectStatus; confirmed_by: string | null; confirmed_at: string | null }
+export interface RecommendationCandidate { id: string; product_id: string; rank: number; score: string | null; reason: string | null; product_snapshot: Record<string, unknown>; supplier_snapshot: Record<string, unknown>; price_snapshot: Record<string, unknown>; factory_direct: FactoryDirectStatus | null; confirmation: RecommendationConfirmation | null }
 export interface RecommendationRun { id: string; project_id: string; status: RecommendationRunStatus; progress_percent?: number; progress_message?: string | null; raw_requirement_snapshot: string; parsed_requirement: ParsedRequirement | null; provider: string | null; model: string | null; prompt_version: string | null; error: string | null; category_choices: RecommendationCategoryChoice[]; candidates: RecommendationCandidate[]; created_at: string; updated_at: string }
-export interface RecommendationConfirmationUpdate { campaign_price?: string | null; delivery_status?: string | null; inventory_status?: string | null; fulfillment_cycle?: string | null; evidence?: string | null }
+export interface RecommendationConfirmationUpdate { campaign_price?: string | null; delivery_status?: string | null; inventory_status?: string | null; factory_direct?: FactoryDirectStatus; fulfillment_cycle?: string | null; evidence?: string | null }
 
 export const RUN_STATUS_LABELS: Record<RecommendationRunStatus, string> = {
   DRAFT: "草稿", QUEUED: "排队中", ANALYZING: "分析需求中", RETRIEVING: "检索商品中",

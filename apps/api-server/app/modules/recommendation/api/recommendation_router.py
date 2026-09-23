@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import uuid
+from io import BytesIO
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import ApiResponse, success
@@ -11,6 +14,8 @@ from app.core.database import get_db_session
 from app.jobs.recommendation_agent import execute_recommendation_agent_inline
 from app.modules.auth.dependencies import require_permission
 from app.modules.auth.schemas import CurrentUser
+from app.modules.bid.schemas import BidProjectFileResponse
+from app.modules.recommendation.application.export_service import RecommendationExportService
 from app.modules.recommendation.application.service import RecommendationService
 from app.modules.recommendation.schemas import (
     BatchConfirmationRequest,
@@ -22,6 +27,16 @@ from app.modules.recommendation.schemas import (
 
 router = APIRouter(prefix="/recommendation-projects", tags=["free-recommendation"])
 SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
+
+
+def _attachment_headers(filename: str) -> dict[str, str]:
+    """Return an ASCII-safe RFC 5987 attachment header for Chinese filenames."""
+    return {
+        "Content-Disposition": (
+            'attachment; filename="recommendation-export.xlsx"; '
+            f"filename*=UTF-8''{quote(filename, safe='')}"
+        )
+    }
 
 
 @router.post("/{project_id}/runs", response_model=ApiResponse[RecommendationRunResponse])
@@ -96,4 +111,32 @@ async def confirm_candidates(
         await RecommendationService(session).confirm_candidates(
             run_id, payload, current.user_id
         )
+    )
+
+
+@router.post(
+    "/{project_id}/runs/{run_id}/exports", response_model=ApiResponse[BidProjectFileResponse]
+)
+async def export_confirmed_candidates(
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    current: Annotated[CurrentUser, Depends(require_permission("recommendation:export"))],
+    session: SessionDep,
+) -> ApiResponse[BidProjectFileResponse]:
+    file = await RecommendationExportService(session).export(project_id, run_id, current.user_id)
+    return success(file)
+
+
+@router.get("/runs/{run_id}/exports/{file_id}/download")
+async def download_export(
+    run_id: uuid.UUID,
+    file_id: uuid.UUID,
+    _: Annotated[CurrentUser, Depends(require_permission("recommendation:export"))],
+    session: SessionDep,
+) -> StreamingResponse:
+    file, content = await RecommendationExportService(session).download_export(run_id, file_id)
+    return StreamingResponse(
+        BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=_attachment_headers(file.original_filename),
     )

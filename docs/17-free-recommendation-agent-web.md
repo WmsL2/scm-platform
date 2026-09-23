@@ -51,4 +51,6 @@ A 已冻结的项目创建与模板映射接口直接使用。B 已提供的 Run
 
 后端 Job 通过 `RecommendationServiceJobPort` 与 B 的持久化服务对接；AgentRunner 通过 `RecommendationServiceTools` 查询真实类目和商品。C 不依赖 B 的 Repository，也不直接访问数据库。
 
-当前本机 `TASK_MODE=inline` 时，创建 Run 的请求会等待 Agent 完成，前端超时为 5 分钟。正式 ARQ 后台执行仍需基础设施适配；取消接口尚未开放。导出因缺少专用导出记录和厂家直供人工确认字段保持禁用。
+当前本机 `TASK_MODE=inline` 时，创建 Run 的请求会等待 Agent 完成，前端超时为 5 分钟。正式 ARQ 后台执行仍需基础设施适配；取消接口尚未开放。
+
+确认结果导出由 `20260923_0040` 提供：Run 必须处于 `CONFIRMED` 或 `EXPORTED`，且至少存在一条人工确认候选。导出仅写入已确认候选，保留当前已确认推荐模板的格式、公式和字段映射；每次生成独立 `RECOMMENDATION_EXPORT` 附件及导出审计记录。人工确认可填写“是否厂直”三态（待确认／是／否），系统和 AI 不推断该值。导出和下载均要求 `recommendation:export`；下载文件名按 UTF-8 标准编码，支持中文名称。
