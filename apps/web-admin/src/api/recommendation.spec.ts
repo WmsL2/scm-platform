@@ -28,4 +28,24 @@ describe("recommendation api", () => {
     expect(http.patch).toHaveBeenCalledWith("/api/v1/recommendation-projects/candidates/c1/confirmation", { campaign_price: "100.00", fulfillment_cycle: "三天" })
     expect(http.post).toHaveBeenCalledWith("/api/v1/recommendation-projects/runs/r1/confirmations", { candidate_ids: ["c1", "c2"] })
   })
+
+  it("keeps complete confirmation data returned by the candidates endpoint", async () => {
+    const run = { id: "r1", project_id: "p1", status: "CONFIRMED", raw_requirement_snapshot: "需求", parsed_requirement: null, provider: null, model: null, prompt_version: null, error: null, created_at: "now", updated_at: "now" }
+    const confirmation = {
+      id: "cf1", candidate_id: "c1", campaign_price: "88", delivery_status: "READY",
+      inventory_status: "IN_STOCK", factory_direct: "YES", fulfillment_cycle: "48小时",
+      evidence: "供应商确认", confirmed_by: "u1", confirmed_at: "now", updated_at: "now",
+    }
+    http.get.mockResolvedValueOnce(run).mockResolvedValueOnce([{
+      id: "c1", run_id: "r1", product_id: "p1", rank: 1, score: "99", reason: "适合",
+      product_snapshot: {}, supplier_snapshot: {}, price_snapshot: {}, confirmation_id: "cf1",
+      factory_direct: "YES", confirmation,
+    }])
+    const { recommendationApi } = await import("./recommendation")
+
+    const result = await recommendationApi.run("r1")
+
+    expect(result.candidates[0].confirmation).toEqual(confirmation)
+    expect(result.candidates[0].confirmation?.fulfillment_cycle).toBe("48小时")
+  })
 })

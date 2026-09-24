@@ -36,17 +36,21 @@ interface CoreCandidate {
   price_snapshot: Record<string, unknown>
   confirmation_id: string | null
   factory_direct: FactoryDirectStatus | null
+  confirmation: CoreConfirmation | null
 }
 
 interface CoreConfirmation {
   id: string
+  candidate_id: string
   campaign_price: string | null
   delivery_status: string | null
   inventory_status: string | null
+  factory_direct: FactoryDirectStatus
   fulfillment_cycle: string | null
   evidence: string | null
   confirmed_by: string | null
   confirmed_at: string | null
+  updated_at: string
 }
 
 function adaptRun(run: CoreRun, candidates: CoreCandidate[] = []): RecommendationRun {
@@ -55,15 +59,7 @@ function adaptRun(run: CoreRun, candidates: CoreCandidate[] = []): Recommendatio
     category_choices: [],
     candidates: candidates.map((candidate): RecommendationCandidate => ({
       ...candidate,
-      confirmation: candidate.confirmation_id ? {
-        id: candidate.confirmation_id,
-        campaign_price: null,
-        fulfillment: null,
-        evidence: null,
-        factory_direct: candidate.factory_direct ?? "PENDING",
-        confirmed_by: null,
-        confirmed_at: null,
-      } : null,
+      confirmation: candidate.confirmation,
     })),
   }
 }

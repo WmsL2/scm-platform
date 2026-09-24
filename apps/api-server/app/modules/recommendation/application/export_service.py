@@ -28,6 +28,7 @@ from app.modules.recommendation.infrastructure.repository import RecommendationR
 from app.modules.recommendation.template.schemas import RecommendationRunStatus
 
 _DECIMAL_FIELDS = {
+    "campaign_price",
     "jd_price",
     "agreement_price",
     "discount_rate",
@@ -198,6 +199,7 @@ class RecommendationExportService:
                 raise AppError(
                     "RECOMMENDATION_EXPORT_MAPPING_EMPTY", "推荐模板未配置任何导出字段", 409
                 )
+            cls._clear_template_data_region(sheet, data_start_row, columns.values())
             for offset, (candidate, confirmation) in enumerate(rows):
                 target_row = data_start_row + offset
                 if target_row > data_start_row:
@@ -211,6 +213,16 @@ class RecommendationExportService:
             return output.getvalue()
         finally:
             workbook.close()
+
+    @staticmethod
+    def _clear_template_data_region(sheet: Any, data_start_row: int, columns: Any) -> None:
+        """Clear only contiguous mapped data rows; leave an adjacent footer untouched."""
+        mapped_columns = tuple(columns)
+        row = data_start_row
+        while any(sheet.cell(row, column).value is not None for column in mapped_columns):
+            for column in mapped_columns:
+                sheet.cell(row, column).value = None
+            row += 1
 
     @staticmethod
     def _copy_template_row(sheet: Any, source_row: int, target_row: int) -> None:
@@ -245,6 +257,17 @@ class RecommendationExportService:
     ) -> object | None:
         if field == "factory_direct":
             return _FACTORY_DIRECT_LABELS.get(confirmation.factory_direct, "待确认")
+        if field in {
+            "campaign_price",
+            "delivery_status",
+            "inventory_status",
+            "fulfillment_cycle",
+            "evidence",
+        }:
+            value = getattr(confirmation, field)
+            if value is None or field not in _DECIMAL_FIELDS:
+                return cast(object | None, value)
+            return cast(object, value)
         if field in {
             "category_level1_name",
             "category_level2_name",

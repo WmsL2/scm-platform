@@ -129,6 +129,20 @@ class PersistCandidatesRequest(BaseModel):
         return self
 
 
+class RecommendationConfirmationResponse(BaseModel):
+    id: UUID
+    candidate_id: UUID
+    campaign_price: Decimal | None
+    delivery_status: str | None
+    inventory_status: str | None
+    factory_direct: FactoryDirectStatus
+    fulfillment_cycle: str | None
+    evidence: str | None
+    confirmed_by: UUID | None
+    confirmed_at: datetime | None
+    updated_at: datetime
+
+
 class RecommendationCandidateResponse(BaseModel):
     id: UUID
     run_id: UUID
@@ -142,6 +156,7 @@ class RecommendationCandidateResponse(BaseModel):
     price_snapshot: dict[str, object]
     confirmation_id: UUID | None = None
     factory_direct: FactoryDirectStatus | None = None
+    confirmation: RecommendationConfirmationResponse | None = None
     created_at: datetime
 
 
@@ -171,17 +186,3 @@ class BatchConfirmationRequest(BaseModel):
         if len(self.candidate_ids) != len(set(self.candidate_ids)):
             raise ValueError("candidate_ids must be unique")
         return self
-
-
-class RecommendationConfirmationResponse(BaseModel):
-    id: UUID
-    candidate_id: UUID
-    campaign_price: Decimal | None
-    delivery_status: str | None
-    inventory_status: str | None
-    factory_direct: FactoryDirectStatus
-    fulfillment_cycle: str | None
-    evidence: str | None
-    confirmed_by: UUID | None
-    confirmed_at: datetime | None
-    updated_at: datetime

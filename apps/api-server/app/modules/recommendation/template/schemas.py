@@ -28,7 +28,7 @@ class RecommendationTemplateMappingUpdateRequest(BaseModel):
     sheet_name: str = Field(min_length=1, max_length=128)
     header_row: int = Field(ge=1)
     data_start_row: int = Field(ge=1)
-    mapping_json: dict[str, str]
+    mapping_json: dict[str, str] = Field(min_length=1)
 
     @field_validator("mapping_json")
     @classmethod
@@ -48,6 +48,11 @@ class RecommendationTemplateMappingUpdateRequest(BaseModel):
             "gross_margin",
             "factory_direct",
             "shipping_courier",
+            "campaign_price",
+            "delivery_status",
+            "inventory_status",
+            "fulfillment_cycle",
+            "evidence",
         }
         if any(key not in allowed or not header.strip() for key, header in value.items()):
             raise ValueError("RECOMMENDATION_TEMPLATE_MAPPING_INVALID")

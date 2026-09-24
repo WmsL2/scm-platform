@@ -34,7 +34,9 @@ const selectedCandidate = ref<RecommendationCandidate>()
 const supplementText = ref("")
 const confirmation = reactive({
   campaign_price: "",
-  fulfillment: "",
+  delivery_status: "",
+  inventory_status: "",
+  fulfillment_cycle: "",
   evidence: "",
   factory_direct: "PENDING" as FactoryDirectStatus,
 })
@@ -186,10 +188,12 @@ async function switchRun(runId: string) {
 
 function openConfirmation(candidate: RecommendationCandidate) {
   selectedCandidate.value = candidate
-  confirmation.campaign_price = candidate.confirmation?.campaign_price ?? String(candidate.price_snapshot.campaign_price ?? "")
-  confirmation.fulfillment = candidate.confirmation?.fulfillment ?? ""
+  confirmation.campaign_price = candidate.confirmation?.campaign_price ?? ""
+  confirmation.delivery_status = candidate.confirmation?.delivery_status ?? ""
+  confirmation.inventory_status = candidate.confirmation?.inventory_status ?? ""
+  confirmation.fulfillment_cycle = candidate.confirmation?.fulfillment_cycle ?? ""
   confirmation.evidence = candidate.confirmation?.evidence ?? ""
-  confirmation.factory_direct = candidate.factory_direct ?? "PENDING"
+  confirmation.factory_direct = candidate.confirmation?.factory_direct ?? "PENDING"
   confirmVisible.value = true
 }
 
@@ -199,8 +203,10 @@ async function saveConfirmation() {
   try {
     await recommendationApi.confirm(selectedCandidate.value.id, {
       campaign_price: confirmation.campaign_price || null,
+      delivery_status: confirmation.delivery_status || null,
+      inventory_status: confirmation.inventory_status || null,
       factory_direct: confirmation.factory_direct,
-      fulfillment_cycle: confirmation.fulfillment || null,
+      fulfillment_cycle: confirmation.fulfillment_cycle || null,
       evidence: confirmation.evidence || null,
     })
     await refreshRun(run.value?.id)
@@ -341,7 +347,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
     <el-empty v-if="mappingConfirmed && !run" description="模板已确认，可以开始生成自由推品推荐" />
 
     <el-dialog v-model="confirmVisible" title="人工确认候选商品" width="min(640px, 92vw)">
-      <el-form label-position="top"><el-form-item label="活动价"><el-input v-model="confirmation.campaign_price" inputmode="decimal" /></el-form-item><el-form-item label="是否厂直"><el-select v-model="confirmation.factory_direct"><el-option label="待确认" value="PENDING" /><el-option label="是" value="YES" /><el-option label="否" value="NO" /></el-select></el-form-item><el-form-item label="履约说明"><el-input v-model="confirmation.fulfillment" type="textarea" :rows="3" /></el-form-item><el-form-item label="依据与备注"><el-input v-model="confirmation.evidence" type="textarea" :rows="3" /></el-form-item></el-form>
+      <el-form label-position="top"><el-form-item label="活动价"><el-input v-model="confirmation.campaign_price" inputmode="decimal" /></el-form-item><el-form-item label="发货状态"><el-input v-model="confirmation.delivery_status" /></el-form-item><el-form-item label="库存状态"><el-input v-model="confirmation.inventory_status" /></el-form-item><el-form-item label="是否厂直"><el-select v-model="confirmation.factory_direct"><el-option label="待确认" value="PENDING" /><el-option label="是" value="YES" /><el-option label="否" value="NO" /></el-select></el-form-item><el-form-item label="履约说明"><el-input v-model="confirmation.fulfillment_cycle" type="textarea" :rows="3" /></el-form-item><el-form-item label="依据与备注"><el-input v-model="confirmation.evidence" type="textarea" :rows="3" /></el-form-item></el-form>
       <template #footer><el-button @click="confirmVisible = false">取消</el-button><el-button type="primary" :loading="acting" @click="saveConfirmation">确认保存</el-button></template>
     </el-dialog>
   </div>

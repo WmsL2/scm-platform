@@ -17,7 +17,10 @@ from app.modules.bid.infrastructure.models import BidProject, BidProjectFile
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.recommendation.application.service import RecommendationService
-from app.modules.recommendation.infrastructure.models import RecommendationCandidate
+from app.modules.recommendation.infrastructure.models import (
+    RecommendationCandidate,
+    RecommendationRun,
+)
 from app.modules.recommendation.schemas import (
     BatchConfirmationRequest,
     CategoryChoiceInput,
@@ -27,6 +30,7 @@ from app.modules.recommendation.schemas import (
     PersistCandidatesRequest,
 )
 from app.modules.recommendation.template.models import RecommendationTemplateMapping
+from app.modules.recommendation.template.schemas import RecommendationRunStatus
 from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
 from app.modules.supplier.infrastructure.models import Supplier
 
@@ -187,6 +191,26 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
         )
         assert confirmed.candidate_id == saved[0].id
         assert confirmed.campaign_price == Decimal("88")
+        assert (await service.get_run(run.id)).status == "CONFIRMED"
+        returned = (await service.list_candidates(run.id))[0]
+        assert returned.confirmation is not None
+        assert returned.confirmation.campaign_price == Decimal("88")
+        assert returned.confirmation.delivery_status == "JD_OR_SF_SUPPORTED"
+        assert returned.confirmation.inventory_status == "IN_STOCK"
+        assert returned.confirmation.fulfillment_cycle == "48小时"
+
+        # PATCH semantics: an exported run can update only the one explicitly supplied field.
+        run_model = await session.get(RecommendationRun, run.id)
+        assert run_model is not None
+        run_model.status = RecommendationRunStatus.EXPORTED.value
+        updated = await service.confirm_candidate(
+            saved[0].id,
+            ConfirmationUpdateRequest(factory_direct="YES"),
+            actor_id,
+        )
+        assert updated.campaign_price == Decimal("88")
+        assert updated.fulfillment_cycle == "48小时"
+        assert updated.factory_direct == "YES"
         assert (await service.get_run(run.id)).status == "CONFIRMED"
         batch_confirmed = await service.confirm_candidates(
             run.id,

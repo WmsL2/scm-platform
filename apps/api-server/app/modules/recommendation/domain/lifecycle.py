@@ -45,7 +45,10 @@ _TRANSITIONS: dict[RecommendationRunStatus, set[RecommendationRunStatus]] = {
         RecommendationRunStatus.WAITING_CONFIRMATION,
         RecommendationRunStatus.CANCELLED,
     },
-    RecommendationRunStatus.EXPORTED: {RecommendationRunStatus.WAITING_CONFIRMATION},
+    RecommendationRunStatus.EXPORTED: {
+        RecommendationRunStatus.WAITING_CONFIRMATION,
+        RecommendationRunStatus.CONFIRMED,
+    },
     RecommendationRunStatus.FAILED: set(),
     RecommendationRunStatus.NO_CANDIDATES: set(),
     RecommendationRunStatus.NEEDS_INPUT: {

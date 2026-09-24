@@ -253,6 +253,12 @@ async def test_free_recommendation_router_mysql_contracts() -> None:
                     "sheet_name": "推荐清单",
                     "header_row": 1,
                     "data_start_row": 2,
+                    "mapping_json": {},
+                },
+                {
+                    "sheet_name": "推荐清单",
+                    "header_row": 1,
+                    "data_start_row": 2,
                     "mapping_json": {"brand": "品牌"},
                     "confirmed_by": str(uuid.uuid4()),
                 },
