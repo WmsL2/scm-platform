@@ -274,18 +274,20 @@ class RecommendationService:
             if confirmation is None:
                 confirmation = RecommendationConfirmation(candidate_id=candidate.id)
                 self.session.add(confirmation)
-            confirmation.campaign_price = payload.campaign_price
-            confirmation.delivery_status = payload.delivery_status
-            confirmation.inventory_status = payload.inventory_status
-            confirmation.factory_direct = payload.factory_direct.value
-            confirmation.fulfillment_cycle = payload.fulfillment_cycle
-            confirmation.evidence = payload.evidence
+            for field, value in payload.model_dump(exclude_unset=True).items():
+                setattr(
+                    confirmation,
+                    field,
+                    value.value if field == "factory_direct" else value,
+                )
             confirmation.confirmed_by = actor_id
             confirmation.confirmed_at = datetime.now(UTC).replace(tzinfo=None)
             if run.status in {
                 RecommendationRunStatus.CANDIDATES_READY.value,
                 RecommendationRunStatus.WAITING_CONFIRMATION.value,
             }:
+                self._transition(run, RecommendationRunStatus.CONFIRMED)
+            elif run.status == RecommendationRunStatus.EXPORTED.value:
                 self._transition(run, RecommendationRunStatus.CONFIRMED)
             await self.session.flush()
             await self.session.refresh(confirmation)
@@ -341,6 +343,8 @@ class RecommendationService:
                 RecommendationRunStatus.CANDIDATES_READY.value,
                 RecommendationRunStatus.WAITING_CONFIRMATION.value,
             }:
+                self._transition(run, RecommendationRunStatus.CONFIRMED)
+            elif run.status == RecommendationRunStatus.EXPORTED.value:
                 self._transition(run, RecommendationRunStatus.CONFIRMED)
             await self.session.flush()
             for confirmation in confirmations:
@@ -486,6 +490,9 @@ class RecommendationService:
             confirmation_id=confirmation.id if confirmation else None,
             factory_direct=(
                 FactoryDirectStatus(confirmation.factory_direct) if confirmation else None
+            ),
+            confirmation=(
+                RecommendationService._confirmation_response(confirmation) if confirmation else None
             ),
             created_at=candidate.created_at,
         )

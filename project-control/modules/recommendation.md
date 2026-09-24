@@ -16,3 +16,4 @@
 - Web 人工确认固定刷新当前 Run，并提供 Run 历史切换，后续失败 Run 不再覆盖当前成功候选；候选支持逐条确认和最多 30 条原子批量确认，复用 `recommendation:review`。
 - CandidateRanking 现以单一 `MAX_RANKING_CANDIDATES = 30` 收敛输入、结构化输出和持久化上限。多个 AI 类目方向的商品按 Repository 既有稳定顺序以确定性 round-robin 去重合并，避免首个类目占满名额。
 - DeepSeek 结构化输出失败会保留 response model、错误类别和不含输入值的校验摘要；仅针对该类错误自动带脱敏纠错提示重试一次。两次失败会记录对应阶段的安全 FAILED 文案，日志不保存原始响应、Prompt 或候选 JSON。
+- 人工确认完整 DTO 已回传候选列表；编辑使用 PATCH 语义，未提交字段不会被清空。确认字段可映射导出，空映射会在确认阶段拒绝。导出只保留本次已确认候选；导出后编辑确认会将 Run 回退至 `CONFIRMED`，等待再次导出。
