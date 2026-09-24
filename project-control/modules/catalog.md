@@ -2,7 +2,7 @@
 
 状态：IMPLEMENTED / PRODUCT_MASTER_CATEGORY_DECOUPLED / PRODUCT_IMPORT_SAFETY_CONCURRENCY / TEMPORARY_SOURCE_RETENTION
 Owner：feat/product-import-confirm-reupload
-Last Updated：2026-09-22
+Last Updated：2026-09-24
 
 ## Database
 - [x] `20260909_0008` / `20260909_0009` 创建并对齐 `scm_category` 与 `scm_product`
@@ -106,7 +106,7 @@ Last Updated：2026-09-22
 - 商品列表支持跨页选择商品
 - 支持选择固定 43 个商品主数据字段导出 Excel
 - 导出字段选择界面显示中文字段名，提交后端仍使用英文 canonical key
-- 导出 Excel 的系统托管商品图片使用 Excel Place in Cell 嵌入，不再使用浮动 Drawing
+- 导出 Excel 的系统托管商品图片使用 WPS `DISPIMG` 公式与 XLSX 内嵌媒体，不再使用 Excel Rich Data Place in Cell 或浮动 Drawing
 - 图片缺失或损坏不会导致整批导出失败
 - 导出继续复用 `product:list`
 - 单次最多导出 5000 个商品

@@ -15,6 +15,7 @@ from sqlalchemy import delete, select
 from app.core.database import SessionLocal
 from app.main import app
 from app.modules.auth.security import create_token, hash_password
+from app.modules.catalog.application.excel_images import extract_dispimg_images
 from app.modules.catalog.application.export_service import ProductExportService
 from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMNS
 from app.modules.catalog.domain.lifecycle import ProductStatus
@@ -965,7 +966,7 @@ async def test_product_selection_ids_rejects_more_than_5000_results(monkeypatch)
         await cleanup_user(user_id)
 
 
-async def test_product_export_embeds_managed_local_media_image(monkeypatch) -> None:
+async def test_product_export_writes_wps_dispimg_managed_local_media_image(monkeypatch) -> None:
     storage = ExportImageStorage({"product-images/test-product.png": png_bytes()})
     monkeypatch.setattr("app.modules.catalog.application.export_service.get_object_storage", lambda: storage)
     user_id, headers = await create_product_user(("product:list",))
@@ -978,12 +979,18 @@ async def test_product_export_embeds_managed_local_media_image(monkeypatch) -> N
             names = workbook.namelist()
             media = [name for name in names if name.startswith("xl/media/")]
             media_content = workbook.read(media[0])
+            sheet_xml = workbook.read("xl/worksheets/sheet1.xml").decode()
+            cell_images_xml = workbook.read("xl/cellimages.xml").decode()
+            workbook_relationships_xml = workbook.read("xl/_rels/workbook.xml.rels").decode()
         assert any(name.startswith("xl/media/") for name in names)
-        assert any(name.startswith("xl/richData/") for name in names)
+        assert "xl/cellimages.xml" in names
+        assert "xl/_rels/cellimages.xml.rels" in names
+        assert "_xlfn.DISPIMG" in sheet_xml
+        assert "=DISPIMG" in sheet_xml
+        assert "ID_" in cell_images_xml
+        assert "officeDocument/2020/cellImage" in workbook_relationships_xml
+        assert not any(name.startswith("xl/richData/") for name in names)
         assert not any(name.startswith("xl/drawings/") for name in names)
-        assert "xl/richData/_rels/richValueRel.xml.rels" in names
-        assert "/xl/richData/_rels/richValueRel.xml.rels" not in names
-        assert names.count("xl/richData/_rels/richValueRel.xml.rels") == 1
         with Image.open(BytesIO(media_content)) as image:
             image.verify()
         with Image.open(BytesIO(media_content)) as image:
@@ -991,6 +998,9 @@ async def test_product_export_embeds_managed_local_media_image(monkeypatch) -> N
         expected = ProductExportService._prepare_embedded_image(png_bytes())
         assert expected is not None
         assert sha256(media_content).hexdigest() == sha256(expected.getvalue()).hexdigest()
+        images = extract_dispimg_images(response.content)
+        assert len(images) == 1
+        assert next(iter(images.values())).content == expected.getvalue()
         assert storage.read_keys == ["product-images/test-product.png"]
     finally:
         await cleanup_fixture(supplier_id, category_id, product_id)
@@ -1010,6 +1020,7 @@ async def test_product_export_keeps_missing_managed_image_blank(monkeypatch) -> 
             names = workbook.namelist()
         assert not any(name.startswith("xl/media/") for name in names)
         assert not any(name.startswith("xl/richData/") for name in names)
+        assert "xl/cellimages.xml" not in names
     finally:
         await cleanup_fixture(supplier_id, category_id, product_id)
         await cleanup_user(user_id)
@@ -1028,6 +1039,7 @@ async def test_product_export_keeps_invalid_managed_image_blank(monkeypatch) -> 
             names = workbook.namelist()
         assert not any(name.startswith("xl/media/") for name in names)
         assert not any(name.startswith("xl/richData/") for name in names)
+        assert "xl/cellimages.xml" not in names
     finally:
         await cleanup_fixture(supplier_id, category_id, product_id)
         await cleanup_user(user_id)
