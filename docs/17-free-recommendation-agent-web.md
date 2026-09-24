@@ -63,3 +63,21 @@ A 已冻结的项目创建与模板映射接口直接使用。B 已提供的 Run
 当前本机 `TASK_MODE=inline` 时，创建 Run 的请求会等待 Agent 完成，前端超时为 5 分钟。正式 ARQ 后台执行仍需基础设施适配；取消接口尚未开放。
 
 确认结果导出由 `20260923_0040` 提供：Run 必须处于 `CONFIRMED` 或 `EXPORTED`，且至少存在一条人工确认候选。导出仅写入已确认候选，保留当前已确认推荐模板的格式、公式和字段映射；每次生成独立 `RECOMMENDATION_EXPORT` 附件及导出审计记录。人工确认可填写“是否厂直”三态（待确认／是／否），系统和 AI 不推断该值。导出和下载均要求 `recommendation:export`；下载文件名按 UTF-8 标准编码，支持中文名称。
+
+## 5. Requirement V2：硬条件、软偏好与人工核验
+
+解析结果按边界保存到 Run JSON，缺少类目、品牌、预算、价格或数量不会自动进入 `NEEDS_INPUT`，也没有隐藏的 6% 毛利率默认值。
+
+- Hard constraints：`gross_margin_min`、京东价范围、`explicit_category_keywords`、`required_brands`、排除品牌和排除类目。明确类目才会进入 SQL 过滤；`required_brands` 才会过滤非该品牌商品。
+- Soft preferences：`category_intents`、`scenarios`、`search_keywords`、`preferred_brands`、`promotion_preference`。意图类目和场景用于类目发现及排序，偏好品牌不排除其他品牌；`SPECIAL_PRICE` 只依据真实折扣、协议价和京东价排序。
+- Manual verification：`manual_checks` 是候选级 JSON 核验清单。配送一件代发、现货、交付时限等没有主数据事实时必须为 `PENDING`，不能由模型或 `shipping_courier` 自动通过。
+
+候选池先按类目和硬条件查询，再以关键词命中、偏好品牌、真实折扣、销量及稳定 ID 的确定性 bucket 合并；关键词无命中时仍保留同类目且满足硬条件的 fallback。最终排序仍由受控 Agent 完成，最多输入/输出 30 个候选。
+
+运营人员通过 `PATCH /api/v1/recommendation-projects/candidates/{candidate_id}/manual-checks` 只能更新已存在核验项的状态和依据（`PENDING`、`PASS`、`FAIL`），不能创建任意 check。单条和批量人工确认都会在服务端拒绝仍为 `PENDING` 或 `FAIL` 的必填核验项；历史 `manual_flags=null` 候选保持兼容。
+
+候选已经产生正式 Confirmation 后，必填核验只能保持 `PASS` 或补充依据，不能降级为 `PENDING`／`FAIL`；系统返回 409 并保留既有确认。导出也会在锁定确认候选后再次校验全部必填核验项，避免历史 JSON 异常或后续写入造成无效确认被导出。
+
+## 6. 模板派生字段
+
+模板字段选择器增加派生字段 `supports_jd_or_sf`（“是否支持京东或者顺丰物流”）。它只检查候选冻结快照中的 `shipping_courier` 是否含京东、顺丰或 SF：有明确表达输出“是”，空值、普通或未知物流均输出“待确认”，绝不武断输出“否”。安全自动映射别名包括：名称→`product_name`、大客户协议价→`agreement_price`、毛利→`profit`、毛利率→`gross_margin`、采销→`purchasing_agent`、是否厂直→`factory_direct`。

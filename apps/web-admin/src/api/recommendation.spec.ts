@@ -20,6 +20,10 @@ describe("recommendation api", () => {
     await recommendationApi.start("p1")
     await recommendationApi.confirm("c1", { campaign_price: "100.00", fulfillment_cycle: "三天" })
     await recommendationApi.confirmMany("r1", ["c1", "c2"])
+    await recommendationApi.updateManualChecks("c1", [{
+      code: "DROP_SHIPPING", label: "是否支持一件代发", requirement_text: "一件代发",
+      required: true, status: "PASS", evidence: "供应商确认",
+    }])
 
     expect(http.get).toHaveBeenNthCalledWith(1, "/api/v1/recommendation-projects/p1/runs")
     expect(http.get).toHaveBeenNthCalledWith(2, "/api/v1/recommendation-projects/runs/r1")
@@ -27,6 +31,10 @@ describe("recommendation api", () => {
     expect(http.post).toHaveBeenCalledWith("/api/v1/recommendation-projects/p1/runs", undefined, { timeoutMs: 300_000 })
     expect(http.patch).toHaveBeenCalledWith("/api/v1/recommendation-projects/candidates/c1/confirmation", { campaign_price: "100.00", fulfillment_cycle: "三天" })
     expect(http.post).toHaveBeenCalledWith("/api/v1/recommendation-projects/runs/r1/confirmations", { candidate_ids: ["c1", "c2"] })
+    expect(http.patch).toHaveBeenCalledWith(
+      "/api/v1/recommendation-projects/candidates/c1/manual-checks",
+      { checks: [{ code: "DROP_SHIPPING", status: "PASS", evidence: "供应商确认" }] },
+    )
   })
 
   it("keeps complete confirmation data returned by the candidates endpoint", async () => {

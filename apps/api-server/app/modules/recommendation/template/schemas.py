@@ -7,6 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.modules.bid.schemas import BidProjectFileResponse
 from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMN_KEYS
 
+
+class RecommendationDerivedField(StrEnum):
+    SUPPORTS_JD_OR_SF = "supports_jd_or_sf"
+
 RECOMMENDATION_MAPPING_FIELD_KEYS = frozenset(
     (
         *PRODUCT_EXPORT_COLUMN_KEYS,
@@ -16,6 +20,7 @@ RECOMMENDATION_MAPPING_FIELD_KEYS = frozenset(
         "inventory_status",
         "fulfillment_cycle",
         "evidence",
+        RecommendationDerivedField.SUPPORTS_JD_OR_SF.value,
     )
 )
 

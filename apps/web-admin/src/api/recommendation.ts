@@ -1,6 +1,7 @@
 import { http } from "../shared/http/runtime"
 import type {
   FactoryDirectStatus,
+  ManualCheck,
   ParsedRequirement,
   RecommendationCandidate,
   RecommendationConfirmationUpdate,
@@ -31,6 +32,7 @@ interface CoreCandidate {
   rank: number
   score: string | null
   reason: string | null
+  manual_flags: { checks?: ManualCheck[] } | null
   product_snapshot: Record<string, unknown>
   supplier_snapshot: Record<string, unknown>
   price_snapshot: Record<string, unknown>
@@ -94,6 +96,11 @@ export const recommendationApi = {
   },
   confirmMany(runId: string, candidateIds: string[]): Promise<CoreConfirmation[]> {
     return http.post(`${base}/runs/${runId}/confirmations`, { candidate_ids: candidateIds })
+  },
+  updateManualChecks(candidateId: string, checks: ManualCheck[]): Promise<CoreCandidate> {
+    return http.patch(`${base}/candidates/${candidateId}/manual-checks`, {
+      checks: checks.map(({ code, status, evidence }) => ({ code, status, evidence })),
+    })
   },
   export(projectId: string, runId: string): Promise<{ id: string; original_filename: string }> {
     return http.post(`${base}/${projectId}/runs/${runId}/exports`)

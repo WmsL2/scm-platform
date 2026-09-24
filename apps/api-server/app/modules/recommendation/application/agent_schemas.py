@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.modules.recommendation.schemas import ManualCheck
+
 MAX_RANKING_CANDIDATES = 30
 
 
@@ -23,9 +25,19 @@ class RequirementAnalysis(BaseModel):
     preferred_brands: list[str] = Field(default_factory=list, max_length=20)
     budget_min: Decimal | None = Field(default=None, ge=0)
     budget_max: Decimal | None = Field(default=None, ge=0)
-    gross_margin_min: Decimal = Field(default=Decimal("0.06"), ge=0, le=1)
+    gross_margin_min: Decimal | None = Field(default=None, ge=0, le=1)
     constraints: list[str] = Field(default_factory=list, max_length=20)
     fulfillment_mode: str | None = Field(default=None, max_length=64)
+    explicit_category_keywords: list[str] = Field(default_factory=list, max_length=20)
+    category_intents: list[str] = Field(default_factory=list, max_length=20)
+    excluded_category_keywords: list[str] = Field(default_factory=list, max_length=20)
+    required_brands: list[str] = Field(default_factory=list, max_length=20)
+    excluded_brands: list[str] = Field(default_factory=list, max_length=20)
+    search_keywords: list[str] = Field(default_factory=list, max_length=20)
+    promotion_preference: str | None = Field(default=None, max_length=64)
+    demand_mode: str | None = Field(default=None, max_length=64)
+    quantity: int | None = Field(default=None, ge=1)
+    manual_checks: list[ManualCheck] = Field(default_factory=list, max_length=20)
     needs_input: bool = False
     blocking_reasons: list[RequirementBlockingReason] = Field(default_factory=list, max_length=3)
     questions: list[str] = Field(default_factory=list, max_length=5)
@@ -92,6 +104,11 @@ class ProductCandidate(BaseModel):
     agreement_price: Decimal | None = Field(default=None, ge=0)
     jd_price: Decimal | None = Field(default=None, ge=0)
     gross_margin: Decimal | None = None
+    discount_rate: Decimal | None = None
+    sales_volume: int | None = None
+    positive_rating: Decimal | None = None
+    selling_points: str | None = Field(default=None, max_length=1000)
+    shipping_courier: str | None = Field(default=None, max_length=255)
     highlights: list[str] = Field(default_factory=list, max_length=10)
 
 

@@ -90,9 +90,19 @@ class AgentRunner:
             system=(
                 "你是企业职工福利自由推品需求分析助手。只分析用户文字，不编造商品、供应商或数据库信息。"
                 "自由推品允许需求方不指定类目、品牌、单价、预算和数量；这些字段缺失或写明暂无时，"
-                "保留为空并继续推荐，绝不能仅因此设置 needs_input=true。category_keywords 只填写"
-                "需求方"
-                "明确限定的商品类目词，节日、活动、特价、人群等放入 keywords 或 scenarios。只有需求"
+                "保留为空并继续推荐，绝不能仅因此设置 needs_input=true。"
+                "explicit_category_keywords 只填写明确限定的商品类目；"
+                "category_intents、scenarios、promotion_preference 与 search_keywords"
+                " 是软排序/召回信号，"
+                "不可当硬过滤。required_brands 是必须品牌，preferred_brands 只是偏好，"
+                "excluded_brands 和 excluded_category_keywords 才是排除条件。"
+                "没有明确毛利要求时 gross_margin_min 必须为 null，"
+                "绝不使用隐藏的 6% 默认值。特价使用 SPECIAL_PRICE，且只是排序偏好。"
+                "一件代发必须生成 DROP_SHIPPING、PENDING 的 required manual_checks；"
+                "shipping_courier 不能证明一件代发。"
+                "现货、48小时发货等无法由商品主数据证明的条件同样生成 PENDING 人工核验，"
+                "不能声称已满足。"
+                "只有需求"
                 "无法形成任何可执行场景、硬性条件互相矛盾或存在必须由需求方决策的合规问题时，才设置"
                 " needs_input=true，并分别使用 UNUSABLE_REQUIREMENT、CONTRADICTORY_CONSTRAINTS 或"
                 " COMPLIANCE_DECISION_REQUIRED 作为 blocking_reasons；不得创建其他原因。毛利率 6%"
@@ -185,6 +195,10 @@ class AgentRunner:
                 "score 必须为 0 到 100 的数字，reason 必须为非空字符串。"
                 "不得返回不存在或重复的 product_id，不得超过输入"
                 f"数量，也不得超过 {MAX_RANKING_CANDIDATES} 条。"
+                "硬约束已经由后端执行；仅将软偏好用于排序。"
+                "SPECIAL_PRICE 时只可引用输入中真实的折扣、协议价和京东价，"
+                "不能杜撰活动价、库存、时效、"
+                "一件代发或物流能力。未完成的人工核验必须表述为仍需人工确认。"
             ),
             user=f"需求={analysis.model_dump_json()}\n候选={compact_json(candidates)}",
         )

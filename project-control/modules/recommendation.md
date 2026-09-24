@@ -2,6 +2,8 @@
 
 状态：B_CORE_C_AGENT_WEB_INTEGRATED / EXPORT_IMPLEMENTED
 
+> 2026-09-24：Requirement V2 已实现。明确类目、必选品牌、毛利/价格和排除条件进入确定性硬过滤；场景、类目意图、关键词、偏好品牌与特价进入软召回/排序。无隐藏 6% 默认毛利。候选级 `manual_flags.checks` 支持一件代发等人工核验，单条/批量确认均有服务端门禁；模板新增 `supports_jd_or_sf` 派生字段和安全中文 Alias。无 Migration。
+
 - 统一 Bid Project 类型、自由推品创建合同、模板版本和字段映射 API 已由 `20260923_0039` 提供。
 - B 已实现 Run、确定性商品/类目检索、候选快照、人工确认及受权限保护的独立 Router；Router 已注册到 API V1，C Agent 已通过 B Application Service 接入。
 - 商品检索固定过滤 `ACTIVE` 商品、已归档且正常合作的未删除供应商；毛利率、京东价和品牌/类目条件只接受经 Pydantic 校验的结构化需求，不允许 AI 直连正式业务库。

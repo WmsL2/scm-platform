@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from decimal import Decimal
 from typing import cast
 
 from sqlalchemy import Select, and_, func, or_, select
@@ -107,7 +108,9 @@ class RecommendationRepository:
             ).all()
         )
 
-    async def category_pool(self, requirement: ParsedRequirement) -> list[tuple[CategoryPath, int]]:
+    async def category_pool(
+        self, requirement: ParsedRequirement, keywords: Sequence[str] = ()
+    ) -> list[tuple[CategoryPath, int]]:
         statement = (
             select(
                 Product.category_level1_name,
@@ -125,6 +128,7 @@ class RecommendationRepository:
                 Product.category_level3_name,
             )
             .order_by(
+                # category intent is a recall signal, never a hidden eligibility rule.
                 func.count(Product.id).desc(),
                 Product.category_level1_name,
                 Product.category_level2_name,
@@ -142,13 +146,20 @@ class RecommendationRepository:
         ]
 
     async def eligible_products(
-        self, requirement: ParsedRequirement, category_paths: Sequence[CategoryPath] = ()
+        self,
+        requirement: ParsedRequirement,
+        category_paths: Sequence[CategoryPath] = (),
+        *,
+        keywords: Sequence[str] = (),
+        preferred_brands: Sequence[str] = (),
     ) -> list[tuple[Product, Supplier]]:
         statement: Select[tuple[Product, Supplier]] = (
             select(Product, Supplier)
             .join(Supplier, Product.source_supplier_id == Supplier.id)
             .where(*self._eligibility_filters(requirement))
-            .order_by(Product.gross_margin.desc(), Product.jd_price.asc(), Product.id)
+            # Do not let a qualifying margin dominate all candidate recall.  The
+            # service applies stable, explainable recall buckets below.
+            .order_by(Product.id)
             .limit(500)
         )
         if category_paths:
@@ -163,8 +174,53 @@ class RecommendationRepository:
                     parts.append(Product.category_level3_name == path.level3_name)
                 path_conditions.append(and_(*parts))
             statement = statement.where(or_(*path_conditions))
-        rows = (await self.session.execute(statement)).all()
-        return [(row[0], row[1]) for row in rows]
+        rows = [(row[0], row[1]) for row in (await self.session.execute(statement)).all()]
+        normalized_keywords = tuple(value.casefold() for value in keywords if value.strip())
+        normalized_brands = tuple(value.casefold() for value in preferred_brands if value.strip())
+
+        def bucket(
+            row: tuple[Product, Supplier],
+        ) -> tuple[int, bool, Decimal | int, int, bool, uuid.UUID]:
+            product, _ = row
+            searchable = " ".join(
+                str(value or "")
+                for value in (
+                    product.product_name,
+                    product.sku,
+                    product.brand,
+                    product.model,
+                    product.product_specification,
+                    product.selling_points,
+                    product.category_level1_name,
+                    product.category_level2_name,
+                    product.category_level3_name,
+                )
+            ).casefold()
+            keyword_match = bool(normalized_keywords) and any(
+                key in searchable for key in normalized_keywords
+            )
+            brand_match = bool(normalized_brands) and any(
+                key in str(product.brand or "").casefold() for key in normalized_brands
+            )
+            # Stable buckets, not a synthetic score: keyword, preferred brand,
+            # actual discount, sales, then the remaining eligible products.  A
+            # discount rate is agreement/self-operated price, so lower is stronger.
+            return (
+                (
+                    0
+                    if keyword_match
+                    else 1 if brand_match else 2 if product.discount_rate is not None else 3
+                ),
+                product.discount_rate is None,
+                product.discount_rate if product.discount_rate is not None else 0,
+                -(product.sales_volume or 0),
+                product.jd_price is None,
+                product.id,
+            )
+
+        prioritized = sorted(rows, key=bucket)
+        # Keyword misses must still receive category+hard-constraint fallback.
+        return prioritized
 
     async def eligible_products_by_ids(
         self, requirement: ParsedRequirement, product_ids: Sequence[uuid.UUID]
@@ -286,7 +342,10 @@ class RecommendationRepository:
             filters.append(Product.jd_price >= requirement.jd_price_min)
         if requirement.jd_price_max is not None:
             filters.append(Product.jd_price <= requirement.jd_price_max)
-        if requirement.category_keywords:
+        explicit_categories = (
+            requirement.explicit_category_keywords or requirement.category_keywords
+        )
+        if explicit_categories:
             filters.append(
                 or_(
                     *[
@@ -295,12 +354,36 @@ class RecommendationRepository:
                             Product.category_level2_name.contains(keyword),
                             Product.category_level3_name.contains(keyword),
                         )
-                        for keyword in requirement.category_keywords
+                        for keyword in explicit_categories
                     ]
                 )
             )
-        if requirement.brand_keywords:
+        required_brands = requirement.required_brands or requirement.brand_keywords
+        if required_brands:
             filters.append(
-                or_(*[Product.brand.contains(keyword) for keyword in requirement.brand_keywords])
+                or_(*[Product.brand.contains(keyword) for keyword in required_brands])
             )
+        if requirement.excluded_brands:
+            filters.extend(
+                or_(Product.brand.is_(None), ~Product.brand.contains(keyword))
+                for keyword in requirement.excluded_brands
+            )
+        if requirement.excluded_category_keywords:
+            for keyword in requirement.excluded_category_keywords:
+                filters.append(
+                    and_(
+                        or_(
+                            Product.category_level1_name.is_(None),
+                            ~Product.category_level1_name.contains(keyword),
+                        ),
+                        or_(
+                            Product.category_level2_name.is_(None),
+                            ~Product.category_level2_name.contains(keyword),
+                        ),
+                        or_(
+                            Product.category_level3_name.is_(None),
+                            ~Product.category_level3_name.contains(keyword),
+                        ),
+                    )
+                )
         return filters

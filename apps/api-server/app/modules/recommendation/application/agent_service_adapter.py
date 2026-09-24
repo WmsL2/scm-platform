@@ -68,9 +68,21 @@ class RecommendationServiceTools(RecommendationTools):
                 jd_price_min=analysis.budget_min,
                 jd_price_max=analysis.budget_max,
                 category_keywords=analysis.category_keywords,
-                brand_keywords=analysis.preferred_brands,
+                brand_keywords=analysis.required_brands,
                 scenario_keywords=analysis.scenarios,
+                explicit_category_keywords=analysis.explicit_category_keywords,
+                category_intents=analysis.category_intents,
+                excluded_category_keywords=analysis.excluded_category_keywords,
+                required_brands=analysis.required_brands,
+                preferred_brands=analysis.preferred_brands,
+                excluded_brands=analysis.excluded_brands,
+                search_keywords=analysis.search_keywords or analysis.keywords,
+                scenarios=analysis.scenarios,
+                promotion_preference=analysis.promotion_preference,
+                demand_mode=analysis.demand_mode,
+                quantity=analysis.quantity,
                 fulfillment_mode=analysis.fulfillment_mode,
+                manual_checks=analysis.manual_checks,
             ),
             provider=self.provider,
             model=self.model,
@@ -95,7 +107,10 @@ class RecommendationServiceTools(RecommendationTools):
 
     async def search_products(self, request: ProductSearchRequest) -> list[ProductCandidate]:
         rows = await self.service.search_products(
-            self.run_id, [decode_category_key(request.category_key)]
+            self.run_id,
+            [decode_category_key(request.category_key)],
+            keywords=request.keywords,
+            preferred_brands=request.preferred_brands,
         )
         return [
             ProductCandidate(
@@ -106,6 +121,11 @@ class RecommendationServiceTools(RecommendationTools):
                 agreement_price=row.agreement_price,
                 jd_price=row.jd_price,
                 gross_margin=row.gross_margin,
+                discount_rate=row.discount_rate,
+                sales_volume=row.sales_volume,
+                positive_rating=row.positive_rating,
+                selling_points=(row.selling_points or "")[:1000] or None,
+                shipping_courier=row.shipping_courier,
                 highlights=[
                     value
                     for value in (row.sku, row.shipping_courier)

@@ -8,8 +8,8 @@ from openpyxl import load_workbook
 from app.common.contracts import AppError
 from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMNS
 
-_AUTO_MAPPING = {
-    **{column.header: column.key for column in PRODUCT_EXPORT_COLUMNS},
+_EXACT_AUTO_MAPPING = {column.header: column.key for column in PRODUCT_EXPORT_COLUMNS}
+_SAFE_ALIASES = {
     "一级类目": "category_level1_name",
     "二级类目": "category_level2_name",
     "三级类目": "category_level3_name",
@@ -18,9 +18,12 @@ _AUTO_MAPPING = {
     "名称": "product_name",
     "京东价": "jd_price",
     "大客户协议价": "agreement_price",
+    "毛利": "profit",
+    "毛利率": "gross_margin",
     "折扣率": "discount_rate",
     "采销": "purchasing_agent",
     "是否厂直": "factory_direct",
+    "是否支持京东或者顺丰物流": "supports_jd_or_sf",
 }
 
 
@@ -60,12 +63,18 @@ def analyze_template(file_bytes: bytes) -> TemplateAnalysis:
                 headers = [
                     str(cell.value).strip() if cell.value is not None else "" for cell in row
                 ]
-                mapping = {
-                    target: header
-                    for header in headers
-                    for label, target in _AUTO_MAPPING.items()
-                    if header == label
-                }
+                # Exact product-master headers win over aliases.  A second template
+                # column targeting the same field is intentionally left unmapped;
+                # the explicit mapping UI preserves its duplicate-field gate.
+                mapping: dict[str, str] = {}
+                for header in headers:
+                    target = _EXACT_AUTO_MAPPING.get(header)
+                    if target is not None:
+                        mapping[target] = header
+                for header in headers:
+                    target = _SAFE_ALIASES.get(header)
+                    if target is not None and target not in mapping:
+                        mapping[target] = header
                 if mapping:
                     return TemplateAnalysis(sheet.title, row_number, row_number + 1, mapping)
         sheet = workbook.worksheets[0]

@@ -11,6 +11,7 @@ import {
   RUN_STATUS_LABELS,
   TEMPLATE_MAPPING_FIELDS,
   type FactoryDirectStatus,
+  type ManualCheck,
   type RecommendationCandidate,
   type RecommendationRun,
   type RecommendationTemplateFile,
@@ -44,6 +45,7 @@ const confirmation = reactive({
   evidence: "",
   factory_direct: "PENDING" as FactoryDirectStatus,
 })
+const manualChecks = ref<ManualCheck[]>([])
 let pollTimer: ReturnType<typeof setInterval> | undefined
 
 const mappingConfirmed = computed(() => Boolean(mapping.value?.confirmed_at))
@@ -277,13 +279,56 @@ function openConfirmation(candidate: RecommendationCandidate) {
   confirmation.fulfillment_cycle = candidate.confirmation?.fulfillment_cycle ?? ""
   confirmation.evidence = candidate.confirmation?.evidence ?? ""
   confirmation.factory_direct = candidate.confirmation?.factory_direct ?? "PENDING"
+  manualChecks.value = (candidate.manual_flags?.checks ?? []).map((item) => ({ ...item }))
   confirmVisible.value = true
+}
+
+function requiredManualChecks(candidate: RecommendationCandidate) {
+  return (candidate.manual_flags?.checks ?? []).filter((check) => check.required)
+}
+
+function pendingRequiredManualChecks(candidate: RecommendationCandidate) {
+  return requiredManualChecks(candidate).filter((check) => check.status === "PENDING")
+}
+
+function failedRequiredManualChecks(candidate: RecommendationCandidate) {
+  return requiredManualChecks(candidate).filter((check) => check.status === "FAIL")
+}
+
+function manualChecksPassed(candidate: RecommendationCandidate): boolean {
+  return requiredManualChecks(candidate).every((check) => check.status === "PASS")
+}
+
+function manualCheckSummary(candidate: RecommendationCandidate): string {
+  const failed = failedRequiredManualChecks(candidate)
+  if (failed.length) return `必填 ${failed.length} 项未通过`
+  const pending = pendingRequiredManualChecks(candidate)
+  if (pending.length) return `必填 ${pending.length} 项未完成`
+  return requiredManualChecks(candidate).length ? "必填核验已完成" : "无需必填核验"
+}
+
+async function persistManualChecks(): Promise<boolean> {
+  if (!selectedCandidate.value || manualChecks.value.length === 0) return true
+  try {
+    await recommendationApi.updateManualChecks(selectedCandidate.value.id, manualChecks.value)
+    return true
+  } catch (error) {
+    ElMessage.error(messageFor(error, "保存人工核验失败"))
+    return false
+  }
 }
 
 async function saveConfirmation() {
   if (!selectedCandidate.value) return
+  if (manualChecks.value.some((item) => item.required && item.status === "FAIL")) {
+    return ElMessage.warning("存在必填人工核验项未通过，当前商品不能确认")
+  }
+  if (manualChecks.value.some((item) => item.required && item.status !== "PASS")) {
+    return ElMessage.warning("仍有必填人工核验项未完成")
+  }
   acting.value = true
   try {
+    if (!(await persistManualChecks())) return
     await recommendationApi.confirm(selectedCandidate.value.id, {
       campaign_price: confirmation.campaign_price || null,
       delivery_status: confirmation.delivery_status || null,
@@ -297,6 +342,20 @@ async function saveConfirmation() {
     ElMessage.success("人工确认已保存")
   } catch (error) {
     ElMessage.error(messageFor(error, "保存人工确认失败"))
+  } finally {
+    acting.value = false
+  }
+}
+
+async function saveManualChecks() {
+  if (!selectedCandidate.value) return
+  acting.value = true
+  try {
+    if (!(await persistManualChecks())) return
+    await refreshRun(run.value?.id)
+    ElMessage.success("人工核验已保存")
+  } catch (error) {
+    ElMessage.error(messageFor(error, "保存人工核验失败"))
   } finally {
     acting.value = false
   }
@@ -328,12 +387,15 @@ function handleCandidateSelection(rows: RecommendationCandidate[]) {
 }
 
 function canSelectCandidate(candidate: RecommendationCandidate): boolean {
-  return !candidate.confirmation
+  return !candidate.confirmation && manualChecksPassed(candidate)
 }
 
 async function confirmSelectedCandidates() {
   if (!run.value || selectedCandidates.value.length === 0) {
     return ElMessage.warning("请先勾选需要确认的候选商品")
+  }
+  if (selectedCandidates.value.some((candidate) => !manualChecksPassed(candidate))) {
+    return ElMessage.warning("选中商品中仍有必填人工核验项未完成")
   }
   acting.value = true
   try {
@@ -404,9 +466,10 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
       <p class="muted">{{ run.progress_message ?? run.error ?? `模型：${run.provider ?? '-'} / ${run.model ?? '-'}` }}</p>
       <el-descriptions v-if="run.parsed_requirement" title="需求理解" :column="2" border>
         <el-descriptions-item label="本次读取的需求" :span="2">{{ run.raw_requirement_snapshot }}</el-descriptions-item>
-        <el-descriptions-item label="类目关键词">{{ run.parsed_requirement.category_keywords.join('、') || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="场景关键词">{{ run.parsed_requirement.scenario_keywords.join('、') || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="偏好品牌">{{ run.parsed_requirement.brand_keywords.join('、') || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="明确类目">{{ run.parsed_requirement.explicit_category_keywords?.join('、') || run.parsed_requirement.category_keywords.join('、') || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="场景/意图">{{ run.parsed_requirement.scenarios?.join('、') || run.parsed_requirement.scenario_keywords.join('、') || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="必须品牌">{{ run.parsed_requirement.required_brands?.join('、') || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="偏好品牌">{{ run.parsed_requirement.preferred_brands?.join('、') || run.parsed_requirement.brand_keywords.join('、') || '-' }}</el-descriptions-item>
         <el-descriptions-item label="京东价范围">{{ run.parsed_requirement.jd_price_min ?? '不限' }} ～ {{ run.parsed_requirement.jd_price_max ?? '不限' }}</el-descriptions-item>
         <el-descriptions-item label="最低毛利率">{{ run.parsed_requirement.gross_margin_min ?? '-' }}</el-descriptions-item>
         <el-descriptions-item label="履约方式">{{ run.parsed_requirement.fulfillment_mode ?? '-' }}</el-descriptions-item>
@@ -436,7 +499,8 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
         <el-table-column label="毛利率"><template #default="{ row }">{{ productValue(row, 'gross_margin') }}</template></el-table-column>
         <el-table-column prop="score" label="推荐分" width="90" />
         <el-table-column prop="reason" label="推荐理由" min-width="260" />
-        <el-table-column label="人工状态" width="110"><template #default="{ row }"><el-tag :type="row.confirmation ? 'success' : 'info'">{{ row.confirmation ? '已确认' : '待确认' }}</el-tag></template></el-table-column>
+        <el-table-column label="人工核验" min-width="220"><template #default="{ row }"><div v-for="check in row.manual_flags?.checks ?? []" :key="check.code" class="manual-check-row"><el-tag v-if="check.required" type="danger" size="small">必填</el-tag><el-tag :type="check.status === 'PASS' ? 'success' : check.status === 'FAIL' ? 'danger' : 'warning'" size="small">{{ check.label }}：{{ check.status === 'PASS' ? '满足' : check.status === 'FAIL' ? '不满足' : '待确认' }}</el-tag></div><span class="manual-summary" :class="{ blocked: !manualChecksPassed(row) }">{{ manualCheckSummary(row) }}</span></template></el-table-column>
+        <el-table-column label="人工状态" width="150"><template #default="{ row }"><el-tag :type="row.confirmation ? 'success' : 'info'">{{ row.confirmation ? '已确认' : '待确认' }}</el-tag><div v-if="!row.confirmation && !manualChecksPassed(row)" class="muted">请先完成必填人工核验</div></template></el-table-column>
         <el-table-column label="操作" width="110"><template #default="{ row }"><el-button v-if="auth.hasPermission('recommendation:review')" link type="primary" @click="openConfirmation(row)">确认选品</el-button></template></el-table-column>
       </el-table>
     </el-card>
@@ -444,8 +508,8 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
     <el-empty v-if="mappingConfirmed && !run" description="模板已确认，可以开始生成自由推品推荐" />
 
     <el-dialog v-model="confirmVisible" title="人工确认候选商品" width="min(640px, 92vw)">
-      <el-form label-position="top"><el-form-item label="活动价"><el-input v-model="confirmation.campaign_price" inputmode="decimal" /></el-form-item><el-form-item label="发货状态"><el-input v-model="confirmation.delivery_status" /></el-form-item><el-form-item label="库存状态"><el-input v-model="confirmation.inventory_status" /></el-form-item><el-form-item label="是否厂直"><el-select v-model="confirmation.factory_direct"><el-option label="待确认" value="PENDING" /><el-option label="是" value="YES" /><el-option label="否" value="NO" /></el-select></el-form-item><el-form-item label="履约说明"><el-input v-model="confirmation.fulfillment_cycle" type="textarea" :rows="3" /></el-form-item><el-form-item label="依据与备注"><el-input v-model="confirmation.evidence" type="textarea" :rows="3" /></el-form-item></el-form>
-      <template #footer><el-button @click="confirmVisible = false">取消</el-button><el-button type="primary" :loading="acting" @click="saveConfirmation">确认保存</el-button></template>
+      <el-alert v-if="manualChecks.some((check) => check.required)" title="所有“必填”人工核验项均需确认为“满足”，才能最终确认该商品。" type="warning" :closable="false" class="manual-check-alert" /><el-form label-position="top"><el-form-item v-for="check in manualChecks" :key="check.code" :label="`${check.required ? '[必填] ' : ''}${check.label}`"><div class="manual-check"><span class="muted">{{ check.requirement_text }}</span><el-select v-model="check.status"><el-option label="待确认" value="PENDING" /><el-option label="满足" value="PASS" /><el-option label="不满足" value="FAIL" /></el-select><el-input v-model="check.evidence" placeholder="核验依据，例如供应商微信确认" /></div></el-form-item><el-form-item label="活动价"><el-input v-model="confirmation.campaign_price" inputmode="decimal" /></el-form-item><el-form-item label="发货状态"><el-input v-model="confirmation.delivery_status" /></el-form-item><el-form-item label="库存状态"><el-input v-model="confirmation.inventory_status" /></el-form-item><el-form-item label="是否厂直"><el-select v-model="confirmation.factory_direct"><el-option label="待确认" value="PENDING" /><el-option label="是" value="YES" /><el-option label="否" value="NO" /></el-select></el-form-item><el-form-item label="履约说明"><el-input v-model="confirmation.fulfillment_cycle" type="textarea" :rows="3" /></el-form-item><el-form-item label="依据与备注"><el-input v-model="confirmation.evidence" type="textarea" :rows="3" /></el-form-item></el-form>
+      <template #footer><el-button @click="confirmVisible = false">取消</el-button><el-button v-if="manualChecks.length" :loading="acting" @click="saveManualChecks">保存人工核验</el-button><el-button type="primary" :loading="acting" @click="saveConfirmation">确认保存</el-button></template>
     </el-dialog>
   </div>
 </template>
@@ -453,5 +517,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
 <style scoped>
 .workspace { display: grid; gap: 18px; }.workspace header { display: flex; justify-content: space-between; gap: 20px; padding: 24px 28px; border-radius: 14px; background: linear-gradient(135deg, #edf5ff, #f2f8f5); }.workspace h1 { margin: 4px 0; }.workspace header p { margin: 0; color: #2670ca; font-weight: 700; }.actions, .card-header, .run-actions, .mapping-meta, .card-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }.card-header { justify-content: space-between; }.mapping-tip { margin-bottom: 16px; }.mapping-meta { margin-bottom: 16px; }.mapping-meta .el-select { width: 280px; }.mapping-table { overflow: hidden; border: 1px solid #e4e7ed; border-radius: 8px; }.mapping-table-head, .mapping-row { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(280px, 1fr); gap: 16px; align-items: center; padding: 10px 14px; }.mapping-table-head { background: #f5f7fa; color: #606266; font-weight: 600; }.mapping-row + .mapping-row { border-top: 1px solid #ebeef5; }.template-column { display: flex; align-items: center; gap: 10px; min-width: 0; }.column-index { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: 0 0 auto; border-radius: 50%; background: #ecf5ff; color: #409eff; font-size: 12px; }.card-actions { justify-content: flex-end; margin-top: 16px; }.category-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }.category-card { display: grid; gap: 10px; padding: 16px; border: 1px solid #e4e7ed; border-radius: 10px; }.muted { color: #909399; font-size: 13px; }.el-progress + .muted { margin-bottom: 18px; }
 .supplement-box { display: grid; gap: 12px; margin-top: 18px; justify-items: start; }.supplement-box .el-textarea { width: 100%; }
+.manual-check { display: grid; gap: 8px; width: 100%; }
+.manual-check-row { display: flex; gap: 6px; margin-bottom: 4px; }.manual-summary { display: block; margin-top: 6px; color: #67c23a; font-size: 12px; }.manual-summary.blocked { color: #e6a23c; }.manual-check-alert { margin-bottom: 14px; }
 @media (max-width: 767px) { .workspace header { flex-direction: column; }.mapping-table-head { display: none; }.mapping-row { grid-template-columns: 1fr; gap: 8px; } }
 </style>

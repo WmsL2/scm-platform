@@ -26,6 +26,8 @@ from app.modules.recommendation.schemas import (
     CategoryPoolItem,
     ConfirmationUpdateRequest,
     FactoryDirectStatus,
+    ManualCheckStatus,
+    ManualCheckUpdateRequest,
     ParsedRequirement,
     PersistCandidatesRequest,
     ProductCandidateRow,
@@ -147,7 +149,9 @@ class RecommendationService:
                 level3_name=path.level3_name,
                 candidate_count=count,
             )
-            for path, count in await self.repository.category_pool(requirement)
+            for path, count in await self.repository.category_pool(
+                requirement, requirement.search_keywords or requirement.category_intents
+            )
         ]
 
     async def record_category_choices(
@@ -175,7 +179,12 @@ class RecommendationService:
             )
 
     async def search_products(
-        self, run_id: uuid.UUID, category_paths: list[CategoryPath]
+        self,
+        run_id: uuid.UUID,
+        category_paths: list[CategoryPath],
+        *,
+        keywords: list[str] | None = None,
+        preferred_brands: list[str] | None = None,
     ) -> list[ProductCandidateRow]:
         if not category_paths or len(category_paths) > 40:
             raise AppError(
@@ -190,7 +199,12 @@ class RecommendationService:
                     "RECOMMENDATION_RUN_NOT_RETRIEVING", "当前推品任务不能查询候选商品", 409
                 )
             requirement = self._parsed_requirement(run)
-            rows = await self.repository.eligible_products(requirement, category_paths)
+            rows = await self.repository.eligible_products(
+                requirement,
+                category_paths,
+                keywords=keywords or requirement.search_keywords,
+                preferred_brands=preferred_brands or requirement.preferred_brands,
+            )
         return [self._product_candidate_row(product, supplier) for product, supplier in rows]
 
     async def persist_ranked_candidates(
@@ -219,7 +233,17 @@ class RecommendationService:
                     409,
                 )
             candidates = [
-                self._candidate(run.id, item, *product_rows[item.product_id])
+                self._candidate(
+                    run.id,
+                    item.model_copy(
+                        update={
+                            "manual_flags": self._manual_flags_for_requirement(
+                                requirement, item.manual_flags
+                            )
+                        }
+                    ),
+                    *product_rows[item.product_id],
+                )
                 for item in payload.candidates
             ]
             self.session.add_all(candidates)
@@ -274,6 +298,7 @@ class RecommendationService:
             if row is None:
                 raise AppError("RECOMMENDATION_CANDIDATE_NOT_FOUND", "推品候选不存在", 404)
             candidate, run, confirmation = row
+            self._ensure_manual_checks_pass(candidate)
             if run.status not in {
                 RecommendationRunStatus.CANDIDATES_READY.value,
                 RecommendationRunStatus.WAITING_CONFIRMATION.value,
@@ -351,6 +376,7 @@ class RecommendationService:
             confirmed_at = datetime.now(UTC).replace(tzinfo=None)
             confirmations: list[RecommendationConfirmation] = []
             for candidate, confirmation in rows:
+                self._ensure_manual_checks_pass(candidate)
                 if confirmation is None:
                     confirmation = RecommendationConfirmation(candidate_id=candidate.id)
                     self.session.add(confirmation)
@@ -368,6 +394,89 @@ class RecommendationService:
             for confirmation in confirmations:
                 await self.session.refresh(confirmation)
         return [self._confirmation_response(item) for item in confirmations]
+
+    async def update_manual_checks(
+        self, candidate_id: uuid.UUID, payload: ManualCheckUpdateRequest
+    ) -> RecommendationCandidateResponse:
+        async with transaction_scope(self.session):
+            row = await self.repository.candidate_with_run_for_update(candidate_id)
+            if row is None:
+                raise AppError("RECOMMENDATION_CANDIDATE_NOT_FOUND", "推品候选不存在", 404)
+            candidate, run, confirmation = row
+            if run.status not in {
+                RecommendationRunStatus.CANDIDATES_READY.value,
+                RecommendationRunStatus.WAITING_CONFIRMATION.value,
+                RecommendationRunStatus.CONFIRMED.value,
+                RecommendationRunStatus.EXPORTED.value,
+            }:
+                raise AppError(
+                    "RECOMMENDATION_MANUAL_CHECK_NOT_ALLOWED", "当前推品任务不能更新人工核验", 409
+                )
+            old_flags = dict(candidate.manual_flags or {})
+            old_checks = old_flags.get("checks")
+            if not isinstance(old_checks, list):
+                raise AppError(
+                    "RECOMMENDATION_MANUAL_CHECK_NOT_FOUND", "候选没有可更新的人工核验项", 409
+                )
+            existing = {
+                str(item.get("code")): item for item in old_checks if isinstance(item, dict)
+            }
+            updates = {check.code.value: check for check in payload.checks}
+            if set(updates) - set(existing):
+                raise AppError(
+                    "RECOMMENDATION_MANUAL_CHECK_NOT_FOUND", "不能新增不存在的人工核验项", 422
+                )
+            new_checks: list[dict[str, object]] = []
+            for item in old_checks:
+                if not isinstance(item, dict):
+                    continue
+                update = updates.get(str(item.get("code")))
+                new_item = dict(item)
+                if update is not None:
+                    if (
+                        confirmation is not None
+                        and bool(item.get("required", False))
+                        and update.status is not ManualCheckStatus.PASS
+                    ):
+                        raise AppError(
+                            "RECOMMENDATION_MANUAL_CHECK_CONFIRMED_LOCKED",
+                            "已确认候选的必填人工核验不能降级",
+                            409,
+                        )
+                    new_item["status"] = update.status.value
+                    new_item["evidence"] = update.evidence
+                new_checks.append(new_item)
+            old_flags["checks"] = new_checks
+            # Reassign rather than mutating nested JSON, so SQLAlchemy marks it dirty.
+            candidate.manual_flags = old_flags
+            if run.status == RecommendationRunStatus.EXPORTED.value:
+                self._transition(run, RecommendationRunStatus.CONFIRMED)
+            await self.session.flush()
+            await self.session.refresh(candidate)
+        return self._candidate_response(candidate, confirmation)
+
+    @staticmethod
+    def _ensure_manual_checks_pass(candidate: RecommendationCandidate) -> None:
+        flags = candidate.manual_flags or {}
+        checks = flags.get("checks")
+        if checks is None:
+            return
+        if not isinstance(checks, list):
+            raise AppError("RECOMMENDATION_MANUAL_CHECK_INVALID", "人工核验数据格式无效", 409)
+        for value in checks:
+            if not isinstance(value, dict):
+                raise AppError("RECOMMENDATION_MANUAL_CHECK_INVALID", "人工核验数据格式无效", 409)
+            if not value.get("required", False):
+                continue
+            status = value.get("status", ManualCheckStatus.PENDING.value)
+            if status == ManualCheckStatus.PENDING.value:
+                raise AppError(
+                    "RECOMMENDATION_MANUAL_CHECK_PENDING", "仍有必填人工核验项未完成", 409
+                )
+            if status == ManualCheckStatus.FAIL.value:
+                raise AppError("RECOMMENDATION_MANUAL_CHECK_FAILED", "必填人工核验项未通过", 409)
+            if status != ManualCheckStatus.PASS.value:
+                raise AppError("RECOMMENDATION_MANUAL_CHECK_INVALID", "人工核验状态无效", 409)
 
     async def _run_or_404_for_update(self, run_id: uuid.UUID) -> RecommendationRun:
         run = await self.repository.run_for_update(run_id)
@@ -435,6 +544,10 @@ class RecommendationService:
             agreement_price=product.agreement_price,
             profit=product.profit,
             gross_margin=product.gross_margin,
+            discount_rate=product.discount_rate,
+            sales_volume=product.sales_volume,
+            positive_rating=product.positive_rating,
+            selling_points=product.selling_points,
             image_reference=product.image_reference,
             supplier_name=supplier.supplier_name,
             shipping_courier=product.shipping_courier,
@@ -475,6 +588,20 @@ class RecommendationService:
             },
             price_snapshot=price_snapshot,
         )
+
+    @staticmethod
+    def _manual_flags_for_requirement(
+        requirement: ParsedRequirement, existing: dict[str, object] | None
+    ) -> dict[str, object] | None:
+        if not requirement.manual_checks:
+            return existing
+        return {
+            **(existing or {}),
+            "checks": [
+                check.model_dump(mode="json")
+                for check in requirement.manual_checks
+            ],
+        }
 
     @staticmethod
     def _snapshot_value(value: object) -> object:
