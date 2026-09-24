@@ -1,6 +1,6 @@
 import { http } from "../shared/http/runtime"
 import type { BidCandidate, BidFileType, BidItemPage, BidItemStatus, BidProjectCreateResult, BidProjectDetail, BidProjectFile, BidProjectPage, BidProjectStatus, BidProjectStatusResult, BidProjectType, BidSelectionResult, NoQuoteReason, StartMatchingResult } from "../types/bid"
-import type { RecommendationTemplateFile, RecommendationTemplateMapping, RecommendationTemplateMappingUpdate } from "../types/recommendation"
+import type { RecommendationTemplateFile, RecommendationTemplateMapping, RecommendationTemplateMappingUpdate, RecommendationTemplateStructure } from "../types/recommendation"
 const base = "/api/v1/bid-projects"
 function query(values: Record<string, string | number | undefined>): string { const params = new URLSearchParams(); Object.entries(values).forEach(([key, value]) => { if (value !== undefined && String(value).trim() !== "") params.set(key, String(value)) }); const value = params.toString(); return value ? `?${value}` : "" }
 export const bidApi = {
@@ -10,6 +10,7 @@ export const bidApi = {
   create(input: { project_type: BidProjectType; file?: File; recommendation_template?: File; project_name: string; buyer_name: string; start_at?: string; deadline_at?: string; remark?: string }): Promise<BidProjectCreateResult> { const form = new FormData(); form.append("project_type", input.project_type); if (input.file) form.append("file", input.file); if (input.recommendation_template) form.append("recommendation_template", input.recommendation_template); form.append("project_name", input.project_name); form.append("buyer_name", input.buyer_name); if (input.start_at) form.append("start_at", input.start_at); if (input.deadline_at) form.append("deadline_at", input.deadline_at); if (input.remark?.trim()) form.append("remark", input.remark.trim()); return http.post(`${base}`, form, { timeoutMs: 300_000 }) },
   recommendationTemplates(id: string): Promise<RecommendationTemplateFile[]> { return http.get(`${base}/${id}/recommendation-templates`) },
   recommendationTemplateMapping(id: string, fileId: string): Promise<RecommendationTemplateMapping> { return http.get(`${base}/${id}/recommendation-templates/${fileId}/mapping`) },
+  recommendationTemplateStructure(id: string, fileId: string, params: { sheet_name?: string; header_row: number }): Promise<RecommendationTemplateStructure> { return http.get(`${base}/${id}/recommendation-templates/${fileId}/structure${query(params)}`) },
   updateRecommendationTemplateMapping(id: string, fileId: string, body: RecommendationTemplateMappingUpdate): Promise<RecommendationTemplateMapping> { return http.patch(`${base}/${id}/recommendation-templates/${fileId}/mapping`, body) },
   items(id: string, params: { page?: number; page_size?: number; status?: BidItemStatus; keyword?: string } = {}): Promise<BidItemPage> { return http.get(`${base}/${id}/items${query(params)}`) },
   files(id: string): Promise<BidProjectFile[]> { return http.get(`${base}/${id}/files`) },

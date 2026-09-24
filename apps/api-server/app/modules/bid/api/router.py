@@ -29,6 +29,7 @@ from app.modules.recommendation.template.schemas import (
     RecommendationTemplateFileResponse,
     RecommendationTemplateMappingResponse,
     RecommendationTemplateMappingUpdateRequest,
+    RecommendationTemplateStructureResponse,
 )
 
 router = APIRouter(prefix="/bid-projects", tags=["bid-projects"])
@@ -135,6 +136,28 @@ async def get_recommendation_template_mapping(
 ) -> ApiResponse[RecommendationTemplateMappingResponse]:
     return success(
         await BidProjectService(session).recommendation_template_mapping(project_id, file_id)
+    )
+
+
+@router.get(
+    "/{project_id}/recommendation-templates/{file_id}/structure",
+    response_model=ApiResponse[RecommendationTemplateStructureResponse],
+)
+async def get_recommendation_template_structure(
+    project_id: uuid.UUID,
+    file_id: uuid.UUID,
+    _: Annotated[CurrentUser, Depends(require_permission("recommendation:create"))],
+    session: SessionDep,
+    sheet_name: Annotated[str | None, Query()] = None,
+    header_row: Annotated[int, Query(ge=1)] = 1,
+) -> ApiResponse[RecommendationTemplateStructureResponse]:
+    return success(
+        await BidProjectService(session).recommendation_template_structure(
+            project_id,
+            file_id,
+            sheet_name=sheet_name,
+            header_row=header_row,
+        )
     )
 
 

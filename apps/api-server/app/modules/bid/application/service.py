@@ -47,6 +47,7 @@ from app.modules.recommendation.template.schemas import (
     RecommendationTemplateFileResponse,
     RecommendationTemplateMappingResponse,
     RecommendationTemplateMappingUpdateRequest,
+    RecommendationTemplateStructureResponse,
 )
 from app.modules.system.service import BusinessSequenceService
 
@@ -335,6 +336,29 @@ class BidProjectService:
     ) -> RecommendationTemplateMappingResponse:
         file, mapping = await self._recommendation_mapping_or_error(project_id, file_id)
         return self._mapping_response(file, mapping)
+
+    async def recommendation_template_structure(
+        self,
+        project_id: uuid.UUID,
+        file_id: uuid.UUID,
+        *,
+        sheet_name: str | None,
+        header_row: int,
+    ) -> RecommendationTemplateStructureResponse:
+        file, _mapping = await self._recommendation_mapping_or_error(project_id, file_id)
+        content = await self.storage.read(file.storage_key)
+        if hashlib.sha256(content).hexdigest() != file.sha256:
+            raise AppError("RECOMMENDATION_TEMPLATE_MAPPING_INVALID", "模板摘要校验失败", 422)
+        from app.modules.recommendation.template.analyzer import inspect_template_structure
+
+        structure = inspect_template_structure(
+            content,
+            sheet_name=sheet_name.strip() if sheet_name else None,
+            header_row=header_row,
+        )
+        return RecommendationTemplateStructureResponse.model_validate(
+            structure, from_attributes=True
+        )
 
     async def update_recommendation_template_mapping(
         self,

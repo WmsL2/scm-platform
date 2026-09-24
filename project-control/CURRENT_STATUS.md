@@ -17,6 +17,10 @@ Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Su
 
 > 2026-09-23：自由推品人工确认已修复 Run 串台：前端按当前 `run_id` 刷新并支持历史 Run 切换；候选可勾选后通过单事务批量确认（最多 30 条），重新生成不会覆盖原候选与确认结果。
 
+> 2026-09-24：自由推品结果模板映射交互已按“上传模板列 → 商品主数据字段”调整：页面读取工作簿真实 Sheet/表头，左侧列名只读，右侧支持搜索 43 个商品主数据字段及人工“是否厂直”，同名自动匹配、重复表头阻止映射；后端既有映射存储和导出方向不变。投标项目筛选布局与模板文件名重复显示同步修复。无 Migration、无权限变化。
+
+> 2026-09-24：修复自由推品导出 POST 返回后立即下载偶发 404：导出事务现在保证在响应发送前提交，避免下载 GET 先于附件及审计记录对其他数据库会话可见。
+
 ## Repository
 
 - Remote：GitHub
@@ -97,6 +101,7 @@ Sprint 1 — Auth/RBAC + Supplier
 ## Workstreams / Implementation Context
 
 - Free Recommendation Ranking Stability：排序输入/输出/持久化已统一为最多 30 条。多个类目按确定性 round-robin 去重合并；DeepSeek 的结构化输出使用带 stage 与不含输入值摘要的安全错误，并仅自动纠错重试一次。无 Migration，前端既有 `run.error` 展示合同不变。
+- Free Recommendation Template Mapping UI：新增只读模板结构查询，映射页按上传表头逐列选择商品主数据来源字段；新 Run 的候选快照覆盖全部正式商品导出字段，保证模板可选字段具备稳定的历史导出数据。历史 Run 不反查当前 Product 补值。
 
 - Auth Real API Integration：已完成真实 Auth API 联调；分支与合入状态以 GitHub / `main` 历史为准。
 - Business Sequence：`sys_biz_sequence` Migration、并发安全取号服务与 MySQL 并发测试已完成；分支与合入状态以 GitHub / `main` 历史为准。

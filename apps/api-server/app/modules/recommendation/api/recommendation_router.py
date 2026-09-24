@@ -10,9 +10,9 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import ApiResponse, success
-from app.core.database import get_db_session
+from app.core.database import FunctionSessionDep, get_db_session
 from app.jobs.recommendation_agent import execute_recommendation_agent_inline
-from app.modules.auth.dependencies import require_permission
+from app.modules.auth.dependencies import require_permission, require_permission_before_response
 from app.modules.auth.schemas import CurrentUser
 from app.modules.bid.schemas import BidProjectFileResponse
 from app.modules.recommendation.application.export_service import RecommendationExportService
@@ -108,9 +108,7 @@ async def confirm_candidates(
     session: SessionDep,
 ) -> ApiResponse[list[RecommendationConfirmationResponse]]:
     return success(
-        await RecommendationService(session).confirm_candidates(
-            run_id, payload, current.user_id
-        )
+        await RecommendationService(session).confirm_candidates(run_id, payload, current.user_id)
     )
 
 
@@ -120,8 +118,10 @@ async def confirm_candidates(
 async def export_confirmed_candidates(
     project_id: uuid.UUID,
     run_id: uuid.UUID,
-    current: Annotated[CurrentUser, Depends(require_permission("recommendation:export"))],
-    session: SessionDep,
+    current: Annotated[
+        CurrentUser, Depends(require_permission_before_response("recommendation:export"))
+    ],
+    session: FunctionSessionDep,
 ) -> ApiResponse[BidProjectFileResponse]:
     file = await RecommendationExportService(session).export(project_id, run_id, current.user_id)
     return success(file)

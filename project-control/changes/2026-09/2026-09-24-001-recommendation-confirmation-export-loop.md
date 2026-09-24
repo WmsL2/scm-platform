@@ -1,6 +1,6 @@
 # Change Record：自由推品确认编辑与导出闭环
 
-日期：2026-09-24  
+日期：2026-09-24
 分支：`fix/recommendation-confirmation-export-loop`
 
 ## 修复

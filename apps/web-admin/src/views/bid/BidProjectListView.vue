@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue"
 import { ElMessage } from "element-plus"
+import type { UploadInstance } from "element-plus"
 import { useRouter } from "vue-router"
 import { bidApi } from "../../api/bid"
 import { HttpError } from "../../shared/http"
@@ -31,6 +32,8 @@ const filters = reactive({ keyword: "", status: undefined as BidProjectStatus | 
 const createVisible = ref(false)
 const businessFile = ref<File>()
 const recommendationTemplate = ref<File>()
+const businessUpload = ref<UploadInstance>()
+const recommendationUpload = ref<UploadInstance>()
 const form = reactive({
   project_type: "FILTER_RECOMMENDATION" as BidProjectType,
   project_name: "",
@@ -88,6 +91,18 @@ function chooseRecommendationTemplate(upload: { raw: File }) {
 function resetTypeFiles() {
   businessFile.value = undefined
   recommendationTemplate.value = undefined
+  businessUpload.value?.clearFiles()
+  recommendationUpload.value?.clearFiles()
+}
+
+function clearBusinessFile() {
+  businessFile.value = undefined
+  businessUpload.value?.clearFiles()
+}
+
+function clearRecommendationTemplate() {
+  recommendationTemplate.value = undefined
+  recommendationUpload.value?.clearFiles()
 }
 
 async function create() {
@@ -153,12 +168,10 @@ onMounted(() => void load())
       </div>
     </header>
     <el-card>
-      <el-form inline @submit.prevent="load(1)">
-        <el-input v-model="filters.keyword" clearable placeholder="搜索项目编号或项目名称" @change="load(1)" />
-        <el-select v-model="filters.status" clearable placeholder="全部状态" @change="load(1)">
-          <el-option v-for="(label, key) in PROJECT_STATUS_LABELS" :key="key" :label="label" :value="key" />
-        </el-select>
-        <el-button type="primary" @click="load(1)">查询</el-button>
+      <el-form class="filter-form" @submit.prevent="load(1)">
+        <el-form-item label="项目"><el-input v-model="filters.keyword" clearable placeholder="搜索项目编号或项目名称" @change="load(1)" /></el-form-item>
+        <el-form-item label="状态"><el-select v-model="filters.status" clearable placeholder="全部状态" @change="load(1)"><el-option v-for="(label, key) in PROJECT_STATUS_LABELS" :key="key" :label="label" :value="key" /></el-select></el-form-item>
+        <el-form-item><el-button type="primary" @click="load(1)">查询</el-button></el-form-item>
       </el-form>
     </el-card>
     <el-card>
@@ -191,10 +204,10 @@ onMounted(() => void load())
         <el-form-item label="开始时间"><el-date-picker v-model="form.start_at" value-format="YYYY-MM-DDTHH:mm:ss" type="datetime" /></el-form-item>
         <el-form-item label="截止时间"><el-date-picker v-model="form.deadline_at" value-format="YYYY-MM-DDTHH:mm:ss" type="datetime" /></el-form-item>
         <el-form-item v-if="form.project_type === 'FILTER_RECOMMENDATION'" label="客户需求 Excel *" class="full">
-          <el-upload :auto-upload="false" :limit="1" accept=".xlsx" :on-change="chooseBusinessFile"><el-button>选择 .xlsx 文件</el-button><span v-if="businessFile" class="selected-file-name">{{ businessFile.name }}</span></el-upload>
+          <div class="upload-control"><el-upload ref="businessUpload" :auto-upload="false" :limit="1" :show-file-list="false" accept=".xlsx" :on-change="chooseBusinessFile"><el-button>选择 .xlsx 文件</el-button></el-upload><div v-if="businessFile" class="selected-file"><span>{{ businessFile.name }}</span><el-button link type="danger" @click="clearBusinessFile">移除</el-button></div></div>
         </el-form-item>
         <el-form-item v-if="form.project_type === 'FREE_RECOMMENDATION'" label="自由推品结果模板 *" class="full">
-          <el-upload :auto-upload="false" :limit="1" accept=".xlsx" :on-change="chooseRecommendationTemplate"><el-button>选择 .xlsx 模板</el-button><span v-if="recommendationTemplate" class="selected-file-name">{{ recommendationTemplate.name }}</span></el-upload>
+          <div class="upload-control"><el-upload ref="recommendationUpload" :auto-upload="false" :limit="1" :show-file-list="false" accept=".xlsx" :on-change="chooseRecommendationTemplate"><el-button>选择 .xlsx 模板</el-button></el-upload><div v-if="recommendationTemplate" class="selected-file"><span>{{ recommendationTemplate.name }}</span><el-button link type="danger" @click="clearRecommendationTemplate">移除</el-button></div></div>
         </el-form-item>
         <el-form-item :label="form.project_type === 'FREE_RECOMMENDATION' ? '场景需求说明 *（至少20字）' : '备注'" class="full">
           <el-input v-model="form.remark" type="textarea" :rows="4" maxlength="5000" show-word-limit />
@@ -210,10 +223,11 @@ onMounted(() => void load())
 header { display: flex; justify-content: space-between; align-items: start; padding: 24px 28px; border-radius: 14px; background: #edf5ff; }
 h1 { margin: 4px 0; } header p { margin: 0; color: #2670ca; font-weight: 700; }
 .header-actions { display: flex; flex-direction: column; align-items: flex-end; }
+.filter-form { display: grid; grid-template-columns: minmax(280px, 420px) 180px auto; gap: 12px; align-items: end; }.filter-form :deep(.el-form-item) { margin: 0; }.filter-form :deep(.el-input), .filter-form :deep(.el-select) { width: 100%; }
 .type-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 18px 0; }
 .type-card { display: grid; gap: 8px; min-height: 102px; padding: 16px; border: 1px solid #dcdfe6; border-radius: 10px; background: #fff; color: #303133; text-align: left; cursor: pointer; }
 .type-card span { color: #909399; line-height: 1.5; }.type-card.active { border-color: #409eff; background: #ecf5ff; }.type-card.disabled { cursor: not-allowed; opacity: .55; }
-.create-project-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px; }.create-project-form :deep(.el-form-item) { display: block; margin: 0; }.create-project-form :deep(.el-date-editor), .create-project-form :deep(.el-upload) { width: 100%; }.full { grid-column: 1 / -1; }.selected-file-name { margin-left: 12px; color: #606266; }
+.create-project-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px; }.create-project-form :deep(.el-form-item) { display: block; margin: 0; }.create-project-form :deep(.el-date-editor), .create-project-form :deep(.el-upload) { width: 100%; }.full { grid-column: 1 / -1; }.upload-control { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }.selected-file { display: flex; align-items: center; gap: 8px; min-width: 0; color: #606266; }.selected-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .el-pagination { justify-content: end; margin-top: 16px; }
-@media (max-width: 767px) { .type-grid, .create-project-form { grid-template-columns: 1fr; }.full { grid-column: auto; } }
+@media (max-width: 767px) { .filter-form, .type-grid, .create-project-form { grid-template-columns: 1fr; }.full { grid-column: auto; } }
 </style>

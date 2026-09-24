@@ -90,6 +90,7 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
             source_supplier_id=supplier.id,
             sku=f"SKU-{token[:8]}",
             product_name="中秋活动测试商品",
+            company_name="测试所属公司",
             brand="测试品牌",
             category_level1_name="食品饮料",
             category_level2_name="休闲食品",
@@ -177,6 +178,8 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
             ),
         )
         assert saved[0].price_snapshot["gross_margin"] == "0.08"
+        assert saved[0].product_snapshot["company_name"] == "测试所属公司"
+        assert saved[0].supplier_snapshot["supplier_name"] == supplier.supplier_name
         assert (await service.get_run(run.id)).status == "WAITING_CONFIRMATION"
 
         confirmed = await service.confirm_candidate(

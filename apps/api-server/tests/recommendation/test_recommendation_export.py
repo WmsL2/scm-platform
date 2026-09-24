@@ -20,6 +20,7 @@ from app.modules.bid.domain.lifecycle import (
 from app.modules.bid.infrastructure.models import BidProject, BidProjectEvent, BidProjectFile
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Product
+from app.modules.recommendation.api.recommendation_router import router as recommendation_router
 from app.modules.recommendation.application.export_service import RecommendationExportService
 from app.modules.recommendation.application.service import RecommendationService
 from app.modules.recommendation.infrastructure.models import (
@@ -50,6 +51,20 @@ class MemoryStorage:
         self.files.pop(key, None)
 
 
+def test_export_transaction_commits_before_response_is_sent() -> None:
+    route = next(
+        route
+        for route in recommendation_router.routes
+        if getattr(route, "path", "").endswith("/{project_id}/runs/{run_id}/exports")
+        and "POST" in getattr(route, "methods", set())
+    )
+    session_dependency = next(
+        dependency for dependency in route.dependant.dependencies if dependency.name == "session"
+    )
+
+    assert session_dependency.scope == "function"
+
+
 def _template() -> bytes:
     workbook = Workbook()
     sheet = workbook.active
@@ -62,6 +77,7 @@ def _template() -> bytes:
         "协议价",
         "毛利率",
         "是否厂直",
+        "所属公司",
         "活动价",
         "履约说明",
         "依据与备注",
@@ -74,7 +90,7 @@ def _template() -> bytes:
     sheet["A3"], sheet["B3"] = "示例品牌A", "示例商品A"
     sheet["A4"], sheet["B4"] = "示例品牌B", "示例商品B"
     sheet["A5"], sheet["B5"] = "示例品牌C", "示例商品C"
-    sheet["J3"] = '=IF(B3<>"","OK","")'
+    sheet["K3"] = '=IF(B3<>"","OK","")'
     output = BytesIO()
     workbook.save(output)
     workbook.close()
@@ -149,6 +165,7 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
                 "agreement_price": "协议价",
                 "gross_margin": "毛利率",
                 "factory_direct": "是否厂直",
+                "company_name": "所属公司",
                 "campaign_price": "活动价",
                 "fulfillment_cycle": "履约说明",
                 "evidence": "依据与备注",
@@ -170,7 +187,11 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
             product_id=product.id,
             rank=1,
             score=Decimal("99"),
-            product_snapshot={"brand": "导出品牌", "product_name": "确认导出商品"},
+            product_snapshot={
+                "brand": "导出品牌",
+                "product_name": "确认导出商品",
+                "company_name": "导出所属公司",
+            },
             supplier_snapshot={},
             price_snapshot={
                 "jd_price": "100",
@@ -213,10 +234,11 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
         assert Decimal(str(sheet["E3"].value)) == Decimal("0.12")
         assert sheet["E3"].number_format == "0.00%"
         assert sheet["F3"].value == "是"
-        assert sheet["G3"].value == 77
-        assert sheet["H3"].value == "48小时"
-        assert sheet["I3"].value == "供应商确认"
-        assert sheet["J3"].value == '=IF(B3<>"","OK","")'
+        assert sheet["G3"].value == "导出所属公司"
+        assert sheet["H3"].value == 77
+        assert sheet["I3"].value == "48小时"
+        assert sheet["J3"].value == "供应商确认"
+        assert sheet["K3"].value == '=IF(B3<>"","OK","")'
         assert sheet["A4"].value is None
         assert sheet["B4"].value is None
         assert sheet["A5"].value is None

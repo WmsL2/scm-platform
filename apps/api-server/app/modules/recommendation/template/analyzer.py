@@ -6,8 +6,10 @@ from io import BytesIO
 from openpyxl import load_workbook
 
 from app.common.contracts import AppError
+from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMNS
 
 _AUTO_MAPPING = {
+    **{column.header: column.key for column in PRODUCT_EXPORT_COLUMNS},
     "一级类目": "category_level1_name",
     "二级类目": "category_level2_name",
     "三级类目": "category_level3_name",
@@ -18,6 +20,7 @@ _AUTO_MAPPING = {
     "大客户协议价": "agreement_price",
     "折扣率": "discount_rate",
     "采销": "purchasing_agent",
+    "是否厂直": "factory_direct",
 }
 
 
@@ -27,6 +30,22 @@ class TemplateAnalysis:
     header_row: int
     data_start_row: int
     mapping_json: dict[str, str]
+
+
+@dataclass(frozen=True)
+class TemplateColumn:
+    column_index: int
+    header: str
+    duplicate: bool
+
+
+@dataclass(frozen=True)
+class TemplateStructure:
+    sheet_names: list[str]
+    sheet_name: str
+    header_row: int
+    max_row: int
+    columns: list[TemplateColumn]
 
 
 def analyze_template(file_bytes: bytes) -> TemplateAnalysis:
@@ -51,6 +70,45 @@ def analyze_template(file_bytes: bytes) -> TemplateAnalysis:
                     return TemplateAnalysis(sheet.title, row_number, row_number + 1, mapping)
         sheet = workbook.worksheets[0]
         return TemplateAnalysis(sheet.title, 1, 2, {})
+    finally:
+        workbook.close()
+
+
+def inspect_template_structure(
+    file_bytes: bytes, *, sheet_name: str | None, header_row: int
+) -> TemplateStructure:
+    """Return the exact stored workbook headers for deterministic UI selection."""
+    try:
+        workbook = load_workbook(BytesIO(file_bytes), read_only=True, data_only=False)
+    except Exception as exc:
+        raise AppError("RECOMMENDATION_TEMPLATE_INVALID", "推荐模板无法读取", 422) from exc
+    try:
+        selected_sheet = sheet_name or workbook.sheetnames[0]
+        if selected_sheet not in workbook.sheetnames:
+            raise AppError("RECOMMENDATION_TEMPLATE_MAPPING_INVALID", "模板工作表不存在", 422)
+        sheet = workbook[selected_sheet]
+        if header_row < 1 or header_row > sheet.max_row:
+            raise AppError("RECOMMENDATION_TEMPLATE_MAPPING_INVALID", "模板表头行不存在", 422)
+        headers = [
+            str(cell.value).strip() if cell.value is not None else "" for cell in sheet[header_row]
+        ]
+        counts = {header: headers.count(header) for header in set(headers) if header}
+        columns = [
+            TemplateColumn(
+                column_index=index,
+                header=header,
+                duplicate=counts[header] > 1,
+            )
+            for index, header in enumerate(headers, start=1)
+            if header
+        ]
+        return TemplateStructure(
+            sheet_names=list(workbook.sheetnames),
+            sheet_name=selected_sheet,
+            header_row=header_row,
+            max_row=sheet.max_row,
+            columns=columns,
+        )
     finally:
         workbook.close()
 

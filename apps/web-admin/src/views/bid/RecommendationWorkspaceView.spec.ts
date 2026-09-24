@@ -22,6 +22,14 @@ describe("RecommendationWorkspaceView", () => {
     expect(source).toContain("recommendationApi.run(runId)")
     expect(source).toContain("runHistory")
   })
+  it("maps uploaded template columns to searchable product master fields", () => {
+    expect(source).toContain("recommendationTemplateStructure")
+    expect(source).toContain("上传模板列（不可修改）")
+    expect(source).toContain("商品主数据字段（可搜索选择）")
+    expect(source).toContain("filterable clearable")
+    expect(source).toContain("selectedMappingJson")
+    expect(source).toContain("mapping_json: selectedMappingJson()")
+  })
   it("shows the exact requirement snapshot and can resume after supplemental input", () => {
     expect(source).toContain("本次 Agent 实际读取的需求")
     expect(source).toContain("run.raw_requirement_snapshot")

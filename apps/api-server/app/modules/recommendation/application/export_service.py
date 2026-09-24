@@ -28,12 +28,20 @@ from app.modules.recommendation.infrastructure.repository import RecommendationR
 from app.modules.recommendation.template.schemas import RecommendationRunStatus
 
 _DECIMAL_FIELDS = {
+    "cost_price",
+    "market_price",
     "campaign_price",
     "jd_price",
     "agreement_price",
-    "discount_rate",
+    "agreement_purchase_price",
     "profit",
+    "jd_margin",
+    "deduction_review",
     "gross_margin",
+    "jd_self_operated_price",
+    "positive_rating",
+    "discount_rate",
+    "price_inflation_rate",
 }
 _FACTORY_DIRECT_LABELS = {"PENDING": "待确认", "YES": "是", "NO": "否"}
 
@@ -71,9 +79,7 @@ class RecommendationExportService:
                     )
                 template_row = await self.repository.latest_template_mapping_for_update(project.id)
                 if template_row is None:
-                    raise AppError(
-                        "RECOMMENDATION_TEMPLATE_NOT_FOUND", "推荐模板或映射不存在", 409
-                    )
+                    raise AppError("RECOMMENDATION_TEMPLATE_NOT_FOUND", "推荐模板或映射不存在", 409)
                 mapping, template_file = template_row
                 if mapping.confirmed_by is None or mapping.confirmed_at is None:
                     raise AppError(
@@ -89,8 +95,12 @@ class RecommendationExportService:
                         409,
                     )
                 content = self._build_workbook(
-                    await self.storage.read(template_file.storage_key), mapping.sheet_name,
-                    mapping.header_row, mapping.data_start_row, mapping.mapping_json, rows,
+                    await self.storage.read(template_file.storage_key),
+                    mapping.sheet_name,
+                    mapping.header_row,
+                    mapping.data_start_row,
+                    mapping.mapping_json,
+                    rows,
                 )
                 version = await self.repository.next_export_version(project.id)
                 filename = f"{project.project_code}-自由推品结果-R{str(run.id)[:8]}-V{version}.xlsx"
@@ -264,22 +274,16 @@ class RecommendationExportService:
             "fulfillment_cycle",
             "evidence",
         }:
-            value = getattr(confirmation, field)
-            if value is None or field not in _DECIMAL_FIELDS:
-                return cast(object | None, value)
-            return cast(object, value)
-        if field in {
-            "category_level1_name",
-            "category_level2_name",
-            "category_level3_name",
-            "brand",
-            "sku",
-            "product_name",
-            "shipping_courier",
-        }:
-            return candidate.product_snapshot.get(field)
+            return cast(object | None, getattr(confirmation, field))
+        if field == "supplier_name":
+            return candidate.supplier_snapshot.get(field)
+        if field not in _DECIMAL_FIELDS:
+            return candidate.product_snapshot.get(
+                field,
+                candidate.price_snapshot.get(field, candidate.supplier_snapshot.get(field)),
+            )
         value = candidate.price_snapshot.get(field)
-        if value is None or field not in _DECIMAL_FIELDS:
+        if value is None:
             return value
         try:
             return Decimal(str(value))
