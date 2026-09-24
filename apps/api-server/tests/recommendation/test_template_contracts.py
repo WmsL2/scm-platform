@@ -57,6 +57,29 @@ def test_mapping_contract_accepts_product_master_fields() -> None:
     assert payload.mapping_json["company_name"] == "所属公司"
 
 
+def test_mapping_contract_rejects_empty_mapping_before_confirmation() -> None:
+    with pytest.raises(ValidationError):
+        RecommendationTemplateMappingUpdateRequest(
+            sheet_name="Sheet", header_row=1, data_start_row=2, mapping_json={}
+        )
+
+
+def test_mapping_contract_accepts_manual_confirmation_export_fields() -> None:
+    payload = RecommendationTemplateMappingUpdateRequest(
+        sheet_name="Sheet",
+        header_row=1,
+        data_start_row=2,
+        mapping_json={
+            "campaign_price": "活动价",
+            "delivery_status": "发货状态",
+            "inventory_status": "库存状态",
+            "fulfillment_cycle": "履约说明",
+            "evidence": "依据与备注",
+        },
+    )
+    assert payload.mapping_json["campaign_price"] == "活动价"
+
+
 def test_template_structure_returns_actual_headers_and_marks_duplicates() -> None:
     content = _workbook_bytes(["商品名称", "品牌", "品牌", "", "自定义列"])
 

@@ -7,7 +7,17 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.modules.bid.schemas import BidProjectFileResponse
 from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMN_KEYS
 
-RECOMMENDATION_MAPPING_FIELD_KEYS = frozenset((*PRODUCT_EXPORT_COLUMN_KEYS, "factory_direct"))
+RECOMMENDATION_MAPPING_FIELD_KEYS = frozenset(
+    (
+        *PRODUCT_EXPORT_COLUMN_KEYS,
+        "factory_direct",
+        "campaign_price",
+        "delivery_status",
+        "inventory_status",
+        "fulfillment_cycle",
+        "evidence",
+    )
+)
 
 
 class RecommendationRunStatus(StrEnum):
@@ -31,7 +41,7 @@ class RecommendationTemplateMappingUpdateRequest(BaseModel):
     sheet_name: str = Field(min_length=1, max_length=128)
     header_row: int = Field(ge=1)
     data_start_row: int = Field(ge=1)
-    mapping_json: dict[str, str]
+    mapping_json: dict[str, str] = Field(min_length=1)
 
     @field_validator("mapping_json")
     @classmethod

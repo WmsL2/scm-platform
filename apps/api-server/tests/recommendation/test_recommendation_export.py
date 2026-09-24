@@ -22,12 +22,14 @@ from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.recommendation.api.recommendation_router import router as recommendation_router
 from app.modules.recommendation.application.export_service import RecommendationExportService
+from app.modules.recommendation.application.service import RecommendationService
 from app.modules.recommendation.infrastructure.models import (
     RecommendationCandidate,
     RecommendationConfirmation,
     RecommendationExport,
     RecommendationRun,
 )
+from app.modules.recommendation.schemas import ConfirmationUpdateRequest
 from app.modules.recommendation.template.models import RecommendationTemplateMapping
 from app.modules.recommendation.template.schemas import RecommendationRunStatus
 from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
@@ -68,12 +70,27 @@ def _template() -> bytes:
     sheet = workbook.active
     sheet.title = "推荐清单"
     sheet["A1"] = "自由推品确认结果"
-    headers = ["品牌", "名称", "京东价", "协议价", "毛利率", "是否厂直", "所属公司", "校验"]
+    headers = [
+        "品牌",
+        "名称",
+        "京东价",
+        "协议价",
+        "毛利率",
+        "是否厂直",
+        "所属公司",
+        "活动价",
+        "履约说明",
+        "依据与备注",
+        "校验",
+    ]
     for column, header in enumerate(headers, start=1):
         sheet.cell(2, column).value = header
     sheet["A3"].font = Font(bold=True)
     sheet["E3"].number_format = "0.00%"
-    sheet["H3"] = '=IF(B3<>"","OK","")'
+    sheet["A3"], sheet["B3"] = "示例品牌A", "示例商品A"
+    sheet["A4"], sheet["B4"] = "示例品牌B", "示例商品B"
+    sheet["A5"], sheet["B5"] = "示例品牌C", "示例商品C"
+    sheet["K3"] = '=IF(B3<>"","OK","")'
     output = BytesIO()
     workbook.save(output)
     workbook.close()
@@ -149,6 +166,9 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
                 "gross_margin": "毛利率",
                 "factory_direct": "是否厂直",
                 "company_name": "所属公司",
+                "campaign_price": "活动价",
+                "fulfillment_cycle": "履约说明",
+                "evidence": "依据与备注",
             },
             confirmed_by=actor_id,
             confirmed_at=datetime.now(UTC).replace(tzinfo=None),
@@ -157,6 +177,7 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
             project_id=project.id,
             status=RecommendationRunStatus.CONFIRMED.value,
             raw_requirement_snapshot="导出已确认自由推品候选。",
+            parsed_requirement={},
             created_by=actor_id,
         )
         session.add_all([mapping, run])
@@ -183,7 +204,10 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
         session.add(
             RecommendationConfirmation(
                 candidate_id=candidate.id,
+                campaign_price=Decimal("77"),
                 factory_direct="YES",
+                fulfillment_cycle="48小时",
+                evidence="供应商确认",
                 confirmed_by=actor_id,
                 confirmed_at=datetime.now(UTC).replace(tzinfo=None),
             )
@@ -211,7 +235,14 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
         assert sheet["E3"].number_format == "0.00%"
         assert sheet["F3"].value == "是"
         assert sheet["G3"].value == "导出所属公司"
-        assert sheet["H3"].value == '=IF(B3<>"","OK","")'
+        assert sheet["H3"].value == 77
+        assert sheet["I3"].value == "48小时"
+        assert sheet["J3"].value == "供应商确认"
+        assert sheet["K3"].value == '=IF(B3<>"","OK","")'
+        assert sheet["A4"].value is None
+        assert sheet["B4"].value is None
+        assert sheet["A5"].value is None
+        assert sheet["B5"].value is None
         assert sheet["A3"].font.bold is True
         workbook.close()
 
@@ -239,4 +270,13 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
             "RECOMMENDATION_EXPORTED",
             "RECOMMENDATION_EXPORTED",
         ]
+        await RecommendationService(session).confirm_candidate(
+            candidate.id,
+            ConfirmationUpdateRequest(campaign_price=Decimal("66")),
+            actor_id,
+        )
+        assert run.status == RecommendationRunStatus.CONFIRMED.value
+        third = await service.export(project.id, run.id, actor_id)
+        assert third.version_no == 3
+        assert run.status == RecommendationRunStatus.EXPORTED.value
         await session.rollback()

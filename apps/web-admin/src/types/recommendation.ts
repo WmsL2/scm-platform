@@ -11,7 +11,7 @@ export interface RecommendationTemplateStructure { sheet_names: string[]; sheet_
 export interface ParsedRequirement { gross_margin_min: string | null; jd_price_min: string | null; jd_price_max: string | null; category_keywords: string[]; brand_keywords: string[]; scenario_keywords: string[]; fulfillment_mode: string | null }
 export interface RecommendationCategoryChoice { id: string; level1_name: string | null; level2_name: string | null; level3_name: string | null; reason: string | null; candidate_count: number }
 export type FactoryDirectStatus = "PENDING" | "YES" | "NO"
-export interface RecommendationConfirmation { id: string; campaign_price: string | null; fulfillment: string | null; evidence: string | null; factory_direct: FactoryDirectStatus; confirmed_by: string | null; confirmed_at: string | null }
+export interface RecommendationConfirmation { id: string; candidate_id: string; campaign_price: string | null; delivery_status: string | null; inventory_status: string | null; factory_direct: FactoryDirectStatus; fulfillment_cycle: string | null; evidence: string | null; confirmed_by: string | null; confirmed_at: string | null; updated_at: string }
 export interface RecommendationCandidate { id: string; product_id: string; rank: number; score: string | null; reason: string | null; product_snapshot: Record<string, unknown>; supplier_snapshot: Record<string, unknown>; price_snapshot: Record<string, unknown>; factory_direct: FactoryDirectStatus | null; confirmation: RecommendationConfirmation | null }
 export interface RecommendationRun { id: string; project_id: string; status: RecommendationRunStatus; progress_percent?: number; progress_message?: string | null; raw_requirement_snapshot: string; parsed_requirement: ParsedRequirement | null; provider: string | null; model: string | null; prompt_version: string | null; error: string | null; category_choices: RecommendationCategoryChoice[]; candidates: RecommendationCandidate[]; created_at: string; updated_at: string }
 export interface RecommendationConfirmationUpdate { campaign_price?: string | null; delivery_status?: string | null; inventory_status?: string | null; factory_direct?: FactoryDirectStatus; fulfillment_cycle?: string | null; evidence?: string | null }
@@ -26,4 +26,7 @@ export const RUN_STATUS_LABELS: Record<RecommendationRunStatus, string> = {
 export const TEMPLATE_MAPPING_FIELDS: Array<{ key: string; label: string }> = [
   ...PRODUCT_EXPORT_COLUMN_DEFINITIONS,
   { key: "factory_direct", label: "是否厂直（人工确认）" },
+  { key: "campaign_price", label: "活动价" }, { key: "delivery_status", label: "发货状态" },
+  { key: "inventory_status", label: "库存状态" }, { key: "fulfillment_cycle", label: "履约说明" },
+  { key: "evidence", label: "依据与备注" },
 ]
