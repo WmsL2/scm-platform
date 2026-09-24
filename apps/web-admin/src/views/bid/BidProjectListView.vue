@@ -2,7 +2,7 @@
 import { onMounted, reactive, ref } from "vue"
 import { ElMessage } from "element-plus"
 import type { UploadInstance } from "element-plus"
-import { useRouter } from "vue-router"
+import { useRoute, useRouter } from "vue-router"
 import { bidApi } from "../../api/bid"
 import { HttpError } from "../../shared/http"
 import { useExcelImportNavigationLock } from "../../shared/import/excelImportNavigationLock"
@@ -19,6 +19,7 @@ import {
 } from "../../types/bid"
 
 const auth = useAuthStore()
+const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const submitting = ref(false)
@@ -155,7 +156,13 @@ function projectTypeLabel(value: BidProjectType): string {
   return PROJECT_TYPE_LABELS[value]
 }
 
-onMounted(() => void load())
+onMounted(() => {
+  void load()
+  if (route.query.action === "create" && auth.hasPermission("bid:create")) {
+    createVisible.value = true
+    void router.replace("/bid-projects")
+  }
+})
 </script>
 
 <template>

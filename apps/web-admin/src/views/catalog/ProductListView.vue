@@ -786,7 +786,14 @@ async function purgeProduct(product: ProductListItem): Promise<void> {
   }
 }
 
-onMounted(() => { void loadProducts() })
+onMounted(async () => {
+  void loadProducts()
+  if (route.query.action === "import" && auth.hasPermission("product:import")) {
+    await router.replace("/products")
+    await nextTick()
+    importInput.value?.click()
+  }
+})
 </script>
 
 <template>

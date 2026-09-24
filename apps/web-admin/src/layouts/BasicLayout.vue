@@ -17,6 +17,7 @@ import { ElMessage } from "element-plus"
 
 import WorkspaceTabs from "../components/layout/WorkspaceTabs.vue"
 import { useAuthStore } from "../stores/auth"
+import { useDashboardStore } from "../stores/dashboard"
 import { useRegistrationStore } from "../stores/registration"
 import { useWorkspaceStore } from "../stores/workspace"
 import { accountApi } from "../api/account"
@@ -25,6 +26,7 @@ import { HttpError } from "../shared/http"
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const dashboard = useDashboardStore()
 const registration = useRegistrationStore()
 const workspace = useWorkspaceStore()
 const collapsed = ref(false)
@@ -66,6 +68,18 @@ watch(
   { immediate: true },
 )
 
+watch(
+  [() => auth.isAuthenticated, () => route.fullPath],
+  ([isAuthenticated]) => {
+    if (!isAuthenticated) {
+      dashboard.clear()
+      return
+    }
+    void dashboard.refresh()
+  },
+  { immediate: true },
+)
+
 async function handleUserCommand(command: string): Promise<void> {
   if (command === "profile") profileVisible.value = true
   else if (command === "password") passwordVisible.value = true
@@ -98,7 +112,7 @@ async function changePassword(): Promise<void> { if (passwordForm.new_password !
         </el-menu-item>
         <el-menu-item v-if="auth.hasPermission('supplier:list')" index="/suppliers">
           <el-icon><OfficeBuilding /></el-icon>
-          <template #title>供应商管理</template>
+          <template #title><el-badge :value="dashboard.pendingSupplierCount" :max="99" :hidden="dashboard.pendingSupplierCount === 0" class="menu-count-badge"><span class="menu-badge-label">供应商管理</span></el-badge></template>
         </el-menu-item>
         <el-menu-item v-if="auth.hasPermission('product:list')" index="/products">
           <el-icon><Box /></el-icon>
@@ -209,7 +223,7 @@ async function changePassword(): Promise<void> { if (passwordForm.new_password !
 .user-arrow { color: #98a2b3; }
 .main-content { padding: 22px; background: #f3f6fa; }
 .tag { margin: 0 6px 6px 0; }.permission-list { max-height: 180px; overflow: auto; }.el-dialog .el-input { margin-bottom: 12px; }
-.registration-menu-label { display: inline-block; line-height: 1; }
-.registration-badge :deep(.el-badge__content) { top: 50%; right: -10px; transform: translateY(-50%) translateX(100%); }
+.registration-menu-label, .menu-badge-label { display: inline-block; line-height: 1; }
+.registration-badge :deep(.el-badge__content), .menu-count-badge :deep(.el-badge__content) { top: 50%; right: -10px; transform: translateY(-50%) translateX(100%); }
 @media (max-width: 720px) { .breadcrumb span, .breadcrumb i, .user-copy { display: none; } .topbar { padding-right: 12px; } .main-content { padding: 14px; } }
 </style>

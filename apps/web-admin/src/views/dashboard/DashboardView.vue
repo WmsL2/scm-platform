@@ -1,55 +1,75 @@
 <script setup lang="ts">
-import { computed, markRaw, onMounted, ref } from "vue"
+import { computed, markRaw, onMounted } from "vue"
 import { Box, DataAnalysis, Document, OfficeBuilding } from "@element-plus/icons-vue"
+import { useRouter } from "vue-router"
 
-import { isMockMode } from "../../api/auth"
-import { dashboardApi } from "../../api/dashboard"
 import { useAuthStore } from "../../stores/auth"
-import type { DashboardSummary } from "../../types/dashboard"
+import { useDashboardStore } from "../../stores/dashboard"
+import {
+  PROJECT_STATUS_LABELS,
+  PROJECT_TYPE_LABELS,
+  type BidProjectStatus,
+  type BidProjectType,
+} from "../../types/bid"
+import type { DashboardRecentProject, DashboardSummary } from "../../types/dashboard"
 
 const auth = useAuthStore()
-const summary = ref<DashboardSummary>()
-const summaryLoading = ref(false)
-const summaryLoadFailed = ref(false)
+const dashboard = useDashboardStore()
+const router = useRouter()
+const summary = computed<DashboardSummary | undefined>(() => dashboard.summary)
+const summaryLoading = computed(() => dashboard.loading)
+const summaryLoadFailed = computed(() => dashboard.loadFailed)
 
 const summaryCards = computed(() => [
-  {
-    label: "正式商品",
-    value: summary.value ? String(summary.value.formal_product_count) : "--",
-    note: summaryLoadFailed.value ? "统计加载失败" : summary.value ? "来自正式商品主数据" : "正在加载统计数据",
-    icon: markRaw(Box),
-    tone: "blue",
-  },
-  {
-    label: "已归档供应商",
-    value: summary.value ? String(summary.value.archived_supplier_count) : "--",
-    note: summaryLoadFailed.value ? "统计加载失败" : summary.value ? "来自供应商主数据" : "正在加载统计数据",
-    icon: markRaw(OfficeBuilding),
-    tone: "indigo",
-  },
-  { label: "有效供应商报价", value: "--", note: "计划于 Sprint 2 建设", icon: markRaw(DataAnalysis), tone: "cyan" },
-  { label: "待处理导入", value: "--", note: "计划于 Sprint 4 建设", icon: markRaw(Document), tone: "amber" },
+  { label: "正式商品", value: summary.value?.formal_product_count, note: "可用于查询和选品的商品", icon: markRaw(Box), tone: "blue" },
+  { label: "正常合作供应商", value: summary.value?.normal_supplier_count, note: "已归档且正常合作", icon: markRaw(OfficeBuilding), tone: "indigo" },
+  { label: "进行中的项目", value: summary.value?.active_project_count, note: "待处理、选品或投标中的项目", icon: markRaw(DataAnalysis), tone: "cyan" },
+  { label: "待处理事项", value: undefined, note: "待办处理流程跑通后接入", icon: markRaw(Document), tone: "amber" },
 ])
 
+const quickActions = computed(() => [
+  { title: "商品主数据", description: "查询、维护和导入商品", path: "/products", permission: "product:list", icon: markRaw(Box) },
+  { title: "导入商品 Excel", description: "直接选择商品大表并预览", path: "/products?action=import", permission: "product:import", icon: markRaw(Document) },
+  { title: "供应商管理", description: "维护供应商及合作状态", path: "/suppliers", permission: "supplier:list", icon: markRaw(OfficeBuilding) },
+  { title: "导入供应商 Excel", description: "直接选择供应商表并预览", path: "/suppliers?action=import", permission: "supplier:create", icon: markRaw(Document) },
+  { title: "新增供应商", description: "录入新的供应商资料", path: "/suppliers/new", permission: "supplier:create", icon: markRaw(OfficeBuilding) },
+  { title: "投标与推品项目", description: "继续选品或查看项目结果", path: "/bid-projects", permission: "bid:list", icon: markRaw(DataAnalysis) },
+  { title: "新建项目", description: "创建条件筛选或自由推品项目", path: "/bid-projects?action=create", permission: "bid:create", icon: markRaw(Document) },
+].filter((action) => auth.hasPermission(action.permission)))
+
 async function loadSummary(): Promise<void> {
-  summaryLoading.value = true
-  summaryLoadFailed.value = false
-  try {
-    summary.value = await dashboardApi.summary()
-  } catch {
-    summary.value = undefined
-    summaryLoadFailed.value = true
-  } finally {
-    summaryLoading.value = false
-  }
+  await dashboard.refresh()
 }
 
-const progressItems = [
-  { title: "前端认证与后台壳层", description: "登录、状态恢复、路由守卫和工作台", state: "功能已实现", type: "primary" },
-  { title: "Auth/RBAC Kernel", description: "login、me、logout 和权限依赖", state: "后端已合入", type: "success" },
-  { title: "Business Sequence", description: "供应商永久编码所需的并发安全序列", state: "后端已合入", type: "success" },
-  { title: "Supplier Master", description: "列表、详情、创建、编辑和状态操作已接入真实 API", state: "前后端已联调", type: "success" },
-] as const
+function cardValue(value: number | undefined): string {
+  if (summaryLoadFailed.value) return "--"
+  return value === undefined ? "--" : value.toLocaleString("zh-CN")
+}
+
+function projectTarget(project: DashboardRecentProject): string {
+  return project.project_type === "FREE_RECOMMENDATION"
+    ? `/bid-projects/${project.id}/recommendation`
+    : `/bid-projects/${project.id}`
+}
+
+function statusTagType(status: BidProjectStatus): "success" | "warning" | "info" | "primary" {
+  if (status === "WON") return "success"
+  if (status === "LOST" || status === "VOIDED") return "info"
+  if (status === "READY" || status === "EXPORTED" || status === "SUBMITTED") return "warning"
+  return "primary"
+}
+
+function formatTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "—"
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date)
+}
 
 onMounted(() => void loadSummary())
 </script>
@@ -60,11 +80,9 @@ onMounted(() => void loadSummary())
       <div>
         <p>企业工作台</p>
         <h1>你好，{{ auth.username }}</h1>
-        <span>当前前端基础能力已就绪，业务数据将在对应接口完成后接入。</span>
+        <span>欢迎回来，今天可以从商品维护、供应商管理或项目选品开始工作。</span>
       </div>
-      <el-tag :type="isMockMode ? 'warning' : 'success'" effect="light" round>
-        {{ isMockMode ? "本地 Mock 模式" : "真实 API 模式" }}
-      </el-tag>
+      <el-button :loading="summaryLoading" @click="loadSummary">刷新数据</el-button>
     </section>
 
     <section class="summary-grid">
@@ -72,37 +90,55 @@ onMounted(() => void loadSummary())
         <div class="summary-icon" :class="card.tone"><el-icon><component :is="card.icon" /></el-icon></div>
         <div>
           <p>{{ card.label }}</p>
-          <strong>{{ card.value }}</strong>
-          <small>{{ card.note }}</small>
+          <strong>{{ cardValue(card.value) }}</strong>
+          <small>{{ summaryLoadFailed ? "统计加载失败，请稍后刷新" : card.note }}</small>
         </div>
       </article>
     </section>
 
     <section class="content-grid">
-      <el-card class="page-card progress-card">
+      <el-card class="page-card recent-card">
         <template #header>
-          <div class="card-heading"><strong>当前建设进度</strong><span>Sprint 1</span></div>
-        </template>
-        <div class="progress-list">
-          <div v-for="item in progressItems" :key="item.title" class="progress-item">
-            <span class="progress-dot" />
-            <div><strong>{{ item.title }}</strong><p>{{ item.description }}</p></div>
-            <el-tag :type="item.type" effect="plain" size="small">{{ item.state }}</el-tag>
+          <div class="card-heading">
+            <div><strong>最近项目</strong><span>继续处理最近更新的项目</span></div>
+            <el-button v-if="auth.hasPermission('bid:list')" link type="primary" @click="router.push('/bid-projects')">查看全部</el-button>
           </div>
-        </div>
+        </template>
+        <el-table v-if="auth.hasPermission('bid:list') && summary?.recent_projects.length" :data="summary.recent_projects" class="recent-table">
+          <el-table-column prop="project_name" label="项目" min-width="190">
+            <template #default="{ row }">
+              <button class="project-link" type="button" @click="router.push(projectTarget(row))">{{ row.project_name }}</button>
+              <small>{{ row.project_code }}</small>
+            </template>
+          </el-table-column>
+          <el-table-column label="类型" min-width="130">
+            <template #default="{ row }">{{ PROJECT_TYPE_LABELS[row.project_type as BidProjectType] ?? row.project_type }}</template>
+          </el-table-column>
+          <el-table-column label="状态" width="105">
+            <template #default="{ row }"><el-tag :type="statusTagType(row.status)" effect="light">{{ PROJECT_STATUS_LABELS[row.status] ?? row.status }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="最近更新" width="125">
+            <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
+          </el-table-column>
+          <el-table-column width="76" align="right">
+            <template #default="{ row }"><el-button link type="primary" @click="router.push(projectTarget(row))">继续</el-button></template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-else-if="!summaryLoading" :description="auth.hasPermission('bid:list') ? '暂无项目，创建后会显示在这里' : '当前账号暂无项目查看权限'" :image-size="72" />
       </el-card>
 
-      <el-card class="page-card boundary-card">
+      <el-card class="page-card quick-card">
         <template #header>
-          <div class="card-heading"><strong>开发边界</strong><span>Local-First</span></div>
+          <div class="card-heading"><div><strong>快捷入口</strong><span>按当前账号权限显示</span></div></div>
         </template>
-        <div class="boundary-content">
-          <div class="boundary-line"><span>认证数据</span><strong>{{ isMockMode ? "仅本机演示" : "来自 FastAPI" }}</strong></div>
-          <div class="boundary-line"><span>业务统计</span><strong>{{ summaryLoading ? "加载中" : summaryLoadFailed ? "加载失败" : "部分已接入" }}</strong></div>
-          <div class="boundary-line"><span>供应商数据</span><strong>已接入 FastAPI</strong></div>
-          <div class="boundary-line"><span>正式权限</span><strong>以后端校验为准</strong></div>
-          <el-alert title="页面中的 -- 代表暂无可信数据，不使用虚构数字填充。" type="info" :closable="false" show-icon />
+        <div v-if="quickActions.length" class="quick-list">
+          <button v-for="action in quickActions" :key="action.path" type="button" class="quick-action" @click="router.push(action.path)">
+            <span class="quick-icon"><el-icon><component :is="action.icon" /></el-icon></span>
+            <span><strong>{{ action.title }}</strong><small>{{ action.description }}</small></span>
+            <b>›</b>
+          </button>
         </div>
+        <el-empty v-else description="当前账号暂无可用业务入口" :image-size="72" />
       </el-card>
     </section>
   </div>
@@ -121,19 +157,23 @@ onMounted(() => void loadSummary())
 .summary-card p { margin: 1px 0 8px; color: #667085; font-size: 13px; }
 .summary-card strong { display: block; margin-bottom: 6px; color: #1d2939; font-size: 25px; }
 .summary-card small { color: #98a2b3; font-size: 11px; line-height: 1.5; }
-.content-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, .65fr); gap: 16px; }
+.content-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(310px, .55fr); gap: 16px; }
 .card-heading { display: flex; align-items: center; justify-content: space-between; }
+.card-heading > div { display: grid; gap: 4px; }
 .card-heading strong { color: #243653; font-size: 15px; }
 .card-heading span { color: #98a2b3; font-size: 12px; }
-.progress-list { display: grid; }
-.progress-item { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 15px 2px; border-bottom: 1px solid #edf0f4; }
-.progress-item:last-child { border-bottom: 0; }
-.progress-dot { width: 8px; height: 8px; border: 2px solid #8ab8ef; border-radius: 50%; background: #e9f3ff; }
-.progress-item strong { color: #344054; font-size: 13px; }
-.progress-item p { margin: 4px 0 0; color: #98a2b3; font-size: 11px; }
-.boundary-content { display: grid; gap: 16px; }
-.boundary-line { display: flex; justify-content: space-between; gap: 14px; padding-bottom: 13px; border-bottom: 1px solid #edf0f4; font-size: 13px; }
-.boundary-line span { color: #667085; }.boundary-line strong { color: #344054; font-weight: 600; text-align: right; }
+.recent-table :deep(.el-table__cell) { padding: 12px 0; }
+.project-link { display: block; max-width: 100%; padding: 0; overflow: hidden; border: 0; color: #243653; background: transparent; font: inherit; font-weight: 600; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.project-link:hover { color: var(--brand-600); }
+.project-link + small { display: block; margin-top: 4px; color: #98a2b3; }
+.quick-list { display: grid; gap: 10px; }
+.quick-action { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 11px; width: 100%; padding: 12px; border: 1px solid #e5eaf1; border-radius: 9px; background: #fff; text-align: left; cursor: pointer; transition: border-color .18s, box-shadow .18s, transform .18s; }
+.quick-action:hover { border-color: #a9c9f4; box-shadow: 0 5px 14px rgb(31 103 207 / 9%); transform: translateY(-1px); }
+.quick-action > span:nth-child(2) { display: grid; gap: 4px; }
+.quick-action strong { color: #344054; font-size: 13px; }
+.quick-action small { overflow: hidden; color: #98a2b3; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.quick-action b { color: #98a2b3; font-size: 20px; font-weight: 400; }
+.quick-icon { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 9px; color: var(--brand-600); background: #eef5ff; font-size: 18px; }
 @media (max-width: 1180px) { .summary-grid { grid-template-columns: repeat(2, 1fr); } .content-grid { grid-template-columns: 1fr; } }
 @media (max-width: 680px) { .summary-grid { grid-template-columns: 1fr; } .welcome-banner { flex-direction: column; } }
 </style>
