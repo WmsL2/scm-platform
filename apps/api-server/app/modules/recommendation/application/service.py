@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError
 from app.core.transaction import transaction_scope
+from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMN_KEYS
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.recommendation.domain.lifecycle import ensure_transition
 from app.modules.recommendation.infrastructure.models import (
@@ -33,6 +35,24 @@ from app.modules.recommendation.schemas import (
 )
 from app.modules.recommendation.template.schemas import RecommendationRunStatus
 from app.modules.supplier.infrastructure.models import Supplier
+
+_DECIMAL_SNAPSHOT_FIELDS = frozenset(
+    {
+        "cost_price",
+        "market_price",
+        "jd_price",
+        "agreement_price",
+        "agreement_purchase_price",
+        "profit",
+        "jd_margin",
+        "deduction_review",
+        "gross_margin",
+        "jd_self_operated_price",
+        "positive_rating",
+        "discount_rate",
+        "price_inflation_rate",
+    }
+)
 
 
 class RecommendationService:
@@ -319,9 +339,7 @@ class RecommendationService:
                 )
             requirement = self._parsed_requirement(run)
             product_ids = [candidate.product_id for candidate, _ in rows]
-            eligible = await self.repository.eligible_products_by_ids(
-                requirement, product_ids
-            )
+            eligible = await self.repository.eligible_products_by_ids(requirement, product_ids)
             if len(eligible) != len(product_ids):
                 raise AppError(
                     "RECOMMENDATION_CANDIDATE_INELIGIBLE",
@@ -425,6 +443,17 @@ class RecommendationService:
         product: Product,
         supplier: Supplier,
     ) -> RecommendationCandidate:
+        product_snapshot: dict[str, object | None] = {"id": str(product.id)}
+        price_snapshot: dict[str, object | None] = {}
+        for field in PRODUCT_EXPORT_COLUMN_KEYS:
+            if field == "supplier_name":
+                continue
+            value = getattr(product, field)
+            if field in _DECIMAL_SNAPSHOT_FIELDS:
+                price_snapshot[field] = str(value) if value is not None else None
+            else:
+                product_snapshot[field] = RecommendationService._snapshot_value(value)
+
         return RecommendationCandidate(
             run_id=run_id,
             product_id=product.id,
@@ -432,18 +461,7 @@ class RecommendationService:
             score=item.score,
             reason=item.reason.strip() if item.reason else None,
             manual_flags=item.manual_flags,
-            product_snapshot={
-                "id": str(product.id),
-                "sku": product.sku,
-                "product_name": product.product_name,
-                "brand": product.brand,
-                "model": product.model,
-                "category_level1_name": product.category_level1_name,
-                "category_level2_name": product.category_level2_name,
-                "category_level3_name": product.category_level3_name,
-                "image_reference": product.image_reference,
-                "shipping_courier": product.shipping_courier,
-            },
+            product_snapshot=product_snapshot,
             supplier_snapshot={
                 "id": str(supplier.id),
                 "supplier_code": supplier.supplier_code,
@@ -451,22 +469,16 @@ class RecommendationService:
                 "archive_status": supplier.archive_status,
                 "cooperation_status": supplier.cooperation_status,
             },
-            price_snapshot={
-                "cost_price": str(product.cost_price) if product.cost_price is not None else None,
-                "jd_price": str(product.jd_price) if product.jd_price is not None else None,
-                "agreement_price": str(product.agreement_price)
-                if product.agreement_price is not None
-                else None,
-                "profit": str(product.profit) if product.profit is not None else None,
-                "gross_margin": str(product.gross_margin)
-                if product.gross_margin is not None
-                else None,
-                "discount_rate": str(product.discount_rate)
-                if product.discount_rate is not None
-                else None,
-                "purchasing_agent": product.purchasing_agent,
-            },
+            price_snapshot=price_snapshot,
         )
+
+    @staticmethod
+    def _snapshot_value(value: object) -> object:
+        if isinstance(value, Decimal):
+            return str(value)
+        if isinstance(value, (date, datetime)):
+            return value.isoformat()
+        return value
 
     @staticmethod
     def _candidate_response(

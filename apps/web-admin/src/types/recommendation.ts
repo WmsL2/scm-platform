@@ -1,10 +1,13 @@
 import type { BidProjectFile } from "./bid"
+import { PRODUCT_EXPORT_COLUMN_DEFINITIONS } from "./catalog"
 
 export type RecommendationRunStatus = "DRAFT" | "QUEUED" | "ANALYZING" | "RETRIEVING" | "RANKING" | "CANDIDATES_READY" | "WAITING_CONFIRMATION" | "CONFIRMED" | "EXPORTED" | "FAILED" | "NO_CANDIDATES" | "NEEDS_INPUT" | "CANCELLED"
 
 export interface RecommendationTemplateFile extends BidProjectFile { mapping_confirmed: boolean }
 export interface RecommendationTemplateMappingUpdate { sheet_name: string; header_row: number; data_start_row: number; mapping_json: Record<string, string> }
 export interface RecommendationTemplateMapping extends RecommendationTemplateMappingUpdate { template_file: BidProjectFile; confirmed_by: string | null; confirmed_at: string | null }
+export interface RecommendationTemplateColumn { column_index: number; header: string; duplicate: boolean }
+export interface RecommendationTemplateStructure { sheet_names: string[]; sheet_name: string; header_row: number; max_row: number; columns: RecommendationTemplateColumn[] }
 export interface ParsedRequirement { gross_margin_min: string | null; jd_price_min: string | null; jd_price_max: string | null; category_keywords: string[]; brand_keywords: string[]; scenario_keywords: string[]; fulfillment_mode: string | null }
 export interface RecommendationCategoryChoice { id: string; level1_name: string | null; level2_name: string | null; level3_name: string | null; reason: string | null; candidate_count: number }
 export type FactoryDirectStatus = "PENDING" | "YES" | "NO"
@@ -21,11 +24,6 @@ export const RUN_STATUS_LABELS: Record<RecommendationRunStatus, string> = {
 }
 
 export const TEMPLATE_MAPPING_FIELDS: Array<{ key: string; label: string }> = [
-  { key: "category_level1_name", label: "一级类目" }, { key: "category_level2_name", label: "二级类目" },
-  { key: "category_level3_name", label: "三级类目" }, { key: "brand", label: "品牌" },
-  { key: "sku", label: "SKU" }, { key: "product_name", label: "商品名称" },
-  { key: "jd_price", label: "京东价" }, { key: "agreement_price", label: "协议价" },
-  { key: "discount_rate", label: "折扣率" }, { key: "purchasing_agent", label: "采销" },
-  { key: "profit", label: "利润" }, { key: "gross_margin", label: "毛利率" },
-  { key: "factory_direct", label: "是否厂直" }, { key: "shipping_courier", label: "发货快递" },
+  ...PRODUCT_EXPORT_COLUMN_DEFINITIONS,
+  { key: "factory_direct", label: "是否厂直（人工确认）" },
 ]

@@ -22,5 +22,8 @@ describe("BidProjectListView", () => {
     expect(source).toContain('disabled: true')
     expect(source).toContain("自由推品需求说明不能少于 20 个字符")
     expect(source).toContain("recommendation_template: recommendationTemplate.value")
+    expect(source).toContain(':show-file-list="false"')
+    expect(source).toContain("clearRecommendationTemplate")
+    expect(source).toContain('class="filter-form"')
   })
 })

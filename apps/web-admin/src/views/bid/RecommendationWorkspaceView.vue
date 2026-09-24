@@ -15,6 +15,7 @@ import {
   type RecommendationRun,
   type RecommendationTemplateFile,
   type RecommendationTemplateMapping,
+  type RecommendationTemplateStructure,
 } from "../../types/recommendation"
 
 const route = useRoute()
@@ -26,6 +27,9 @@ const acting = ref(false)
 const project = ref<BidProjectDetail>()
 const templates = ref<RecommendationTemplateFile[]>([])
 const mapping = ref<RecommendationTemplateMapping>()
+const templateStructure = ref<RecommendationTemplateStructure>()
+const mappingSelections = ref<Record<number, string>>({})
+const structureLoading = ref(false)
 const run = ref<RecommendationRun | null>(null)
 const runHistory = ref<RecommendationRun[]>([])
 const selectedCandidates = ref<RecommendationCandidate[]>([])
@@ -62,7 +66,10 @@ async function load() {
     }
     templates.value = await bidApi.recommendationTemplates(projectId)
     const latest = templates.value.at(-1)
-    if (latest) mapping.value = await bidApi.recommendationTemplateMapping(projectId, latest.id)
+    if (latest) {
+      mapping.value = await bidApi.recommendationTemplateMapping(projectId, latest.id)
+      await loadTemplateStructure()
+    }
     try {
       runHistory.value = await recommendationApi.runs(projectId)
       const preferred = runHistory.value.find((item) =>
@@ -81,6 +88,81 @@ async function load() {
   }
 }
 
+function normalizedHeader(value: string): string {
+  return value.trim().toLocaleLowerCase()
+}
+
+function rebuildMappingSelections(): void {
+  if (!mapping.value || !templateStructure.value) return
+  const selected = new Set<string>()
+  const next: Record<number, string> = {}
+  for (const column of templateStructure.value.columns) {
+    if (column.duplicate) continue
+    const saved = Object.entries(mapping.value.mapping_json).find(
+      ([field, header]) => header === column.header && !selected.has(field),
+    )?.[0]
+    const exact = TEMPLATE_MAPPING_FIELDS.find(
+      (field) => normalizedHeader(field.label) === normalizedHeader(column.header) && !selected.has(field.key),
+    )?.key
+    const field = saved ?? exact
+    if (field) {
+      next[column.column_index] = field
+      selected.add(field)
+    }
+  }
+  mappingSelections.value = next
+}
+
+async function loadTemplateStructure(): Promise<void> {
+  if (!mapping.value) return
+  structureLoading.value = true
+  try {
+    templateStructure.value = await bidApi.recommendationTemplateStructure(
+      projectId,
+      mapping.value.template_file.id,
+      { sheet_name: mapping.value.sheet_name, header_row: mapping.value.header_row },
+    )
+    mapping.value.sheet_name = templateStructure.value.sheet_name
+    mapping.value.data_start_row = Math.max(mapping.value.data_start_row, mapping.value.header_row + 1)
+    rebuildMappingSelections()
+  } catch (error) {
+    templateStructure.value = undefined
+    mappingSelections.value = {}
+    ElMessage.error(messageFor(error, "读取模板列失败"))
+  } finally {
+    structureLoading.value = false
+  }
+}
+
+async function changeTemplateSheet(value: string): Promise<void> {
+  if (!mapping.value) return
+  mapping.value.sheet_name = value
+  await loadTemplateStructure()
+}
+
+async function changeHeaderRow(value: number | undefined): Promise<void> {
+  if (!mapping.value || !value) return
+  mapping.value.header_row = value
+  mapping.value.data_start_row = Math.max(mapping.value.data_start_row, value + 1)
+  await loadTemplateStructure()
+}
+
+function mappingFieldUsed(field: string, columnIndex: number): boolean {
+  return Object.entries(mappingSelections.value).some(
+    ([index, selected]) => Number(index) !== columnIndex && selected === field,
+  )
+}
+
+function selectedMappingJson(): Record<string, string> {
+  if (!templateStructure.value) return {}
+  return Object.fromEntries(
+    templateStructure.value.columns.flatMap((column) => {
+      const field = mappingSelections.value[column.column_index]
+      return field && !column.duplicate ? [[field, column.header]] : []
+    }),
+  )
+}
+
 async function saveMapping() {
   if (!mapping.value) return
   if (!mapping.value.sheet_name.trim()) return ElMessage.error("请填写工作表名称")
@@ -91,8 +173,9 @@ async function saveMapping() {
       sheet_name: mapping.value.sheet_name.trim(),
       header_row: mapping.value.header_row,
       data_start_row: mapping.value.data_start_row,
-      mapping_json: Object.fromEntries(Object.entries(mapping.value.mapping_json).filter(([, value]) => value.trim())),
+      mapping_json: selectedMappingJson(),
     })
+    await loadTemplateStructure()
     ElMessage.success("模板字段映射已确认")
   } catch (error) {
     ElMessage.error(messageFor(error, "模板映射确认失败"))
@@ -290,8 +373,22 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
     <el-alert v-if="!mappingConfirmed" title="开始推荐前必须人工确认本项目模板的字段映射。毛利、厂直和物流等歧义字段不会由系统自动猜测。" type="warning" :closable="false" />
     <el-card v-if="mapping">
       <template #header><div class="card-header"><strong>结果模板字段映射</strong><el-tag :type="mappingConfirmed ? 'success' : 'warning'">{{ mappingConfirmed ? "已确认" : "待确认" }}</el-tag></div></template>
-      <div class="mapping-meta"><el-input v-model="mapping.sheet_name"><template #prepend>工作表</template></el-input><el-input-number v-model="mapping.header_row" :min="1" controls-position="right" /><span>表头行</span><el-input-number v-model="mapping.data_start_row" :min="2" controls-position="right" /><span>数据起始行</span></div>
-      <div class="mapping-grid"><el-input v-for="field in TEMPLATE_MAPPING_FIELDS" :key="field.key" v-model="mapping.mapping_json[field.key]" clearable :placeholder="`模板中的${field.label}列名`"><template #prepend>{{ field.label }}</template></el-input></div>
+      <el-alert title="左侧是本次上传模板中的实际列名；右侧选择该列要写入的商品主数据字段。同名列已自动匹配，可搜索或手工调整。" type="info" :closable="false" class="mapping-tip" />
+      <div class="mapping-meta">
+        <el-select :model-value="mapping.sheet_name" placeholder="选择工作表" @change="changeTemplateSheet"><template #prefix>工作表</template><el-option v-for="name in templateStructure?.sheet_names ?? [mapping.sheet_name]" :key="name" :label="name" :value="name" /></el-select>
+        <el-input-number :model-value="mapping.header_row" :min="1" controls-position="right" @change="changeHeaderRow" /><span>表头行</span>
+        <el-input-number v-model="mapping.data_start_row" :min="mapping.header_row + 1" controls-position="right" /><span>数据起始行</span>
+      </div>
+      <div v-loading="structureLoading" class="mapping-table">
+        <div class="mapping-table-head"><span>上传模板列（不可修改）</span><span>商品主数据字段（可搜索选择）</span></div>
+        <div v-for="column in templateStructure?.columns ?? []" :key="column.column_index" class="mapping-row">
+          <div class="template-column"><span class="column-index">{{ column.column_index }}</span><span>{{ column.header }}</span><el-tag v-if="column.duplicate" type="danger" size="small">表头重复，不能映射</el-tag></div>
+          <el-select v-model="mappingSelections[column.column_index]" filterable clearable :disabled="column.duplicate" placeholder="搜索并选择商品主数据字段">
+            <el-option v-for="field in TEMPLATE_MAPPING_FIELDS" :key="field.key" :label="field.label" :value="field.key" :disabled="mappingFieldUsed(field.key, column.column_index)" />
+          </el-select>
+        </div>
+        <el-empty v-if="!structureLoading && !(templateStructure?.columns.length)" description="当前表头行没有可映射列" :image-size="70" />
+      </div>
       <div class="card-actions"><el-button v-if="auth.hasPermission('recommendation:create')" type="primary" :loading="acting" @click="saveMapping">确认字段映射</el-button></div>
     </el-card>
 
@@ -348,7 +445,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
 </template>
 
 <style scoped>
-.workspace { display: grid; gap: 18px; }.workspace header { display: flex; justify-content: space-between; gap: 20px; padding: 24px 28px; border-radius: 14px; background: linear-gradient(135deg, #edf5ff, #f2f8f5); }.workspace h1 { margin: 4px 0; }.workspace header p { margin: 0; color: #2670ca; font-weight: 700; }.actions, .card-header, .run-actions, .mapping-meta, .card-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }.card-header { justify-content: space-between; }.mapping-meta { margin-bottom: 16px; }.mapping-meta .el-input { width: 280px; }.mapping-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }.card-actions { justify-content: flex-end; margin-top: 16px; }.category-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }.category-card { display: grid; gap: 10px; padding: 16px; border: 1px solid #e4e7ed; border-radius: 10px; }.muted { color: #909399; font-size: 13px; }.el-progress + .muted { margin-bottom: 18px; }
+.workspace { display: grid; gap: 18px; }.workspace header { display: flex; justify-content: space-between; gap: 20px; padding: 24px 28px; border-radius: 14px; background: linear-gradient(135deg, #edf5ff, #f2f8f5); }.workspace h1 { margin: 4px 0; }.workspace header p { margin: 0; color: #2670ca; font-weight: 700; }.actions, .card-header, .run-actions, .mapping-meta, .card-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }.card-header { justify-content: space-between; }.mapping-tip { margin-bottom: 16px; }.mapping-meta { margin-bottom: 16px; }.mapping-meta .el-select { width: 280px; }.mapping-table { overflow: hidden; border: 1px solid #e4e7ed; border-radius: 8px; }.mapping-table-head, .mapping-row { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(280px, 1fr); gap: 16px; align-items: center; padding: 10px 14px; }.mapping-table-head { background: #f5f7fa; color: #606266; font-weight: 600; }.mapping-row + .mapping-row { border-top: 1px solid #ebeef5; }.template-column { display: flex; align-items: center; gap: 10px; min-width: 0; }.column-index { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: 0 0 auto; border-radius: 50%; background: #ecf5ff; color: #409eff; font-size: 12px; }.card-actions { justify-content: flex-end; margin-top: 16px; }.category-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }.category-card { display: grid; gap: 10px; padding: 16px; border: 1px solid #e4e7ed; border-radius: 10px; }.muted { color: #909399; font-size: 13px; }.el-progress + .muted { margin-bottom: 18px; }
 .supplement-box { display: grid; gap: 12px; margin-top: 18px; justify-items: start; }.supplement-box .el-textarea { width: 100%; }
-@media (max-width: 767px) { .workspace header { flex-direction: column; }.mapping-grid { grid-template-columns: 1fr; } }
+@media (max-width: 767px) { .workspace header { flex-direction: column; }.mapping-table-head { display: none; }.mapping-row { grid-template-columns: 1fr; gap: 8px; } }
 </style>

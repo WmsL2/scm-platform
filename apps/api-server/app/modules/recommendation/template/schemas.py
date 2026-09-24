@@ -5,6 +5,9 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.modules.bid.schemas import BidProjectFileResponse
+from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMN_KEYS
+
+RECOMMENDATION_MAPPING_FIELD_KEYS = frozenset((*PRODUCT_EXPORT_COLUMN_KEYS, "factory_direct"))
 
 
 class RecommendationRunStatus(StrEnum):
@@ -33,23 +36,10 @@ class RecommendationTemplateMappingUpdateRequest(BaseModel):
     @field_validator("mapping_json")
     @classmethod
     def validate_mapping(cls, value: dict[str, str]) -> dict[str, str]:
-        allowed = {
-            "category_level1_name",
-            "category_level2_name",
-            "category_level3_name",
-            "brand",
-            "sku",
-            "product_name",
-            "jd_price",
-            "agreement_price",
-            "discount_rate",
-            "purchasing_agent",
-            "profit",
-            "gross_margin",
-            "factory_direct",
-            "shipping_courier",
-        }
-        if any(key not in allowed or not header.strip() for key, header in value.items()):
+        if any(
+            key not in RECOMMENDATION_MAPPING_FIELD_KEYS or not header.strip()
+            for key, header in value.items()
+        ):
             raise ValueError("RECOMMENDATION_TEMPLATE_MAPPING_INVALID")
         return value
 
@@ -72,3 +62,17 @@ class RecommendationTemplateMappingResponse(BaseModel):
 
 class RecommendationTemplateFileResponse(BidProjectFileResponse):
     mapping_confirmed: bool
+
+
+class RecommendationTemplateColumnResponse(BaseModel):
+    column_index: int = Field(ge=1)
+    header: str
+    duplicate: bool
+
+
+class RecommendationTemplateStructureResponse(BaseModel):
+    sheet_names: list[str]
+    sheet_name: str
+    header_row: int
+    max_row: int
+    columns: list[RecommendationTemplateColumnResponse]

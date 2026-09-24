@@ -55,4 +55,13 @@ describe("bid api", () => {
     expect(http.patch).toHaveBeenCalledWith("/api/v1/bid-projects/p1", { project_name: "项目", buyer_name: "需求商", start_at: null, deadline_at: "2026-09-20T10:00:00", remark: null })
     expect(http.post).toHaveBeenCalledWith("/api/v1/bid-projects/p1/commands/void", { reason: "业务取消" })
   })
+
+  it("reads the actual recommendation template structure", async () => {
+    http.get.mockResolvedValue({ columns: [] })
+    const { bidApi } = await import("./bid")
+
+    await bidApi.recommendationTemplateStructure("p1", "f1", { sheet_name: "结果表", header_row: 2 })
+
+    expect(http.get).toHaveBeenCalledWith("/api/v1/bid-projects/p1/recommendation-templates/f1/structure?sheet_name=%E7%BB%93%E6%9E%9C%E8%A1%A8&header_row=2")
+  })
 })

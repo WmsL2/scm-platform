@@ -20,6 +20,7 @@ from app.modules.bid.domain.lifecycle import (
 from app.modules.bid.infrastructure.models import BidProject, BidProjectEvent, BidProjectFile
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Product
+from app.modules.recommendation.api.recommendation_router import router as recommendation_router
 from app.modules.recommendation.application.export_service import RecommendationExportService
 from app.modules.recommendation.infrastructure.models import (
     RecommendationCandidate,
@@ -48,17 +49,31 @@ class MemoryStorage:
         self.files.pop(key, None)
 
 
+def test_export_transaction_commits_before_response_is_sent() -> None:
+    route = next(
+        route
+        for route in recommendation_router.routes
+        if getattr(route, "path", "").endswith("/{project_id}/runs/{run_id}/exports")
+        and "POST" in getattr(route, "methods", set())
+    )
+    session_dependency = next(
+        dependency for dependency in route.dependant.dependencies if dependency.name == "session"
+    )
+
+    assert session_dependency.scope == "function"
+
+
 def _template() -> bytes:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "推荐清单"
     sheet["A1"] = "自由推品确认结果"
-    headers = ["品牌", "名称", "京东价", "协议价", "毛利率", "是否厂直", "校验"]
+    headers = ["品牌", "名称", "京东价", "协议价", "毛利率", "是否厂直", "所属公司", "校验"]
     for column, header in enumerate(headers, start=1):
         sheet.cell(2, column).value = header
     sheet["A3"].font = Font(bold=True)
     sheet["E3"].number_format = "0.00%"
-    sheet["G3"] = '=IF(B3<>"","OK","")'
+    sheet["H3"] = '=IF(B3<>"","OK","")'
     output = BytesIO()
     workbook.save(output)
     workbook.close()
@@ -133,6 +148,7 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
                 "agreement_price": "协议价",
                 "gross_margin": "毛利率",
                 "factory_direct": "是否厂直",
+                "company_name": "所属公司",
             },
             confirmed_by=actor_id,
             confirmed_at=datetime.now(UTC).replace(tzinfo=None),
@@ -150,7 +166,11 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
             product_id=product.id,
             rank=1,
             score=Decimal("99"),
-            product_snapshot={"brand": "导出品牌", "product_name": "确认导出商品"},
+            product_snapshot={
+                "brand": "导出品牌",
+                "product_name": "确认导出商品",
+                "company_name": "导出所属公司",
+            },
             supplier_snapshot={},
             price_snapshot={
                 "jd_price": "100",
@@ -190,7 +210,8 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
         assert Decimal(str(sheet["E3"].value)) == Decimal("0.12")
         assert sheet["E3"].number_format == "0.00%"
         assert sheet["F3"].value == "是"
-        assert sheet["G3"].value == '=IF(B3<>"","OK","")'
+        assert sheet["G3"].value == "导出所属公司"
+        assert sheet["H3"].value == '=IF(B3<>"","OK","")'
         assert sheet["A3"].font.bold is True
         workbook.close()
 
