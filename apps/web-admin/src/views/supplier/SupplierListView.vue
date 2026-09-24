@@ -2,6 +2,7 @@
 import { Delete, Download, Plus, Refresh, Search, Upload } from "@element-plus/icons-vue"
 import { computed, nextTick, onMounted, reactive, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
+import { useRoute, useRouter } from "vue-router"
 
 import { supplierApi } from "../../api/supplier"
 import { HttpError } from "../../shared/http"
@@ -25,6 +26,8 @@ type SupplierTableInstance = {
 }
 
 const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 const loading = ref(false)
 const suppliers = ref<SupplierListItem[]>([])
 const total = ref(0)
@@ -212,7 +215,14 @@ async function confirmImport(): Promise<void> {
   }
 }
 
-onMounted(() => void loadSuppliers())
+onMounted(async () => {
+  void loadSuppliers()
+  if (route.query.action === "import" && auth.hasPermission("supplier:create")) {
+    await router.replace("/suppliers")
+    await nextTick()
+    openImportDialog()
+  }
+})
 </script>
 
 <template>
