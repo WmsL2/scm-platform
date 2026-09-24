@@ -6,6 +6,7 @@ import logging
 from decimal import ROUND_HALF_UP, Decimal, localcontext
 from io import BytesIO
 from pathlib import Path
+from uuid import uuid4
 from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
@@ -37,6 +38,13 @@ _THEME_COLOR_NAMES = ("lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3
 _DRAWING_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 _PRICE_EXPORT_QUANTUM = Decimal("0.01")
 _MAX_EXACT_CENTS_AS_EXCEL_NUMBER = Decimal("10000000000000")
+_PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+_CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+_WPS_CELL_IMAGE_NS = "http://www.wps.cn/officeDocument/2017/etCustomData"
+_SPREADSHEET_DRAWING_NS = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+_OFFICE_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_WPS_CELL_IMAGE_RELATIONSHIP = "http://www.wps.cn/officeDocument/2020/cellImage"
+_WPS_CELL_IMAGE_CONTENT_TYPE = "application/vnd.wps-officedocument.cellimage+xml"
 
 
 def _export_price(value: object) -> Decimal:
@@ -152,7 +160,7 @@ class ProductExportService:
         price_format = workbook.add_format({"border": 1, "num_format": "0.00"})
         image_format = workbook.add_format({"border": 1, "align": "center", "valign": "vcenter"})
         date_format = workbook.add_format({"border": 1, "num_format": "yyyy-mm-dd"})
-        image_sources: list[BytesIO] = []
+        wps_cell_images: list[tuple[str, bytes, str]] = []
         for row_index, (product, supplier) in enumerate(rows, start=1):
             for column_index, column in enumerate(columns):
                 if column.key == "image_reference":
@@ -175,13 +183,21 @@ class ProductExportService:
                     image_bytes_by_reference.get(product.image_reference)
                 )
                 if image_source is not None:
-                    sheet.embed_image(
+                    image_id = f"ID_{uuid4().hex.upper()}"
+                    sheet.write_formula(
                         row_index,
                         image_column_index,
-                        "product-image.png",
-                        {"image_data": image_source, "cell_format": image_format},
+                        f'=_xlfn.DISPIMG("{image_id}",1)',
+                        image_format,
+                        f'=DISPIMG("{image_id}",1)',
                     )
-                    image_sources.append(image_source)
+                    wps_cell_images.append(
+                        (
+                            image_id,
+                            image_source.getvalue(),
+                            ProductExportService._wps_image_extension(image_source),
+                        )
+                    )
                     sheet.set_row(row_index, _IMAGE_ROW_HEIGHT)
                 else:
                     sheet.write_blank(row_index, image_column_index, None, image_format)
@@ -190,27 +206,139 @@ class ProductExportService:
         if image_column_index is not None:
             sheet.set_column_pixels(image_column_index, image_column_index, 90)
         workbook.close()
-        return ProductExportService._normalize_rich_data_relationship_path(output.getvalue())
+        return ProductExportService._add_wps_cell_images(output.getvalue(), wps_cell_images)
 
     @staticmethod
-    def _normalize_rich_data_relationship_path(content: bytes) -> bytes:
-        bad_path = "/xl/richData/_rels/richValueRel.xml.rels"
-        good_path = "xl/richData/_rels/richValueRel.xml.rels"
+    def _wps_image_extension(content: BytesIO) -> str:
+        with PillowImage.open(BytesIO(content.getvalue())) as image:
+            return ".jpeg" if image.format == "JPEG" else ".png"
+
+    @staticmethod
+    def _add_wps_cell_images(
+        content: bytes, images: list[tuple[str, bytes, str]]
+    ) -> bytes:
+        if not images:
+            return content
         with ZipFile(BytesIO(content)) as source:
-            names = source.namelist()
-            if bad_path not in names or good_path in names:
-                return content
+            content_types = ElementTree.fromstring(source.read("[Content_Types].xml"))
+            workbook_relationships = ElementTree.fromstring(
+                source.read("xl/_rels/workbook.xml.rels")
+            )
+            ElementTree.SubElement(
+                content_types,
+                f"{{{_CONTENT_TYPES_NS}}}Override",
+                {
+                    "PartName": "/xl/cellimages.xml",
+                    "ContentType": _WPS_CELL_IMAGE_CONTENT_TYPE,
+                },
+            )
+            relationship_ids = {
+                relationship.attrib.get("Id", "")
+                for relationship in workbook_relationships.findall(
+                    f"{{{_PACKAGE_REL_NS}}}Relationship"
+                )
+            }
+            relationship_number = 1
+            while f"rId{relationship_number}" in relationship_ids:
+                relationship_number += 1
+            ElementTree.SubElement(
+                workbook_relationships,
+                f"{{{_PACKAGE_REL_NS}}}Relationship",
+                {
+                    "Id": f"rId{relationship_number}",
+                    "Type": _WPS_CELL_IMAGE_RELATIONSHIP,
+                    "Target": "cellimages.xml",
+                },
+            )
+            cell_images = ProductExportService._wps_cell_images_xml(images)
+            relationships = ProductExportService._wps_cell_image_relationships_xml(images)
+            replacements = {
+                "[Content_Types].xml": ElementTree.tostring(
+                    content_types, encoding="utf-8", xml_declaration=True
+                ),
+                "xl/_rels/workbook.xml.rels": ElementTree.tostring(
+                    workbook_relationships, encoding="utf-8", xml_declaration=True
+                ),
+            }
             output = BytesIO()
             with ZipFile(output, "w", ZIP_DEFLATED) as target:
                 for info in source.infolist():
-                    target_info = ZipInfo(good_path if info.filename == bad_path else info.filename)
+                    target_info = ZipInfo(info.filename)
                     target_info.date_time = info.date_time
                     target_info.external_attr = info.external_attr
                     target_info.extra = info.extra
                     target_info.comment = info.comment
                     target_info.compress_type = info.compress_type
-                    target.writestr(target_info, source.read(info.filename))
+                    target.writestr(
+                        target_info, replacements.get(info.filename, source.read(info.filename))
+                    )
+                target.writestr("xl/cellimages.xml", cell_images)
+                target.writestr("xl/_rels/cellimages.xml.rels", relationships)
+                for index, (_image_id, image_content, extension) in enumerate(images, start=1):
+                    target.writestr(f"xl/media/image{index}{extension}", image_content)
         return output.getvalue()
+
+    @staticmethod
+    def _wps_cell_images_xml(images: list[tuple[str, bytes, str]]) -> bytes:
+        ElementTree.register_namespace("etc", _WPS_CELL_IMAGE_NS)
+        ElementTree.register_namespace("xdr", _SPREADSHEET_DRAWING_NS)
+        ElementTree.register_namespace("a", "http://schemas.openxmlformats.org/drawingml/2006/main")
+        ElementTree.register_namespace("r", _OFFICE_REL_NS)
+        drawing_main_ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
+        root = ElementTree.Element(f"{{{_WPS_CELL_IMAGE_NS}}}cellImages")
+        for index, (image_id, _image_content, _extension) in enumerate(images, start=1):
+            cell_image = ElementTree.SubElement(root, f"{{{_WPS_CELL_IMAGE_NS}}}cellImage")
+            picture = ElementTree.SubElement(cell_image, f"{{{_SPREADSHEET_DRAWING_NS}}}pic")
+            non_visual = ElementTree.SubElement(picture, f"{{{_SPREADSHEET_DRAWING_NS}}}nvPicPr")
+            ElementTree.SubElement(
+                non_visual,
+                f"{{{_SPREADSHEET_DRAWING_NS}}}cNvPr",
+                {"id": str(index + 1), "name": image_id},
+            )
+            non_visual_picture = ElementTree.SubElement(
+                non_visual, f"{{{_SPREADSHEET_DRAWING_NS}}}cNvPicPr"
+            )
+            ElementTree.SubElement(
+                non_visual_picture,
+                f"{{{drawing_main_ns}}}picLocks",
+                {"noChangeAspect": "1"},
+            )
+            blip_fill = ElementTree.SubElement(picture, f"{{{_SPREADSHEET_DRAWING_NS}}}blipFill")
+            ElementTree.SubElement(
+                blip_fill,
+                f"{{{drawing_main_ns}}}blip",
+                {f"{{{_OFFICE_REL_NS}}}embed": f"rId{index}"},
+            )
+            stretch = ElementTree.SubElement(blip_fill, f"{{{drawing_main_ns}}}stretch")
+            ElementTree.SubElement(stretch, f"{{{drawing_main_ns}}}fillRect")
+            shape_properties = ElementTree.SubElement(
+                picture, f"{{{_SPREADSHEET_DRAWING_NS}}}spPr"
+            )
+            transform = ElementTree.SubElement(shape_properties, f"{{{drawing_main_ns}}}xfrm")
+            ElementTree.SubElement(transform, f"{{{drawing_main_ns}}}off", {"x": "0", "y": "0"})
+            ElementTree.SubElement(
+                transform, f"{{{drawing_main_ns}}}ext", {"cx": "762000", "cy": "762000"}
+            )
+            geometry = ElementTree.SubElement(
+                shape_properties, f"{{{drawing_main_ns}}}prstGeom", {"prst": "rect"}
+            )
+            ElementTree.SubElement(geometry, f"{{{drawing_main_ns}}}avLst")
+        return ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
+
+    @staticmethod
+    def _wps_cell_image_relationships_xml(images: list[tuple[str, bytes, str]]) -> bytes:
+        root = ElementTree.Element(f"{{{_PACKAGE_REL_NS}}}Relationships")
+        for index, (_image_id, _image_content, extension) in enumerate(images, start=1):
+            ElementTree.SubElement(
+                root,
+                f"{{{_PACKAGE_REL_NS}}}Relationship",
+                {
+                    "Id": f"rId{index}",
+                    "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+                    "Target": f"media/image{index}{extension}",
+                },
+            )
+        return ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
 
     @staticmethod
     def _prepare_embedded_image(content: bytes | None) -> BytesIO | None:

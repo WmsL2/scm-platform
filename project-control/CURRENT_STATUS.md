@@ -3,7 +3,7 @@
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
-日期：2026-09-22
+日期：2026-09-24
 
 > 2026-09-23：自由推品确认结果导出已在分支 `feat/free-recommendation-export` 实现，Migration `20260923_0040` 新增导出审计记录和人工 `factory_direct` 三态字段；复用 `recommendation:export`，导出保留上传模板格式并仅包含已确认候选。后端迁移和模块测试、前端类型检查/Vitest/生产构建已执行；真实浏览器导出验收仍需授权账号和实际确认 Run。
 
@@ -49,7 +49,7 @@ Sprint 1 — Auth/RBAC + Supplier
 商品导入预览已支持导出全部未处理的不通过行：导出文件直接复用商品主数据下载的正式模板及其样式，从第 2 行写入失败原值，第二工作表提供原 Excel 行号与错误原因，运营修正后可直接重新上传。失败行中的公式按新行号平移；若临时源工作簿仍可用，仅携带失败行引用的 `DISPIMG` 内嵌图片，避免复制整本大表的无关媒体（无 Migration，复用 `product:import`）。
 
 商品自选字段 Excel 导出的前端等待上限调整为 5 分钟（原 60 秒）；后端仍同步生成文件，导入请求的超时配置不变。此次仅为上线阶段减少浏览器过早取消导出，不属于导出性能优化。
-商品导出成功后会显示提示；导出表头按所选字段匹配正式下载模板的颜色、字体、边框、对齐与行高，原有导出顺序和图片嵌入方式保持不变（无 Migration、无新权限）。
+商品导出成功后会显示提示；导出表头按所选字段匹配正式下载模板的颜色、字体、边框、对齐与行高。商品图片现改为 WPS `DISPIMG` 公式和 `cellimages.xml` 内嵌媒体，不再生成 Excel Rich Data Place in Cell；导出顺序不变（无 Migration、无新权限）。
 商品导出数据区现为每个单元格绘制细边框，包含空值与图片。5000 行 × 43 列模拟基准中，工作簿生成约由 0.14 秒增至 1.04 秒，压缩文件约由 49 KB 增至 479 KB；这不包含数据库查询和图片读取，非正式服务器性能结论。
 商品自选字段导出文件的七个价格／金额列按四舍五入保留两位小数，Excel 单元格显示 `0.00`；百分比和其他字段不变，数据库价格原精度与正式导入模板不变。
 
