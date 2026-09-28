@@ -49,7 +49,7 @@ const form = reactive({
 const projectTypeOptions: Array<{ value: BidProjectType; title: string; description: string; disabled?: boolean }> = [
   { value: "FILTER_RECOMMENDATION", title: "类型 1–3 · 条件筛选推品", description: "上传客户需求 Excel，按明确条件匹配商品。" },
   { value: "FREE_RECOMMENDATION", title: "类型 4 · 自由推品 Agent", description: "填写场景需求并上传本项目的推荐结果模板。" },
-  { value: "PPT_SOLUTION", title: "类型 5 · PPT 方案", description: "本期暂未开放。", disabled: true },
+  { value: "PPT_SOLUTION", title: "类型 5 · PPT 方案", description: "AI 理解需求推荐商品，人工选品和组套后生成可编辑 PPT。" },
 ]
 
 async function load(target = page.value) {
@@ -88,7 +88,16 @@ function chooseBusinessFile(upload: { raw: File }) {
 }
 
 function chooseRecommendationTemplate(upload: { raw: File }) {
-  if (validateXlsx(upload.raw)) recommendationTemplate.value = upload.raw
+  const suffix = form.project_type === "PPT_SOLUTION" ? ".pptx" : ".xlsx"
+  if (!upload.raw.name.toLowerCase().endsWith(suffix)) {
+    ElMessage.error(`请选择 ${suffix} 文件`)
+    return
+  }
+  if (upload.raw.size > 25 * 1024 * 1024) {
+    ElMessage.error("模板文件不能超过 25 MB")
+    return
+  }
+  recommendationTemplate.value = upload.raw
 }
 
 function resetTypeFiles() {
@@ -119,6 +128,9 @@ async function create() {
     if (form.remark.trim().length < 20) return ElMessage.error("自由推品需求说明不能少于 20 个字符")
     if (!recommendationTemplate.value) return ElMessage.error("请选择自由推品结果模板")
   }
+  if (form.project_type === "PPT_SOLUTION" && form.remark.trim().length < 20) {
+    return ElMessage.error("PPT 方案需求说明不能少于 20 个字符")
+  }
   if (form.start_at && form.deadline_at && form.start_at > form.deadline_at) {
     return ElMessage.error("开始时间不能晚于截止时间")
   }
@@ -134,13 +146,16 @@ async function create() {
       recommendation_template: recommendationTemplate.value,
     }))
     const isFree = result.project_type === "FREE_RECOMMENDATION"
-    ElMessage.success(isFree ? "自由推品项目创建成功，请确认模板字段映射。" : result.import_status === "PARSED"
+    const isPpt = result.project_type === "PPT_SOLUTION"
+    ElMessage.success(isFree ? "自由推品项目创建成功，请确认模板字段映射。" : isPpt
+      ? "PPT 方案项目创建成功，可以开始生成商品推荐。" : result.import_status === "PARSED"
       ? "项目创建成功，Excel 已解析，可以开始商品匹配。"
       : result.import_status === "MAPPING_REQUIRED"
         ? "项目已创建，但当前 Excel 未识别到模板，需要完成模板配置。"
         : `项目已创建，但 Excel 解析失败：${result.import_error ?? "未知错误"}`)
     createVisible.value = false
     if (isFree) await router.push(`/bid-projects/${result.id}/recommendation`)
+    else if (isPpt) await router.push(`/bid-projects/${result.id}/ppt-solution`)
     else await load(1)
   } catch (error) {
     ElMessage.error(messageFor(error, "创建项目失败"))
@@ -195,7 +210,7 @@ onMounted(() => {
         <el-table-column prop="processed_item_count" label="匹配处理数" />
         <el-table-column prop="start_at" label="开始时间" min-width="170" />
         <el-table-column prop="deadline_at" label="截止时间" min-width="170" />
-        <el-table-column label="操作"><template #default="{ row }"><RouterLink :to="row.project_type === 'FREE_RECOMMENDATION' ? `/bid-projects/${row.id}/recommendation` : `/bid-projects/${row.id}`"><el-button link type="primary">详情</el-button></RouterLink></template></el-table-column>
+        <el-table-column label="操作"><template #default="{ row }"><RouterLink :to="row.project_type === 'FREE_RECOMMENDATION' ? `/bid-projects/${row.id}/recommendation` : row.project_type === 'PPT_SOLUTION' ? `/bid-projects/${row.id}/ppt-solution` : `/bid-projects/${row.id}`"><el-button link type="primary">详情</el-button></RouterLink></template></el-table-column>
       </el-table>
       <el-pagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next" :total="total" @current-change="load" @size-change="() => load(1)" />
     </el-card>
@@ -215,10 +230,10 @@ onMounted(() => {
         <el-form-item v-if="form.project_type === 'FILTER_RECOMMENDATION'" label="客户需求 Excel *" class="full">
           <div class="upload-control"><el-upload ref="businessUpload" :auto-upload="false" :limit="1" :show-file-list="false" accept=".xlsx" :on-change="chooseBusinessFile"><el-button>选择 .xlsx 文件</el-button></el-upload><div v-if="businessFile" class="selected-file"><span>{{ businessFile.name }}</span><el-button link type="danger" @click="clearBusinessFile">移除</el-button></div></div>
         </el-form-item>
-        <el-form-item v-if="form.project_type === 'FREE_RECOMMENDATION'" label="自由推品结果模板 *" class="full">
-          <div class="upload-control"><el-upload ref="recommendationUpload" :auto-upload="false" :limit="1" :show-file-list="false" accept=".xlsx" :on-change="chooseRecommendationTemplate"><el-button>选择 .xlsx 模板</el-button></el-upload><div v-if="recommendationTemplate" class="selected-file"><span>{{ recommendationTemplate.name }}</span><el-button link type="danger" @click="clearRecommendationTemplate">移除</el-button></div></div>
+        <el-form-item v-if="form.project_type === 'FREE_RECOMMENDATION' || form.project_type === 'PPT_SOLUTION'" :label="form.project_type === 'FREE_RECOMMENDATION' ? '自由推品结果模板 *' : '客户 PPT 模板（可选，不上传则使用系统默认模板）'" class="full">
+          <div class="upload-control"><el-upload ref="recommendationUpload" :auto-upload="false" :limit="1" :show-file-list="false" :accept="form.project_type === 'PPT_SOLUTION' ? '.pptx' : '.xlsx'" :on-change="chooseRecommendationTemplate"><el-button>选择 {{ form.project_type === 'PPT_SOLUTION' ? '.pptx' : '.xlsx' }} 模板</el-button></el-upload><div v-if="recommendationTemplate" class="selected-file"><span>{{ recommendationTemplate.name }}</span><el-button link type="danger" @click="clearRecommendationTemplate">移除</el-button></div></div>
         </el-form-item>
-        <el-form-item :label="form.project_type === 'FREE_RECOMMENDATION' ? '场景需求说明 *（至少20字）' : '备注'" class="full">
+        <el-form-item :label="form.project_type === 'FREE_RECOMMENDATION' || form.project_type === 'PPT_SOLUTION' ? '场景需求说明 *（至少20字）' : '备注'" class="full">
           <el-input v-model="form.remark" type="textarea" :rows="4" maxlength="5000" show-word-limit />
         </el-form-item>
       </el-form>

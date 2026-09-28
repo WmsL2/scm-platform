@@ -10,6 +10,7 @@ from app.common.contracts import AppError, PageParams
 from app.core.transaction import transaction_scope
 from app.modules.bid.domain.lifecycle import (
     BidProjectStatus,
+    BidProjectType,
 )
 from app.modules.bid.domain.lifecycle import (
     ensure_transition as ensure_bid_project_transition,
@@ -76,9 +77,9 @@ class RecommendationService:
         self, project_id: uuid.UUID, actor_id: uuid.UUID
     ) -> RecommendationRunResponse:
         async with transaction_scope(self.session):
-            project = await self.repository.free_project_for_update(project_id)
+            project = await self.repository.recommendation_project_for_update(project_id)
             if project is None:
-                raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+                raise AppError("RECOMMENDATION_PROJECT_NOT_FOUND", "推品项目不存在", 404)
             requirement = (project.remark or "").strip()
             if len(requirement) < 20:
                 raise AppError(
@@ -86,15 +87,18 @@ class RecommendationService:
                     "自由推品项目必须填写至少二十字需求说明",
                     409,
                 )
-            mapping_row = await self.repository.latest_template_mapping(project_id)
-            if (
-                mapping_row is None
-                or mapping_row[0].confirmed_by is None
-                or mapping_row[0].confirmed_at is None
-            ):
-                raise AppError(
-                    "RECOMMENDATION_TEMPLATE_MAPPING_NOT_CONFIRMED", "请先确认最新推品模板映射", 409
-                )
+            if project.project_type == BidProjectType.FREE_RECOMMENDATION.value:
+                mapping_row = await self.repository.latest_template_mapping(project_id)
+                if (
+                    mapping_row is None
+                    or mapping_row[0].confirmed_by is None
+                    or mapping_row[0].confirmed_at is None
+                ):
+                    raise AppError(
+                        "RECOMMENDATION_TEMPLATE_MAPPING_NOT_CONFIRMED",
+                        "请先确认最新推品模板映射",
+                        409,
+                    )
             if project.status in {
                 BidProjectStatus.READY.value,
                 BidProjectStatus.EXPORTED.value,
@@ -126,10 +130,17 @@ class RecommendationService:
         return self._run_response(run)
 
     async def list_runs(self, project_id: uuid.UUID) -> list[RecommendationRunResponse]:
-        project = await self.repository.free_project_for_update(project_id)
+        project = await self.repository.recommendation_project_for_update(project_id)
         if project is None:
-            raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+            raise AppError("RECOMMENDATION_PROJECT_NOT_FOUND", "推品项目不存在", 404)
         return [self._run_response(run) for run in await self.repository.runs(project_id)]
+
+    async def project_type_for_run(self, run_id: uuid.UUID) -> BidProjectType:
+        run = await self._run_or_404(run_id)
+        project = await self.repository.recommendation_project_for_update(run.project_id)
+        if project is None:
+            raise AppError("RECOMMENDATION_PROJECT_NOT_FOUND", "推品项目不存在", 404)
+        return BidProjectType(project.project_type)
 
     async def get_run(self, run_id: uuid.UUID) -> RecommendationRunResponse:
         run = await self.repository.run_by_id(run_id)
@@ -266,9 +277,9 @@ class RecommendationService:
             self.session.add_all(candidates)
             self._transition(run, RecommendationRunStatus.CANDIDATES_READY)
             self._transition(run, RecommendationRunStatus.WAITING_CONFIRMATION)
-            project = await self.repository.free_project_for_update(run.project_id)
+            project = await self.repository.recommendation_project_for_update(run.project_id)
             if project is None:
-                raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+                raise AppError("RECOMMENDATION_PROJECT_NOT_FOUND", "推品项目不存在", 404)
             self._set_project_status(
                 project,
                 BidProjectStatus.SELECTING,
@@ -304,9 +315,9 @@ class RecommendationService:
             self.session.add_all(candidates)
             self._transition(run, RecommendationRunStatus.CANDIDATES_READY)
             self._transition(run, RecommendationRunStatus.WAITING_CONFIRMATION)
-            project = await self.repository.free_project_for_update(run.project_id)
+            project = await self.repository.recommendation_project_for_update(run.project_id)
             if project is None:
-                raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+                raise AppError("RECOMMENDATION_PROJECT_NOT_FOUND", "推品项目不存在", 404)
             self._set_project_status(
                 project,
                 BidProjectStatus.SELECTING,
@@ -349,9 +360,9 @@ class RecommendationService:
     async def _restore_project_after_terminal_run(
         self, run: RecommendationRun, event_type: str
     ) -> None:
-        project = await self.repository.free_project_for_update(run.project_id)
+        project = await self.repository.recommendation_project_for_update(run.project_id)
         if project is None:
-            raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+            raise AppError("RECOMMENDATION_PROJECT_NOT_FOUND", "推品项目不存在", 404)
         target = (
             BidProjectStatus.SELECTING
             if await self.repository.project_has_candidates(project.id)
@@ -451,9 +462,9 @@ class RecommendationService:
             candidate, run, confirmation = row
             if confirmation is None:
                 return True
-            project = await self.repository.free_project_for_update(run.project_id)
+            project = await self.repository.recommendation_project_for_update(run.project_id)
             if project is None:
-                raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+                raise AppError("RECOMMENDATION_PROJECT_NOT_FOUND", "推品项目不存在", 404)
             if project.status != BidProjectStatus.SELECTING.value:
                 raise AppError(
                     "RECOMMENDATION_SELECTION_LOCKED",
@@ -530,9 +541,9 @@ class RecommendationService:
         return BatchConfirmationResult(confirmed_count=len(confirmations))
 
     async def _ensure_selection_editable(self, run: RecommendationRun) -> BidProject:
-        project = await self.repository.free_project_for_update(run.project_id)
+        project = await self.repository.recommendation_project_for_update(run.project_id)
         if project is None:
-            raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+            raise AppError("RECOMMENDATION_PROJECT_NOT_FOUND", "推品项目不存在", 404)
         if project.status != BidProjectStatus.SELECTING.value:
             raise AppError(
                 "RECOMMENDATION_SELECTION_LOCKED",
@@ -545,9 +556,9 @@ class RecommendationService:
         self, project_id: uuid.UUID, run_id: uuid.UUID, actor_id: uuid.UUID
     ) -> BidProjectStatusResponse:
         async with transaction_scope(self.session):
-            project = await self.repository.free_project_for_update(project_id)
+            project = await self.repository.recommendation_project_for_update(project_id)
             if project is None:
-                raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+                raise AppError("RECOMMENDATION_PROJECT_NOT_FOUND", "推品项目不存在", 404)
             run = await self._run_or_404_for_update(run_id)
             if run.project_id != project.id:
                 raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
@@ -585,9 +596,9 @@ class RecommendationService:
         self, project_id: uuid.UUID, run_id: uuid.UUID, actor_id: uuid.UUID
     ) -> BidProjectStatusResponse:
         async with transaction_scope(self.session):
-            project = await self.repository.free_project_for_update(project_id)
+            project = await self.repository.recommendation_project_for_update(project_id)
             if project is None:
-                raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+                raise AppError("RECOMMENDATION_PROJECT_NOT_FOUND", "推品项目不存在", 404)
             run = await self._run_or_404_for_update(run_id)
             if run.project_id != project.id:
                 raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
