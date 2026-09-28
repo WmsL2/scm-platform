@@ -111,6 +111,9 @@ export const recommendationApi = {
   confirm(candidateId: string, body: RecommendationConfirmationUpdate): Promise<CoreConfirmation> {
     return http.patch(`${base}/candidates/${candidateId}/confirmation`, body)
   },
+  removeConfirmation(candidateId: string): Promise<boolean> {
+    return http.delete(`${base}/candidates/${candidateId}/confirmation`)
+  },
   confirmMany(
     runId: string,
     selection: string[] | { candidateIds?: string[]; selectAll?: boolean; excludedCandidateIds?: string[] },
@@ -121,6 +124,12 @@ export const recommendationApi = {
       select_all: normalized.selectAll ?? false,
       excluded_candidate_ids: normalized.excludedCandidateIds ?? [],
     })
+  },
+  completeSelection(projectId: string, runId: string): Promise<{ id: string; status: string; submitted_file_id: string | null }> {
+    return http.post(`${base}/${projectId}/runs/${runId}/commands/complete-selection`)
+  },
+  reopenSelection(projectId: string, runId: string): Promise<{ id: string; status: string; submitted_file_id: string | null }> {
+    return http.post(`${base}/${projectId}/runs/${runId}/commands/reopen-selection`)
   },
   export(projectId: string, runId: string): Promise<{ id: string; original_filename: string }> {
     return http.post(`${base}/${projectId}/runs/${runId}/exports`)

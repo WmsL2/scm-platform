@@ -11,6 +11,7 @@ from openpyxl.styles import Font
 from sqlalchemy import select
 
 from app.core.database import SessionLocal
+from app.modules.bid.application.service import BidProjectService
 from app.modules.bid.domain.lifecycle import (
     BidFileType,
     BidImportStatus,
@@ -118,7 +119,7 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
             project_code=f"EX{token[:10]}",
             project_name="自由推品导出测试",
             buyer_name="测试客户",
-            status=BidProjectStatus.IMPORTED.value,
+            status=BidProjectStatus.READY.value,
             import_status=BidImportStatus.NOT_REQUIRED.value,
             project_type=BidProjectType.FREE_RECOMMENDATION.value,
             remark="导出已确认自由推品候选。",
@@ -225,6 +226,7 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
         assert first.version_no == 1
         assert second.version_no == 2
         assert run.status == RecommendationRunStatus.EXPORTED.value
+        assert project.status == BidProjectStatus.EXPORTED.value
         downloaded_file, exported = await service.download_export(run.id, first.id)
         assert downloaded_file.id == first.id
         workbook = load_workbook(BytesIO(exported), data_only=False)
@@ -273,13 +275,26 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
             "RECOMMENDATION_EXPORTED",
             "RECOMMENDATION_EXPORTED",
         ]
-        await RecommendationService(session).confirm_candidate(
+        recommendation_service = RecommendationService(session)
+        reopened = await recommendation_service.reopen_selection(project.id, run.id, actor_id)
+        assert reopened.status == BidProjectStatus.SELECTING
+        await recommendation_service.confirm_candidate(
             candidate.id,
             ConfirmationUpdateRequest(campaign_price=Decimal("66")),
             actor_id,
         )
         assert run.status == RecommendationRunStatus.CONFIRMED.value
+        completed = await recommendation_service.complete_selection(project.id, run.id, actor_id)
+        assert completed.status == BidProjectStatus.READY
         third = await service.export(project.id, run.id, actor_id)
         assert third.version_no == 3
         assert run.status == RecommendationRunStatus.EXPORTED.value
+        submitted = await BidProjectService(session).submit(
+            project.id, third.id, "已提交需求方", actor_id
+        )
+        assert submitted.status == BidProjectStatus.SUBMITTED
+        won = await BidProjectService(session).result(
+            project.id, BidProjectStatus.WON, "客户确认中标", actor_id
+        )
+        assert won.status == BidProjectStatus.WON
         await session.rollback()

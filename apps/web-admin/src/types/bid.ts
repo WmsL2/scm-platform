@@ -19,6 +19,7 @@ export interface BidProjectStatusResult { id: string; status: BidProjectStatus; 
 export interface BidProjectPage { items: BidProjectListItem[]; total: number; page: number; page_size: number }
 export interface BidItemPage { items: BidProjectItem[]; total: number; page: number; page_size: number }
 export const PROJECT_STATUS_LABELS: Record<string, string> = { IMPORTED: "已导入", MATCHING: "匹配中", SELECTING: "待选品", READY: "选品完成", EXPORTED: "已生成报价", SUBMITTED: "已投标", WON: "已中标", LOST: "未中标", VOIDED: "已作废" }
+export const PROJECT_STATUS_TAG_TYPES: Record<BidProjectStatus, "info" | "warning" | "primary" | "success" | "danger"> = { IMPORTED: "info", MATCHING: "warning", SELECTING: "primary", READY: "success", EXPORTED: "warning", SUBMITTED: "primary", WON: "success", LOST: "danger", VOIDED: "info" }
 export const IMPORT_STATUS_LABELS: Record<string, string> = { PARSED: "已解析", MAPPING_REQUIRED: "待模板配置", FAILED: "导入失败", NOT_REQUIRED: "无需需求表" }
 export const PROJECT_TYPE_LABELS: Record<BidProjectType, string> = { FILTER_RECOMMENDATION: "条件筛选推品", FREE_RECOMMENDATION: "自由推品 Agent", PPT_SOLUTION: "PPT 方案（暂未开放）" }
 export const ITEM_STATUS_LABELS: Record<string, string> = { PENDING: "待匹配", NO_MATCH: "未匹配", UNIQUE_MATCH: "唯一候选", MULTIPLE_MATCH: "多个候选", SELECTED: "已选品", NO_QUOTE: "无法报价" }

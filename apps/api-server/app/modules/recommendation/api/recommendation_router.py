@@ -14,7 +14,7 @@ from app.core.database import FunctionSessionDep, get_db_session
 from app.jobs.recommendation_agent import execute_recommendation_agent_inline
 from app.modules.auth.dependencies import require_permission, require_permission_before_response
 from app.modules.auth.schemas import CurrentUser
-from app.modules.bid.schemas import BidProjectFileResponse
+from app.modules.bid.schemas import BidProjectFileResponse, BidProjectStatusResponse
 from app.modules.recommendation.application.export_service import RecommendationExportService
 from app.modules.recommendation.application.service import RecommendationService
 from app.modules.recommendation.schemas import (
@@ -101,6 +101,20 @@ async def confirm_candidate(
     )
 
 
+@router.delete(
+    "/candidates/{candidate_id}/confirmation",
+    response_model=ApiResponse[bool],
+)
+async def remove_candidate_confirmation(
+    candidate_id: uuid.UUID,
+    current: Annotated[CurrentUser, Depends(require_permission("recommendation:review"))],
+    session: SessionDep,
+) -> ApiResponse[bool]:
+    return success(
+        await RecommendationService(session).remove_confirmation(candidate_id, current.user_id)
+    )
+
+
 @router.post(
     "/runs/{run_id}/confirmations",
     response_model=ApiResponse[BatchConfirmationResult],
@@ -113,6 +127,40 @@ async def confirm_candidates(
 ) -> ApiResponse[BatchConfirmationResult]:
     return success(
         await RecommendationService(session).confirm_candidates(run_id, payload, current.user_id)
+    )
+
+
+@router.post(
+    "/{project_id}/runs/{run_id}/commands/complete-selection",
+    response_model=ApiResponse[BidProjectStatusResponse],
+)
+async def complete_selection(
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    current: Annotated[CurrentUser, Depends(require_permission("recommendation:review"))],
+    session: SessionDep,
+) -> ApiResponse[BidProjectStatusResponse]:
+    return success(
+        await RecommendationService(session).complete_selection(
+            project_id, run_id, current.user_id
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/runs/{run_id}/commands/reopen-selection",
+    response_model=ApiResponse[BidProjectStatusResponse],
+)
+async def reopen_selection(
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    current: Annotated[CurrentUser, Depends(require_permission("recommendation:review"))],
+    session: SessionDep,
+) -> ApiResponse[BidProjectStatusResponse]:
+    return success(
+        await RecommendationService(session).reopen_selection(
+            project_id, run_id, current.user_id
+        )
     )
 
 

@@ -52,9 +52,16 @@ let pollTimer: ReturnType<typeof setInterval> | undefined
 
 const mappingConfirmed = computed(() => Boolean(mapping.value?.confirmed_at))
 const activeRun = computed(() => run.value && ["QUEUED", "ANALYZING", "RETRIEVING", "RANKING"].includes(run.value.status))
-const canStart = computed(() => mappingConfirmed.value && !activeRun.value && auth.hasPermission("recommendation:run"))
+const selectionEditable = computed(() => project.value?.status === "SELECTING" && auth.hasPermission("recommendation:review"))
+const canStart = computed(() => mappingConfirmed.value && !activeRun.value && ["IMPORTED", "MATCHING", "SELECTING"].includes(project.value?.status ?? "") && auth.hasPermission("recommendation:run"))
+const canCompleteSelection = computed(() => selectionEditable.value && (run.value?.candidate_page?.confirmed_total ?? 0) > 0)
+const canReopenSelection = computed(() => Boolean(
+  run.value && ["READY", "EXPORTED"].includes(project.value?.status ?? "")
+    && (run.value.candidate_page?.confirmed_total ?? 0) > 0 && auth.hasPermission("recommendation:review"),
+))
 const canExport = computed(() => Boolean(
   run.value
+  && ["READY", "EXPORTED"].includes(project.value?.status ?? "")
   && ["CONFIRMED", "EXPORTED"].includes(run.value.status)
   && (run.value.candidate_page?.confirmed_total ?? 0) > 0
   && auth.hasPermission("recommendation:export"),
@@ -72,8 +79,8 @@ const pagePartiallySelected = computed(() => selectableOnPage.value.some(isCandi
 async function load() {
   loading.value = true
   try {
-    project.value = await bidApi.get(projectId)
-    if (project.value.project_type !== "FREE_RECOMMENDATION") {
+    await refreshProject()
+    if (project.value?.project_type !== "FREE_RECOMMENDATION") {
       ElMessage.warning("该项目不是类型4自由推品项目")
       await router.replace(`/bid-projects/${projectId}`)
       return
@@ -100,6 +107,10 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+async function refreshProject(): Promise<void> {
+  project.value = await bidApi.get(projectId)
 }
 
 function normalizedHeader(value: string): string {
@@ -337,6 +348,42 @@ async function exportConfirmedCandidates() {
   }
 }
 
+async function completeSelection(): Promise<void> {
+  if (!run.value || !canCompleteSelection.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确认完成选品？当前已确认 ${run.value.candidate_page?.confirmed_total ?? 0} 件商品。`,
+      "完成选品", { type: "warning", confirmButtonText: "确认完成", cancelButtonText: "继续调整" },
+    )
+  } catch {
+    return
+  }
+  acting.value = true
+  try {
+    await recommendationApi.completeSelection(projectId, run.value.id)
+    await refreshProject()
+    ElMessage.success("选品已完成，可以导出确认结果")
+  } catch (error) {
+    ElMessage.error(messageFor(error, "完成选品失败"))
+  } finally {
+    acting.value = false
+  }
+}
+
+async function reopenSelection(): Promise<void> {
+  if (!run.value || !canReopenSelection.value) return
+  acting.value = true
+  try {
+    await recommendationApi.reopenSelection(projectId, run.value.id)
+    await Promise.all([refreshProject(), refreshRun(run.value.id)])
+    ElMessage.success("已返回待选品状态")
+  } catch (error) {
+    ElMessage.error(messageFor(error, "返回调整选品失败"))
+  } finally {
+    acting.value = false
+  }
+}
+
 function resetCandidateSelection(): void {
   selectedCandidateIds.value = new Set()
   excludedCandidateIds.value = new Set()
@@ -440,7 +487,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
   <div v-loading="loading" class="workspace">
     <header>
       <div><p>FREE RECOMMENDATION</p><h1>{{ project?.project_name ?? "自由推品 Agent" }}</h1><span>{{ project?.remark }}</span></div>
-      <div class="actions"><el-button @click="router.push('/bid-projects')">返回项目</el-button><el-button type="primary" :disabled="!canStart" :loading="acting" @click="startRun">{{ run ? "重新生成推荐" : "开始生成推荐" }}</el-button><el-button type="success" :disabled="!canExport" :loading="acting" @click="exportConfirmedCandidates">导出确认结果</el-button></div>
+      <div class="actions"><el-button @click="router.push('/bid-projects')">返回项目</el-button><el-button v-if="['IMPORTED', 'MATCHING', 'SELECTING'].includes(project?.status ?? '')" type="primary" :disabled="!canStart" :loading="acting" @click="startRun">{{ run ? "重新生成推荐" : "开始生成推荐" }}</el-button><el-button v-if="project?.status === 'SELECTING'" type="success" :disabled="!canCompleteSelection" :loading="acting" @click="completeSelection">完成选品</el-button><el-button v-if="['READY', 'EXPORTED'].includes(project?.status ?? '')" :disabled="!canReopenSelection" :loading="acting" @click="reopenSelection">返回调整选品</el-button><el-button v-if="['READY', 'EXPORTED'].includes(project?.status ?? '')" type="success" :disabled="!canExport" :loading="acting" @click="exportConfirmedCandidates">导出确认结果</el-button></div>
     </header>
 
     <el-alert v-if="!mappingConfirmed" title="开始推荐前必须人工确认本项目模板的字段映射。毛利、厂直和物流等歧义字段不会由系统自动猜测。" type="warning" :closable="false" />
@@ -487,9 +534,9 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
     </el-card>
 
     <el-card v-if="candidateTotal">
-      <template #header><div class="card-header"><div><strong>候选商品与人工确认</strong><span class="muted">仅按硬条件筛选，评分取商品主数据；最终结果由人工确认。</span></div><div class="selection-actions"><el-button @click="setCurrentPageSelected(true)">全选本页</el-button><el-button @click="selectAllUnconfirmedCandidates">全选全部待确认商品</el-button><el-button @click="resetCandidateSelection">清空选择</el-button><el-button v-if="auth.hasPermission('recommendation:review')" type="primary" :disabled="selectedCandidateCount === 0" :loading="acting" @click="confirmSelectedCandidates">批量确认选中（{{ selectedCandidateCount }}）</el-button></div></div></template>
+      <template #header><div class="card-header"><div><strong>候选商品与人工确认</strong><span class="muted">仅按硬条件筛选，评分取商品主数据；最终结果由人工确认。</span></div><div class="selection-actions"><el-button :disabled="!selectionEditable" @click="setCurrentPageSelected(true)">全选本页</el-button><el-button :disabled="!selectionEditable" @click="selectAllUnconfirmedCandidates">全选全部待确认商品</el-button><el-button :disabled="!selectionEditable" @click="resetCandidateSelection">清空选择</el-button><el-button v-if="auth.hasPermission('recommendation:review')" type="primary" :disabled="!selectionEditable || selectedCandidateCount === 0" :loading="acting" @click="confirmSelectedCandidates">批量确认选中（{{ selectedCandidateCount }}）</el-button></div></div></template>
       <el-table :data="run?.candidates ?? []">
-        <el-table-column width="52"><template #header><el-checkbox :model-value="pageAllSelected" :indeterminate="pagePartiallySelected" :disabled="selectableOnPage.length === 0" @change="(value: string | number | boolean) => setCurrentPageSelected(Boolean(value))" /></template><template #default="{ row }"><el-checkbox :model-value="isCandidateSelected(row)" :disabled="Boolean(row.confirmation)" @change="(value: string | number | boolean) => setCandidateSelected(row, Boolean(value))" /></template></el-table-column>
+        <el-table-column width="52"><template #header><el-checkbox :model-value="pageAllSelected" :indeterminate="pagePartiallySelected" :disabled="!selectionEditable || selectableOnPage.length === 0" @change="(value: string | number | boolean) => setCurrentPageSelected(Boolean(value))" /></template><template #default="{ row }"><el-checkbox :model-value="isCandidateSelected(row)" :disabled="!selectionEditable || Boolean(row.confirmation)" @change="(value: string | number | boolean) => setCandidateSelected(row, Boolean(value))" /></template></el-table-column>
         <el-table-column prop="rank" label="序号" width="70" />
         <el-table-column label="商品" min-width="220"><template #default="{ row }"><strong>{{ productValue(row, 'product_name') }}</strong><div class="muted">{{ productValue(row, 'brand') }} / {{ productValue(row, 'model') }}</div></template></el-table-column>
         <el-table-column label="协议价"><template #default="{ row }">¥ {{ productValue(row, 'agreement_price') }}</template></el-table-column>
@@ -497,7 +544,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
         <el-table-column label="毛利率"><template #default="{ row }">{{ grossMarginValue(row) }}</template></el-table-column>
         <el-table-column label="评分" width="90"><template #default="{ row }">{{ productValue(row, 'positive_rating') }}</template></el-table-column>
         <el-table-column label="确认状态" width="120"><template #default="{ row }"><el-tag :type="row.confirmation ? 'success' : 'info'">{{ row.confirmation ? '已确认' : '待确认' }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="110"><template #default="{ row }"><el-button v-if="auth.hasPermission('recommendation:review')" link type="primary" @click="openConfirmation(row)">确认选品</el-button></template></el-table-column>
+        <el-table-column label="操作" width="110"><template #default="{ row }"><el-button v-if="auth.hasPermission('recommendation:review')" link type="primary" @click="openConfirmation(row)">{{ selectionEditable ? '确认选品' : '查看选品' }}</el-button></template></el-table-column>
       </el-table>
       <el-pagination v-model:current-page="candidatePage" v-model:page-size="candidatePageSize" :page-sizes="[50, 100, 200]" :total="candidateTotal" layout="total, sizes, prev, pager, next" @current-change="changeCandidatePage" @size-change="changeCandidatePageSize" />
     </el-card>
@@ -505,8 +552,8 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
     <el-empty v-if="mappingConfirmed && !run" description="模板已确认，可以开始生成自由推品推荐" />
 
     <el-dialog v-model="confirmVisible" title="人工确认候选商品" width="min(640px, 92vw)">
-      <el-form label-position="top"><el-form-item label="活动价"><el-input v-model="confirmation.campaign_price" inputmode="decimal" /></el-form-item><el-form-item label="发货状态"><el-input v-model="confirmation.delivery_status" /></el-form-item><el-form-item label="库存状态"><el-input v-model="confirmation.inventory_status" /></el-form-item><el-form-item label="是否厂直"><el-select v-model="confirmation.factory_direct"><el-option label="待确认" value="PENDING" /><el-option label="是" value="YES" /><el-option label="否" value="NO" /></el-select></el-form-item><el-form-item label="履约说明"><el-input v-model="confirmation.fulfillment_cycle" type="textarea" :rows="3" /></el-form-item><el-form-item label="依据与备注"><el-input v-model="confirmation.evidence" type="textarea" :rows="3" /></el-form-item></el-form>
-      <template #footer><el-button @click="confirmVisible = false">取消</el-button><el-button type="primary" :loading="acting" @click="saveConfirmation">确认保存</el-button></template>
+      <el-form label-position="top" :disabled="!selectionEditable"><el-form-item label="活动价"><el-input v-model="confirmation.campaign_price" inputmode="decimal" /></el-form-item><el-form-item label="发货状态"><el-input v-model="confirmation.delivery_status" /></el-form-item><el-form-item label="库存状态"><el-input v-model="confirmation.inventory_status" /></el-form-item><el-form-item label="是否厂直"><el-select v-model="confirmation.factory_direct"><el-option label="待确认" value="PENDING" /><el-option label="是" value="YES" /><el-option label="否" value="NO" /></el-select></el-form-item><el-form-item label="履约说明"><el-input v-model="confirmation.fulfillment_cycle" type="textarea" :rows="3" /></el-form-item><el-form-item label="依据与备注"><el-input v-model="confirmation.evidence" type="textarea" :rows="3" /></el-form-item></el-form>
+      <template #footer><el-button @click="confirmVisible = false">{{ selectionEditable ? '取消' : '关闭' }}</el-button><el-button v-if="selectionEditable" type="primary" :loading="acting" @click="saveConfirmation">确认保存</el-button></template>
     </el-dialog>
   </div>
 </template>

@@ -11,7 +11,9 @@ import {
   FILE_TYPE_LABELS,
   IMPORT_STATUS_LABELS,
   PROJECT_STATUS_LABELS,
+  PROJECT_STATUS_TAG_TYPES,
   type BidProjectDetail,
+  type BidProjectStatus,
 } from "../../types/bid"
 
 const route = useRoute()
@@ -23,6 +25,7 @@ const loading = ref(false)
 const saving = ref(false)
 const operationTimer = useOperationTimer()
 const editVisible = ref(false)
+const statusTagType = (status: string) => PROJECT_STATUS_TAG_TYPES[status as BidProjectStatus]
 const voidVisible = ref(false)
 const submitVisible = ref(false)
 const submitFile = ref("")
@@ -211,7 +214,7 @@ onMounted(() => void load())
       <el-descriptions-item label="项目编号">{{ project.project_code }}</el-descriptions-item>
       <el-descriptions-item label="项目名称">{{ project.project_name }}</el-descriptions-item>
       <el-descriptions-item label="需求商">{{ project.buyer_name }}</el-descriptions-item>
-      <el-descriptions-item label="项目状态">{{ PROJECT_STATUS_LABELS[project.status] }}</el-descriptions-item>
+      <el-descriptions-item label="项目状态"><el-tag :type="statusTagType(project.status)" effect="plain">{{ PROJECT_STATUS_LABELS[project.status] }}</el-tag></el-descriptions-item>
       <el-descriptions-item label="导入状态">{{ IMPORT_STATUS_LABELS[project.import_status] }}</el-descriptions-item>
       <el-descriptions-item label="开始时间">{{ project.start_at ?? "-" }}</el-descriptions-item>
       <el-descriptions-item label="投标截止时间">{{ project.deadline_at ?? "-" }}</el-descriptions-item>

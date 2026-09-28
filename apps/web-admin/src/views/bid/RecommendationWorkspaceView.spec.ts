@@ -12,7 +12,7 @@ vi.mock("../../api/bid", () => ({ bidApi }))
 vi.mock("../../stores/auth", () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
 vi.mock("vue-router", () => ({ useRoute: () => ({ params: { id: "project-1" } }), useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }))
 
-const project = { id: "project-1", project_name: "自由推品测试", project_type: "FREE_RECOMMENDATION", remark: "一段足够长的自由推品需求说明，用于真实组件挂载测试。" }
+const project = { id: "project-1", project_name: "自由推品测试", project_type: "FREE_RECOMMENDATION", status: "SELECTING", remark: "一段足够长的自由推品需求说明，用于真实组件挂载测试。" }
 const candidate = {
   id: "candidate-1", product_id: "product-1", rank: 1, score: "90", reason: "适合活动场景",
   // A historical pending flag must be ignored by the new UI flow.

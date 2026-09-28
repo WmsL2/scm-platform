@@ -8,6 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError, PageParams
 from app.core.transaction import transaction_scope
+from app.modules.bid.domain.lifecycle import (
+    BidProjectStatus,
+)
+from app.modules.bid.domain.lifecycle import (
+    ensure_transition as ensure_bid_project_transition,
+)
+from app.modules.bid.infrastructure.models import BidProject, BidProjectEvent
+from app.modules.bid.schemas import BidProjectStatusResponse
 from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMN_KEYS
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.recommendation.domain.lifecycle import ensure_transition
@@ -87,6 +95,25 @@ class RecommendationService:
                 raise AppError(
                     "RECOMMENDATION_TEMPLATE_MAPPING_NOT_CONFIRMED", "请先确认最新推品模板映射", 409
                 )
+            if project.status in {
+                BidProjectStatus.READY.value,
+                BidProjectStatus.EXPORTED.value,
+                BidProjectStatus.SUBMITTED.value,
+                BidProjectStatus.WON.value,
+                BidProjectStatus.LOST.value,
+            }:
+                raise AppError(
+                    "RECOMMENDATION_PROJECT_SELECTION_COMPLETED",
+                    "项目已完成选品，不能重新生成推荐；如需调整请先返回待选品状态",
+                    409,
+                )
+            self._set_project_status(
+                project,
+                BidProjectStatus.MATCHING,
+                actor_id=actor_id,
+                event_type="RECOMMENDATION_STARTED",
+                allow_selecting_restart=True,
+            )
             run = RecommendationRun(
                 project_id=project.id,
                 status=RecommendationRunStatus.QUEUED.value,
@@ -239,13 +266,22 @@ class RecommendationService:
             self.session.add_all(candidates)
             self._transition(run, RecommendationRunStatus.CANDIDATES_READY)
             self._transition(run, RecommendationRunStatus.WAITING_CONFIRMATION)
+            project = await self.repository.free_project_for_update(run.project_id)
+            if project is None:
+                raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+            self._set_project_status(
+                project,
+                BidProjectStatus.SELECTING,
+                actor_id=run.created_by,
+                event_type="RECOMMENDATION_CANDIDATES_READY",
+            )
             await self.session.flush()
             for candidate in candidates:
                 await self.session.refresh(candidate)
         return [self._candidate_response(candidate, None) for candidate in candidates]
 
     async def persist_all_eligible_candidates(self, run_id: uuid.UUID) -> int:
-        """Persist the complete hard-filter result set for a Type-4 run."""
+        """Persist every product satisfying the Type-4 hard constraints."""
         async with transaction_scope(self.session):
             run = await self._run_or_404_for_update(run_id)
             if run.status != RecommendationRunStatus.RETRIEVING.value:
@@ -259,6 +295,7 @@ class RecommendationService:
             rows = await self.repository.all_eligible_products(self._parsed_requirement(run))
             if not rows:
                 self._transition(run, RecommendationRunStatus.NO_CANDIDATES)
+                await self._restore_project_after_terminal_run(run, "RECOMMENDATION_NO_CANDIDATES")
                 return 0
             candidates = [
                 self._candidate_from_product(run.id, rank, product, supplier)
@@ -267,6 +304,15 @@ class RecommendationService:
             self.session.add_all(candidates)
             self._transition(run, RecommendationRunStatus.CANDIDATES_READY)
             self._transition(run, RecommendationRunStatus.WAITING_CONFIRMATION)
+            project = await self.repository.free_project_for_update(run.project_id)
+            if project is None:
+                raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+            self._set_project_status(
+                project,
+                BidProjectStatus.SELECTING,
+                actor_id=run.created_by,
+                event_type="RECOMMENDATION_CANDIDATES_READY",
+            )
             await self.session.flush()
         return len(candidates)
 
@@ -274,6 +320,7 @@ class RecommendationService:
         async with transaction_scope(self.session):
             run = await self._run_or_404_for_update(run_id)
             self._transition(run, RecommendationRunStatus.NO_CANDIDATES)
+            await self._restore_project_after_terminal_run(run, "RECOMMENDATION_NO_CANDIDATES")
         return self._run_response(run)
 
     async def mark_needs_input(self, run_id: uuid.UUID, error: str) -> RecommendationRunResponse:
@@ -281,6 +328,7 @@ class RecommendationService:
             run = await self._run_or_404_for_update(run_id)
             self._transition(run, RecommendationRunStatus.NEEDS_INPUT)
             run.error = error.strip()[:4000] or None
+            await self._restore_project_after_terminal_run(run, "RECOMMENDATION_NEEDS_INPUT")
         return self._run_response(run)
 
     async def mark_failed(self, run_id: uuid.UUID, error: str) -> RecommendationRunResponse:
@@ -288,13 +336,35 @@ class RecommendationService:
             run = await self._run_or_404_for_update(run_id)
             self._transition(run, RecommendationRunStatus.FAILED)
             run.error = error.strip()[:4000] or None
+            await self._restore_project_after_terminal_run(run, "RECOMMENDATION_FAILED")
         return self._run_response(run)
 
     async def mark_cancelled(self, run_id: uuid.UUID) -> RecommendationRunResponse:
         async with transaction_scope(self.session):
             run = await self._run_or_404_for_update(run_id)
             self._transition(run, RecommendationRunStatus.CANCELLED)
+            await self._restore_project_after_terminal_run(run, "RECOMMENDATION_CANCELLED")
         return self._run_response(run)
+
+    async def _restore_project_after_terminal_run(
+        self, run: RecommendationRun, event_type: str
+    ) -> None:
+        project = await self.repository.free_project_for_update(run.project_id)
+        if project is None:
+            raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+        target = (
+            BidProjectStatus.SELECTING
+            if await self.repository.project_has_candidates(project.id)
+            else BidProjectStatus.IMPORTED
+        )
+        self._set_project_status(
+            project,
+            target,
+            actor_id=run.created_by,
+            event_type=event_type,
+            note="本次推荐未生成新候选，项目已恢复到可继续处理的状态",
+            allow_run_recovery=True,
+        )
 
     async def list_candidates(
         self, run_id: uuid.UUID, page_params: PageParams | None = None
@@ -305,10 +375,7 @@ class RecommendationService:
                 run_id, page=page_params.page, page_size=page_params.page_size
             )
             return RecommendationCandidatePageResponse(
-                items=[
-                    self._candidate_response(candidate, confirmation)
-                    for candidate, confirmation in rows
-                ],
+                items=[self._candidate_response(candidate, confirmation) for candidate, confirmation in rows],
                 total=total,
                 page=page_params.page,
                 page_size=page_params.page_size,
@@ -331,6 +398,7 @@ class RecommendationService:
             if row is None:
                 raise AppError("RECOMMENDATION_CANDIDATE_NOT_FOUND", "推品候选不存在", 404)
             candidate, run, confirmation = row
+            await self._ensure_selection_editable(run)
             if run.status not in {
                 RecommendationRunStatus.CANDIDATES_READY.value,
                 RecommendationRunStatus.WAITING_CONFIRMATION.value,
@@ -370,6 +438,33 @@ class RecommendationService:
             await self.session.refresh(confirmation)
         return self._confirmation_response(confirmation)
 
+    async def remove_confirmation(
+        self, candidate_id: uuid.UUID, actor_id: uuid.UUID
+    ) -> bool:
+        async with transaction_scope(self.session):
+            row = await self.repository.candidate_with_run_for_update(candidate_id)
+            if row is None:
+                raise AppError("RECOMMENDATION_CANDIDATE_NOT_FOUND", "推荐候选不存在", 404)
+            candidate, run, confirmation = row
+            if confirmation is None:
+                return True
+            project = await self.repository.free_project_for_update(run.project_id)
+            if project is None:
+                raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+            if project.status != BidProjectStatus.SELECTING.value:
+                raise AppError(
+                    "RECOMMENDATION_SELECTION_LOCKED",
+                    "选品已经完成，不能直接移除；请先返回待选品状态",
+                    409,
+                )
+            await self.session.delete(confirmation)
+            await self.session.flush()
+            remaining = await self.repository.confirmed_candidates_for_export(run.id)
+            if not remaining and run.status == RecommendationRunStatus.CONFIRMED.value:
+                self._transition(run, RecommendationRunStatus.WAITING_CONFIRMATION)
+            project.updated_by = actor_id
+        return True
+
     async def confirm_candidates(
         self,
         run_id: uuid.UUID,
@@ -378,6 +473,7 @@ class RecommendationService:
     ) -> BatchConfirmationResult:
         async with transaction_scope(self.session):
             run = await self._run_or_404_for_update(run_id)
+            await self._ensure_selection_editable(run)
             if run.status not in {
                 RecommendationRunStatus.CANDIDATES_READY.value,
                 RecommendationRunStatus.WAITING_CONFIRMATION.value,
@@ -430,6 +526,101 @@ class RecommendationService:
             await self.session.flush()
         return BatchConfirmationResult(confirmed_count=len(confirmations))
 
+    async def _ensure_selection_editable(self, run: RecommendationRun) -> BidProject:
+        project = await self.repository.free_project_for_update(run.project_id)
+        if project is None:
+            raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+        if project.status != BidProjectStatus.SELECTING.value:
+            raise AppError(
+                "RECOMMENDATION_SELECTION_LOCKED",
+                "选品已经完成，不能直接修改；请先返回待选品状态",
+                409,
+            )
+        return project
+
+    async def complete_selection(
+        self, project_id: uuid.UUID, run_id: uuid.UUID, actor_id: uuid.UUID
+    ) -> BidProjectStatusResponse:
+        async with transaction_scope(self.session):
+            project = await self.repository.free_project_for_update(project_id)
+            if project is None:
+                raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+            run = await self._run_or_404_for_update(run_id)
+            if run.project_id != project.id:
+                raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
+            if run.status not in {
+                RecommendationRunStatus.CONFIRMED.value,
+                RecommendationRunStatus.EXPORTED.value,
+            }:
+                raise AppError(
+                    "RECOMMENDATION_SELECTION_CONFIRMATION_REQUIRED",
+                    "至少确认一件候选商品后才能完成选品",
+                    409,
+                )
+            confirmed = await self.repository.confirmed_candidates_for_export(run.id)
+            if not confirmed:
+                raise AppError(
+                    "RECOMMENDATION_SELECTION_CONFIRMATION_REQUIRED",
+                    "至少确认一件候选商品后才能完成选品",
+                    409,
+                )
+            self._set_project_status(
+                project,
+                BidProjectStatus.READY,
+                actor_id=actor_id,
+                event_type="RECOMMENDATION_SELECTION_COMPLETED",
+                note=f"人工完成选品，共确认 {len(confirmed)} 件商品",
+            )
+            await self.session.flush()
+        return BidProjectStatusResponse(
+            id=project.id,
+            status=BidProjectStatus(project.status),
+            submitted_file_id=project.submitted_file_id,
+        )
+
+    async def reopen_selection(
+        self, project_id: uuid.UUID, run_id: uuid.UUID, actor_id: uuid.UUID
+    ) -> BidProjectStatusResponse:
+        async with transaction_scope(self.session):
+            project = await self.repository.free_project_for_update(project_id)
+            if project is None:
+                raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+            run = await self._run_or_404_for_update(run_id)
+            if run.project_id != project.id:
+                raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
+            if project.status not in {
+                BidProjectStatus.READY.value,
+                BidProjectStatus.EXPORTED.value,
+            }:
+                raise AppError(
+                    "RECOMMENDATION_SELECTION_REOPEN_NOT_ALLOWED",
+                    "当前项目状态不能返回调整选品",
+                    409,
+                )
+            confirmed = await self.repository.confirmed_candidates_for_export(run.id)
+            if not confirmed:
+                raise AppError(
+                    "RECOMMENDATION_SELECTION_CONFIRMATION_REQUIRED",
+                    "当前任务没有已选商品，不能返回调整",
+                    409,
+                )
+            if run.status == RecommendationRunStatus.EXPORTED.value:
+                self._transition(run, RecommendationRunStatus.CONFIRMED)
+            self._set_project_status(
+                project,
+                BidProjectStatus.SELECTING,
+                actor_id=actor_id,
+                event_type="RECOMMENDATION_SELECTION_REOPENED",
+                note="返回人工选品，后续导出将生成新版本",
+                allow_selection_reopen=True,
+            )
+            await self.session.flush()
+        return BidProjectStatusResponse(
+            id=project.id,
+            status=BidProjectStatus(project.status),
+            submitted_file_id=project.submitted_file_id,
+        )
+
     async def _run_or_404_for_update(self, run_id: uuid.UUID) -> RecommendationRun:
         run = await self.repository.run_for_update(run_id)
         if run is None:
@@ -446,6 +637,48 @@ class RecommendationService:
     def _transition(run: RecommendationRun, target: RecommendationRunStatus) -> None:
         ensure_transition(run.status, target)
         run.status = target.value
+
+    def _set_project_status(
+        self,
+        project: BidProject,
+        target: BidProjectStatus,
+        *,
+        actor_id: uuid.UUID,
+        event_type: str,
+        note: str | None = None,
+        allow_selecting_restart: bool = False,
+        allow_selection_reopen: bool = False,
+        allow_run_recovery: bool = False,
+    ) -> None:
+        if project.status == target.value:
+            return
+        previous = project.status
+        if not (
+            allow_selecting_restart
+            and previous == BidProjectStatus.SELECTING.value
+            and target == BidProjectStatus.MATCHING
+        ) and not (
+            allow_selection_reopen
+            and previous in {BidProjectStatus.READY.value, BidProjectStatus.EXPORTED.value}
+            and target == BidProjectStatus.SELECTING
+        ) and not (
+            allow_run_recovery
+            and previous == BidProjectStatus.MATCHING.value
+            and target in {BidProjectStatus.IMPORTED, BidProjectStatus.SELECTING}
+        ):
+            ensure_bid_project_transition(previous, target)
+        project.status = target.value
+        project.updated_by = actor_id
+        self.session.add(
+            BidProjectEvent(
+                project_id=project.id,
+                actor_id=actor_id,
+                event_type=event_type,
+                from_status=previous,
+                to_status=target.value,
+                note=note,
+            )
+        )
 
     @staticmethod
     def _parsed_requirement(run: RecommendationRun) -> ParsedRequirement:
@@ -516,11 +749,7 @@ class RecommendationService:
     ) -> RecommendationCandidate:
         if item is None and rank is None:
             raise ValueError("rank is required when the candidate has no ranking input")
-        if rank is None:
-            assert item is not None
-            candidate_rank = item.rank
-        else:
-            candidate_rank = rank
+        candidate_rank = rank if rank is not None else item.rank  # type: ignore[union-attr]
         product_snapshot: dict[str, object | None] = {"id": str(product.id)}
         price_snapshot: dict[str, object | None] = {}
         for field in PRODUCT_EXPORT_COLUMN_KEYS:
@@ -554,14 +783,7 @@ class RecommendationService:
     def _candidate_from_product(
         run_id: uuid.UUID, rank: int, product: Product, supplier: Supplier
     ) -> RecommendationCandidate:
-        """Create an unranked candidate snapshot from a hard-filtered product."""
-        return RecommendationService._candidate(
-            run_id,
-            None,
-            product,
-            supplier,
-            rank=rank,
-        )
+        return RecommendationService._candidate(run_id, None, product, supplier, rank=rank)
 
     @staticmethod
     def _snapshot_value(value: object) -> object:

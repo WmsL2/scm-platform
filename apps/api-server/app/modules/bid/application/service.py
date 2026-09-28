@@ -537,9 +537,20 @@ class BidProjectService:
         async with transaction_scope(self.session):
             project = await self._project_or_404(project_id, lock=True)
             file = await self.repository.file_by_id(project_id, file_id)
-            if file is None or file.file_type != BidFileType.QUOTED_EXPORT.value:
+            expected_file_type = (
+                BidFileType.RECOMMENDATION_EXPORT
+                if project.project_type == BidProjectType.FREE_RECOMMENDATION.value
+                else BidFileType.QUOTED_EXPORT
+            )
+            if file is None or file.file_type != expected_file_type.value:
                 raise AppError(
-                    "BID_SUBMITTED_FILE_INVALID", "实际投标文件必须是当前项目的报价导出文件", 409
+                    "BID_SUBMITTED_FILE_INVALID",
+                    (
+                        "提交文件必须是当前项目的自由推品导出文件"
+                        if expected_file_type == BidFileType.RECOMMENDATION_EXPORT
+                        else "实际投标文件必须是当前项目的报价导出文件"
+                    ),
+                    409,
                 )
             self._transition(
                 project, actor_id, BidProjectStatus.SUBMITTED, "PROJECT_SUBMITTED", note

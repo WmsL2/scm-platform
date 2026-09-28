@@ -222,23 +222,6 @@ class RecommendationRepository:
         # Keyword misses must still receive category+hard-constraint fallback.
         return prioritized
 
-    async def all_eligible_products(
-        self, requirement: ParsedRequirement
-    ) -> list[tuple[Product, Supplier]]:
-        """Return every product that meets the deterministic hard conditions.
-
-        Type-4 free recommendation deliberately does not use category, scene,
-        brand, quantity, fulfilment or price-validity as filters.  The stable
-        order keeps page navigation and persisted serial numbers predictable.
-        """
-        rows = await self.session.execute(
-            select(Product, Supplier)
-            .join(Supplier, Product.source_supplier_id == Supplier.id)
-            .where(*self._eligibility_filters(requirement))
-            .order_by(Product.positive_rating.desc(), Product.id)
-        )
-        return [(row[0], row[1]) for row in rows]
-
     async def eligible_products_by_ids(
         self, requirement: ParsedRequirement, product_ids: Sequence[uuid.UUID]
     ) -> list[tuple[Product, Supplier]]:
@@ -248,6 +231,18 @@ class RecommendationRepository:
             select(Product, Supplier)
             .join(Supplier, Product.source_supplier_id == Supplier.id)
             .where(Product.id.in_(product_ids), *self._eligibility_filters(requirement))
+        )
+        return [(row[0], row[1]) for row in rows]
+
+    async def all_eligible_products(
+        self, requirement: ParsedRequirement
+    ) -> list[tuple[Product, Supplier]]:
+        """Return the complete Type-4 hard-condition result set in a stable order."""
+        rows = await self.session.execute(
+            select(Product, Supplier)
+            .join(Supplier, Product.source_supplier_id == Supplier.id)
+            .where(*self._eligibility_filters(requirement))
+            .order_by(Product.positive_rating.desc(), Product.id)
         )
         return [(row[0], row[1]) for row in rows]
 
@@ -296,6 +291,15 @@ class RecommendationRepository:
             .limit(page_size)
         )
         return [(row[0], row[1]) for row in rows], total, confirmed_total
+
+    async def project_has_candidates(self, project_id: uuid.UUID) -> bool:
+        candidate_id = await self.session.scalar(
+            select(RecommendationCandidate.id)
+            .join(RecommendationRun, RecommendationRun.id == RecommendationCandidate.run_id)
+            .where(RecommendationRun.project_id == project_id)
+            .limit(1)
+        )
+        return candidate_id is not None
 
     async def candidate_with_run_for_update(
         self, candidate_id: uuid.UUID
