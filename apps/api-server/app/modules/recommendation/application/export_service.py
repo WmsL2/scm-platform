@@ -15,7 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.contracts import AppError
 from app.core.transaction import transaction_scope
 from app.infrastructure.adapters import ObjectStorage, get_object_storage
-from app.modules.bid.domain.lifecycle import BidFileType
+from app.modules.bid.domain.lifecycle import (
+    BidFileType,
+    BidProjectStatus,
+)
+from app.modules.bid.domain.lifecycle import (
+    ensure_transition as ensure_bid_project_transition,
+)
 from app.modules.bid.infrastructure.models import BidProjectEvent, BidProjectFile
 from app.modules.bid.schemas import BidProjectFileResponse
 from app.modules.recommendation.domain.lifecycle import ensure_transition
@@ -75,6 +81,15 @@ class RecommendationExportService:
                     raise AppError(
                         "RECOMMENDATION_EXPORT_NOT_ALLOWED",
                         "当前推品任务尚无可导出的已确认候选",
+                        409,
+                    )
+                if project.status not in {
+                    BidProjectStatus.READY.value,
+                    BidProjectStatus.EXPORTED.value,
+                }:
+                    raise AppError(
+                        "RECOMMENDATION_SELECTION_NOT_COMPLETED",
+                        "请先完成人工选品，再导出确认结果",
                         409,
                     )
                 template_row = await self.repository.latest_template_mapping_for_update(project.id)
@@ -139,13 +154,17 @@ class RecommendationExportService:
                         exported_at=datetime.now(UTC).replace(tzinfo=None),
                     )
                 )
+                previous_project_status = project.status
+                if project.status == BidProjectStatus.READY.value:
+                    ensure_bid_project_transition(project.status, BidProjectStatus.EXPORTED)
+                    project.status = BidProjectStatus.EXPORTED.value
                 project.updated_by = actor_id
                 self.session.add(
                     BidProjectEvent(
                         project_id=project.id,
                         actor_id=actor_id,
                         event_type="RECOMMENDATION_EXPORTED",
-                        from_status=project.status,
+                        from_status=previous_project_status,
                         to_status=project.status,
                         note=f"生成自由推品确认结果第{version}版（Run {run.id}）",
                     )
