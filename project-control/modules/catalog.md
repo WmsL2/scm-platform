@@ -69,6 +69,7 @@ Last Updated：2026-09-24
 - [x] Pricing Unit Tests（定价单元测试）已完成
 - [x] Product / Catalog Integration Tests（含导入预览与 Confirm）已完成
 - [x] 类目 CRUD 权限隔离、商品类目选择权限边界及前端菜单/路由/按钮权限契约测试已完成
+- [x] 商品详情百分比转换回归覆盖 `0.2290 ↔ 22.90`，防止京东价毛利再次因 JavaScript 浮点尾差显示为 `22.900000000000002`
 
 ## Known Issues
 - 商品与类目维表已按 ADR-0026 脱钩。三级类目文本可独立为空，且不校验或回填 `scm_category`；类目维表暂保留为独立管理数据。
