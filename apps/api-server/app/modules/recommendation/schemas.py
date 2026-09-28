@@ -21,17 +21,53 @@ class ParsedRequirement(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    requirement_version: str | None = Field(default=None, max_length=16)
+    # 模块4业务口径：点位复用既有正式字段 gross_margin，6% = 0.06。
     gross_margin_min: Decimal | None = Field(
+        default=None, ge=0, le=1, max_digits=9, decimal_places=4
+    )
+    gross_margin_max: Decimal | None = Field(
         default=None, ge=0, le=1, max_digits=9, decimal_places=4
     )
     jd_price_min: Decimal | None = Field(default=None, ge=0, max_digits=65, decimal_places=30)
     jd_price_max: Decimal | None = Field(default=None, ge=0, max_digits=65, decimal_places=30)
+    agreement_price_min: Decimal | None = Field(
+        default=None, ge=0, max_digits=65, decimal_places=30
+    )
+    agreement_price_max: Decimal | None = Field(
+        default=None, ge=0, max_digits=65, decimal_places=30
+    )
+    discount_rate_min: Decimal | None = Field(
+        default=None, ge=0, le=1, max_digits=9, decimal_places=4
+    )
+    discount_rate_max: Decimal | None = Field(
+        default=None, ge=0, le=1, max_digits=9, decimal_places=4
+    )
+    # V2 separates deterministic constraints from ranking signals.  The three legacy
+    # fields remain readable so historical Run JSON can still be rendered.
     category_keywords: list[str] = Field(default_factory=list, max_length=20)
     brand_keywords: list[str] = Field(default_factory=list, max_length=20)
     scenario_keywords: list[str] = Field(default_factory=list, max_length=20)
+    explicit_category_keywords: list[str] = Field(default_factory=list, max_length=20)
+    category_intents: list[str] = Field(default_factory=list, max_length=20)
+    excluded_category_keywords: list[str] = Field(default_factory=list, max_length=20)
+    required_brands: list[str] = Field(default_factory=list, max_length=20)
+    preferred_brands: list[str] = Field(default_factory=list, max_length=20)
+    excluded_brands: list[str] = Field(default_factory=list, max_length=20)
+    search_keywords: list[str] = Field(default_factory=list, max_length=20)
+    scenarios: list[str] = Field(default_factory=list, max_length=20)
+    promotion_preference: str | None = Field(default=None, max_length=64)
+    demand_mode: str | None = Field(default=None, max_length=64)
+    quantity: int | None = Field(default=None, ge=1)
     fulfillment_mode: str | None = Field(default=None, max_length=64)
+    # Kept read-compatible for historical JSON; it is not evaluated by any flow.
+    manual_checks: list[dict[str, object]] = Field(default_factory=list, max_length=20)
 
-    @field_validator("category_keywords", "brand_keywords", "scenario_keywords")
+    @field_validator(
+        "category_keywords", "brand_keywords", "scenario_keywords",
+        "explicit_category_keywords", "category_intents", "excluded_category_keywords",
+        "required_brands", "preferred_brands", "excluded_brands", "search_keywords", "scenarios",
+    )
     @classmethod
     def normalize_keywords(cls, values: list[str]) -> list[str]:
         normalized = [value.strip() for value in values if value and value.strip()]
@@ -41,12 +77,14 @@ class ParsedRequirement(BaseModel):
 
     @model_validator(mode="after")
     def validate_price_range(self) -> "ParsedRequirement":
-        if (
-            self.jd_price_min is not None
-            and self.jd_price_max is not None
-            and self.jd_price_min > self.jd_price_max
+        for lower, upper, label in (
+            (self.jd_price_min, self.jd_price_max, "jd_price"),
+            (self.agreement_price_min, self.agreement_price_max, "agreement_price"),
+            (self.discount_rate_min, self.discount_rate_max, "discount_rate"),
+            (self.gross_margin_min, self.gross_margin_max, "gross_margin"),
         ):
-            raise ValueError("jd_price_min must not exceed jd_price_max")
+            if lower is not None and upper is not None and lower > upper:
+                raise ValueError(f"{label}_min must not exceed {label}_max")
         return self
 
 
@@ -100,6 +138,10 @@ class ProductCandidateRow(BaseModel):
     agreement_price: Decimal | None
     profit: Decimal | None
     gross_margin: Decimal | None
+    discount_rate: Decimal | None
+    sales_volume: int | None
+    positive_rating: Decimal | None
+    selling_points: str | None
     image_reference: str | None
     supplier_name: str
     shipping_courier: str | None

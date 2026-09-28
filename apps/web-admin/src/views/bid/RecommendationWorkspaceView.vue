@@ -327,9 +327,7 @@ function handleCandidateSelection(rows: RecommendationCandidate[]) {
   selectedCandidates.value = rows.filter((item) => !item.confirmation)
 }
 
-function canSelectCandidate(candidate: RecommendationCandidate): boolean {
-  return !candidate.confirmation
-}
+function canSelectCandidate(candidate: RecommendationCandidate): boolean { return !candidate.confirmation }
 
 async function confirmSelectedCandidates() {
   if (!run.value || selectedCandidates.value.length === 0) {
@@ -404,12 +402,13 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
       <p class="muted">{{ run.progress_message ?? run.error ?? `模型：${run.provider ?? '-'} / ${run.model ?? '-'}` }}</p>
       <el-descriptions v-if="run.parsed_requirement" title="需求理解" :column="2" border>
         <el-descriptions-item label="本次读取的需求" :span="2">{{ run.raw_requirement_snapshot }}</el-descriptions-item>
-        <el-descriptions-item label="类目关键词">{{ run.parsed_requirement.category_keywords.join('、') || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="场景关键词">{{ run.parsed_requirement.scenario_keywords.join('、') || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="偏好品牌">{{ run.parsed_requirement.brand_keywords.join('、') || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="京东价范围">{{ run.parsed_requirement.jd_price_min ?? '不限' }} ～ {{ run.parsed_requirement.jd_price_max ?? '不限' }}</el-descriptions-item>
-        <el-descriptions-item label="最低毛利率">{{ run.parsed_requirement.gross_margin_min ?? '-' }}</el-descriptions-item>
-        <el-descriptions-item label="履约方式">{{ run.parsed_requirement.fulfillment_mode ?? '-' }}</el-descriptions-item>
+        <el-descriptions-item label="筛选：明确类目">{{ run.parsed_requirement.explicit_category_keywords?.join('、') || run.parsed_requirement.category_keywords.join('、') || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="筛选：协议价">{{ run.parsed_requirement.agreement_price_min ?? '不限' }} ～ {{ run.parsed_requirement.agreement_price_max ?? '不限' }}</el-descriptions-item>
+        <el-descriptions-item label="筛选：京东价">{{ run.parsed_requirement.jd_price_min ?? '不限' }} ～ {{ run.parsed_requirement.jd_price_max ?? '不限' }}</el-descriptions-item>
+        <el-descriptions-item label="筛选：折扣率 / 点位">{{ run.parsed_requirement.discount_rate_min ?? '不限' }} ～ {{ run.parsed_requirement.discount_rate_max ?? '不限' }} / {{ run.parsed_requirement.gross_margin_min ?? '不限' }} ～ {{ run.parsed_requirement.gross_margin_max ?? '不限' }}</el-descriptions-item>
+        <el-descriptions-item label="参考：场景">{{ run.parsed_requirement.scenarios?.join('、') || run.parsed_requirement.scenario_keywords.join('、') || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="参考：品牌">{{ run.parsed_requirement.preferred_brands?.join('、') || run.parsed_requirement.required_brands?.join('、') || run.parsed_requirement.brand_keywords.join('、') || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="参考：履约/物流">{{ run.parsed_requirement.fulfillment_mode ?? '-' }}</el-descriptions-item>
       </el-descriptions>
       <el-descriptions v-else title="本次 Agent 实际读取的需求" :column="1" border>
         <el-descriptions-item label="需求快照">{{ run.raw_requirement_snapshot }}</el-descriptions-item>
@@ -433,10 +432,11 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
         <el-table-column prop="rank" label="排名" width="70" />
         <el-table-column label="商品" min-width="220"><template #default="{ row }"><strong>{{ productValue(row, 'product_name') }}</strong><div class="muted">{{ productValue(row, 'brand') }} / {{ productValue(row, 'model') }}</div></template></el-table-column>
         <el-table-column label="协议价"><template #default="{ row }">¥ {{ productValue(row, 'agreement_price') }}</template></el-table-column>
-        <el-table-column label="毛利率"><template #default="{ row }">{{ productValue(row, 'gross_margin') }}</template></el-table-column>
+        <el-table-column label="折扣率"><template #default="{ row }">{{ productValue(row, 'discount_rate') }}</template></el-table-column>
+        <el-table-column label="点位"><template #default="{ row }">{{ productValue(row, 'gross_margin') }}</template></el-table-column>
         <el-table-column prop="score" label="推荐分" width="90" />
         <el-table-column prop="reason" label="推荐理由" min-width="260" />
-        <el-table-column label="人工状态" width="110"><template #default="{ row }"><el-tag :type="row.confirmation ? 'success' : 'info'">{{ row.confirmation ? '已确认' : '待确认' }}</el-tag></template></el-table-column>
+        <el-table-column label="确认状态" width="120"><template #default="{ row }"><el-tag :type="row.confirmation ? 'success' : 'info'">{{ row.confirmation ? '已确认' : '待确认' }}</el-tag></template></el-table-column>
         <el-table-column label="操作" width="110"><template #default="{ row }"><el-button v-if="auth.hasPermission('recommendation:review')" link type="primary" @click="openConfirmation(row)">确认选品</el-button></template></el-table-column>
       </el-table>
     </el-card>

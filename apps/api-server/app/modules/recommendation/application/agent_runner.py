@@ -90,14 +90,20 @@ class AgentRunner:
             system=(
                 "你是企业职工福利自由推品需求分析助手。只分析用户文字，不编造商品、供应商或数据库信息。"
                 "自由推品允许需求方不指定类目、品牌、单价、预算和数量；这些字段缺失或写明暂无时，"
-                "保留为空并继续推荐，绝不能仅因此设置 needs_input=true。category_keywords 只填写"
-                "需求方"
-                "明确限定的商品类目词，节日、活动、特价、人群等放入 keywords 或 scenarios。只有需求"
+                "保留为空并继续推荐，绝不能仅因此设置 needs_input=true。"
+                "唯一硬条件是明确类目（含 excluded_category_keywords）及明确数字价格条件。"
+                "“200元以内”等未说明口径的价格写入 agreement_price_min/max；"
+                "只有明确说京东价时才写入 jd_price_min/max。"
+                "明确折扣率写入 discount_rate_min/max；“点位”映射为商品 gross_margin，"
+                "6% 写为 gross_margin_min=0.06。"
+                "品牌（包括“必须品牌”）、场景、节日、人群、特价、物流、一件代发、库存、厂家直发、销量、评分和卖点"
+                "都仅是排序或说明参考，绝不可作为硬过滤、needs_input 或人工核验。"
+                "不要输出人工核验字段。"
+                "只有需求"
                 "无法形成任何可执行场景、硬性条件互相矛盾或存在必须由需求方决策的合规问题时，才设置"
                 " needs_input=true，并分别使用 UNUSABLE_REQUIREMENT、CONTRADICTORY_CONSTRAINTS 或"
-                " COMPLIANCE_DECISION_REQUIRED 作为 blocking_reasons；不得创建其他原因。毛利率 6%"
-                " 必须表示为 0.06。一件代发写入"
-                " fulfillment_mode。严格返回符合 JSON Schema 的对象。"
+                " COMPLIANCE_DECISION_REQUIRED 作为 blocking_reasons；不得创建其他原因。"
+                "严格返回符合 JSON Schema 的对象。"
             ),
             user=requirement,
         )
@@ -152,9 +158,11 @@ class AgentRunner:
             request = ProductSearchRequest(
                 category_key=choice.category_key,
                 keywords=choice.search_keywords,
-                preferred_brands=analysis.preferred_brands,
-                agreement_price_min=analysis.budget_min,
-                agreement_price_max=analysis.budget_max,
+                preferred_brands=list(
+                    dict.fromkeys([*analysis.preferred_brands, *analysis.required_brands])
+                ),
+                agreement_price_min=analysis.agreement_price_min or analysis.budget_min,
+                agreement_price_max=analysis.agreement_price_max or analysis.budget_max,
             )
             category_candidates.append(await self._call_search_products(request))
             await self._check_cancelled(is_cancelled)
@@ -185,6 +193,10 @@ class AgentRunner:
                 "score 必须为 0 到 100 的数字，reason 必须为非空字符串。"
                 "不得返回不存在或重复的 product_id，不得超过输入"
                 f"数量，也不得超过 {MAX_RANKING_CANDIDATES} 条。"
+                "硬约束已经由后端执行；仅将软偏好用于排序。"
+                "SPECIAL_PRICE 时只可引用输入中真实的折扣、协议价和京东价，"
+                "不能杜撰活动价、库存、时效、一件代发或物流能力；缺失信息只是不作承诺，"
+                "不能因此排除候选或阻止确认、导出。"
             ),
             user=f"需求={analysis.model_dump_json()}\n候选={compact_json(candidates)}",
         )

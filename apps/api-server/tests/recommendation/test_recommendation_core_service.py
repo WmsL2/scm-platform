@@ -91,7 +91,7 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
             sku=f"SKU-{token[:8]}",
             product_name="中秋活动测试商品",
             company_name="测试所属公司",
-            brand="测试品牌",
+            brand="小米",
             category_level1_name="食品饮料",
             category_level2_name="休闲食品",
             category_level3_name="坚果",
@@ -99,6 +99,7 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
             agreement_price=Decimal("90"),
             profit=Decimal("8"),
             gross_margin=Decimal("0.08"),
+            discount_rate=Decimal("0.75"),
             status=ProductStatus.ACTIVE.value,
         )
         low_margin = Product(
@@ -110,6 +111,7 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
             category_level3_name="坚果",
             jd_price=Decimal("80"),
             gross_margin=Decimal("0.05"),
+            discount_rate=Decimal("0.70"),
             status=ProductStatus.ACTIVE.value,
         )
         eligible_second = Product(
@@ -121,9 +123,10 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
             category_level2_name="休闲食品",
             category_level3_name="坚果",
             jd_price=Decimal("120"),
-            agreement_price=Decimal("108"),
+            agreement_price=Decimal("98"),
             profit=Decimal("10"),
             gross_margin=Decimal("0.09"),
+            discount_rate=Decimal("0.75"),
             status=ProductStatus.ACTIVE.value,
         )
         session.add_all([eligible, eligible_second, low_margin])
@@ -134,7 +137,14 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
         assert run.status == "QUEUED"
         assert run.raw_requirement_snapshot == project.remark
 
-        parsed = ParsedRequirement(gross_margin_min=Decimal("0.06"), category_keywords=["食品饮料"])
+        parsed = ParsedRequirement(
+            requirement_version="v3",
+            explicit_category_keywords=["食品饮料"],
+            agreement_price_max=Decimal("100"),
+            discount_rate_max=Decimal("0.8"),
+            gross_margin_min=Decimal("0.06"),
+            required_brands=["华为"],
+        )
         await service.save_parsed_requirement(
             run.id,
             parsed,
@@ -171,8 +181,8 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
                     {
                         "product_id": eligible_second.id,
                         "rank": 2,
-                        "score": "96.5",
-                        "reason": "节日场景匹配",
+                        "score": "96",
+                        "reason": "品牌软参考回退",
                     },
                 ]
             ),
@@ -181,6 +191,12 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
         assert saved[0].product_snapshot["company_name"] == "测试所属公司"
         assert saved[0].supplier_snapshot["supplier_name"] == supplier.supplier_name
         assert (await service.get_run(run.id)).status == "WAITING_CONFIRMATION"
+        historical_candidate = await session.get(RecommendationCandidate, saved[0].id)
+        assert historical_candidate is not None
+        historical_candidate.manual_flags = {
+            "checks": [{"code": "DROP_SHIPPING", "required": True, "status": "PENDING"}]
+        }
+        await session.flush()
 
         confirmed = await service.confirm_candidate(
             saved[0].id,

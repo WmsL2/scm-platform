@@ -267,6 +267,14 @@ class RecommendationExportService:
     ) -> object | None:
         if field == "factory_direct":
             return _FACTORY_DIRECT_LABELS.get(confirmation.factory_direct, "待确认")
+        if field == "supports_jd_or_sf":
+            courier = str(candidate.product_snapshot.get("shipping_courier") or "").casefold()
+            if any(value in courier for value in ("不支持", "不发", "除外", "禁止")):
+                return "待确认"
+            if any(value in courier for value in ("京东", "顺丰", "sf")):
+                return "是"
+            # An unknown or ordinary courier is not evidence that it is unsupported.
+            return "待确认"
         if field in {
             "campaign_price",
             "delivery_status",

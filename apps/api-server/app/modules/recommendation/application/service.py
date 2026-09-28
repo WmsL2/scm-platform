@@ -147,7 +147,9 @@ class RecommendationService:
                 level3_name=path.level3_name,
                 candidate_count=count,
             )
-            for path, count in await self.repository.category_pool(requirement)
+            for path, count in await self.repository.category_pool(
+                requirement, requirement.search_keywords or requirement.category_intents
+            )
         ]
 
     async def record_category_choices(
@@ -175,7 +177,12 @@ class RecommendationService:
             )
 
     async def search_products(
-        self, run_id: uuid.UUID, category_paths: list[CategoryPath]
+        self,
+        run_id: uuid.UUID,
+        category_paths: list[CategoryPath],
+        *,
+        keywords: list[str] | None = None,
+        preferred_brands: list[str] | None = None,
     ) -> list[ProductCandidateRow]:
         if not category_paths or len(category_paths) > 40:
             raise AppError(
@@ -190,7 +197,12 @@ class RecommendationService:
                     "RECOMMENDATION_RUN_NOT_RETRIEVING", "当前推品任务不能查询候选商品", 409
                 )
             requirement = self._parsed_requirement(run)
-            rows = await self.repository.eligible_products(requirement, category_paths)
+            rows = await self.repository.eligible_products(
+                requirement,
+                category_paths,
+                keywords=keywords or requirement.search_keywords,
+                preferred_brands=preferred_brands or requirement.preferred_brands,
+            )
         return [self._product_candidate_row(product, supplier) for product, supplier in rows]
 
     async def persist_ranked_candidates(
@@ -435,6 +447,10 @@ class RecommendationService:
             agreement_price=product.agreement_price,
             profit=product.profit,
             gross_margin=product.gross_margin,
+            discount_rate=product.discount_rate,
+            sales_volume=product.sales_volume,
+            positive_rating=product.positive_rating,
+            selling_points=product.selling_points,
             image_reference=product.image_reference,
             supplier_name=supplier.supplier_name,
             shipping_courier=product.shipping_courier,

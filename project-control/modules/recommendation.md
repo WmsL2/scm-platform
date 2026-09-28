@@ -2,9 +2,11 @@
 
 状态：B_CORE_C_AGENT_WEB_INTEGRATED / EXPORT_IMPLEMENTED
 
+> 2026-09-24：Requirement V3 已覆盖 V2 人工核验设计。只有明确类目（含排除）和协议价/明确京东价/折扣率/点位的数值范围进入确定性硬过滤；点位映射既有 `gross_margin`。品牌、场景、履约物流和商品属性均为参考信号。历史 `manual_flags` 可读但不再建单、不再门禁；模板保留 `supports_jd_or_sf` 派生字段。无 Migration。
+
 - 统一 Bid Project 类型、自由推品创建合同、模板版本和字段映射 API 已由 `20260923_0039` 提供。
 - B 已实现 Run、确定性商品/类目检索、候选快照、人工确认及受权限保护的独立 Router；Router 已注册到 API V1，C Agent 已通过 B Application Service 接入。
-- 商品检索固定过滤 `ACTIVE` 商品、已归档且正常合作的未删除供应商；毛利率、京东价和品牌/类目条件只接受经 Pydantic 校验的结构化需求，不允许 AI 直连正式业务库。
+- 商品检索固定过滤 `ACTIVE` 商品、已归档且正常合作的未删除供应商；类目及协议价、京东价、折扣率、点位范围只接受经 Pydantic 校验的结构化需求，不允许 AI 直连正式业务库。
 - 候选确认时会再次验证商品和供应商当前可用；确认记录存在即代表该候选可进入后续导出，未确认候选不应导出。
 - 导出已由 `20260923_0040` 实现：确认记录新增人工 `factory_direct` 三态字段，并使用独立 `scm_recommendation_export` 保存模板、映射快照、导出文件和操作者。普通投标报价导出不复用。
 - C 已实现 DeepSeek 适配器、严格结构化解析、受控 AgentRunner、任务 Job 入口和类型4 Web 页面；本机 Inline 模式创建 Run 后直接执行 Agent，DeepSeek 未配置时 Run 进入 `FAILED` 并返回安全提示。

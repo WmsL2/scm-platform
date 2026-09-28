@@ -30,10 +30,31 @@ def test_template_analysis_only_maps_frozen_headers() -> None:
     assert analysis.mapping_json == {
         "category_level1_name": "一级类目",
         "brand": "品牌",
+        "profit": "毛利",
         "factory_direct": "是否厂直",
     }
-    assert "profit" not in analysis.mapping_json
     assert "gross_margin" not in analysis.mapping_json
+
+
+def test_template_aliases_keep_profit_distinct_from_gross_margin() -> None:
+    analysis = analyze_template(
+        _workbook_bytes(
+            ["名称", "大客户协议价", "毛利", "毛利率", "采销", "是否支持京东或者顺丰物流"]
+        )
+    )
+    assert analysis.mapping_json == {
+        "product_name": "名称",
+        "agreement_price": "大客户协议价",
+        "profit": "毛利",
+        "gross_margin": "毛利率",
+        "purchasing_agent": "采销",
+        "supports_jd_or_sf": "是否支持京东或者顺丰物流",
+    }
+
+
+def test_exact_header_wins_over_alias_without_silent_duplicate_target() -> None:
+    analysis = analyze_template(_workbook_bytes(["名称", "商品名称"]))
+    assert analysis.mapping_json == {"product_name": "商品名称"}
 
 
 def test_mapping_contract_rejects_unknown_database_fields() -> None:

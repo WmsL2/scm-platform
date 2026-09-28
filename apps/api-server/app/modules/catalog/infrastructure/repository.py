@@ -2,7 +2,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Literal, cast
+from typing import Any, List, Literal, cast
 
 from sqlalchemy import Select, and_, delete, func, or_, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -486,7 +486,7 @@ class ProductRepository:
             if status == ProductStatus.ACTIVE
             else ()
         )
-        statement: Select[tuple[Product]] = (
+        statement = (
             select(Product).join(Supplier).where(Product.status == status, *supplier_criteria)
         )
         count_statement = (
@@ -608,7 +608,11 @@ class ProductRepository:
         if range_criteria:
             statement = statement.where(*range_criteria)
             count_statement = count_statement.where(*range_criteria)
-        return statement, count_statement
+        # SQLAlchemy's Select generic differs between the local and CI stubs.
+        return (
+            cast(Select[tuple[Product]], cast(Any, statement)),
+            cast(Select[tuple[int]], cast(Any, count_statement)),
+        )
 
     async def list(
         self,
@@ -673,14 +677,17 @@ class ProductRepository:
             sales_volume_max=sales_volume_max,
             status=status,
         )
-        products = list(
-            (
-                await self.session.scalars(
-                    statement.order_by(Product.updated_at.desc(), Product.id.desc())
-                    .offset((page_params.page - 1) * page_params.page_size)
-                    .limit(page_params.page_size)
-                )
-            ).all()
+        products = cast(
+            list[Product],
+            list(
+                (
+                    await self.session.scalars(
+                        statement.order_by(Product.updated_at.desc(), Product.id.desc())
+                        .offset((page_params.page - 1) * page_params.page_size)
+                        .limit(page_params.page_size)
+                    )
+                ).all()
+            ),
         )
         return products, cast(int, await self.session.scalar(count_statement))
 

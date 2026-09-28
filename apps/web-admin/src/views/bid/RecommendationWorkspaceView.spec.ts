@@ -1,39 +1,81 @@
-import { describe, expect, it } from "vitest"
+import { flushPromises, mount } from "@vue/test-utils"
+import ElementPlus from "element-plus"
+import { createPinia } from "pinia"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import RecommendationWorkspaceView from "./RecommendationWorkspaceView.vue"
 import source from "./RecommendationWorkspaceView.vue?raw"
 
+const recommendationApi = vi.hoisted(() => ({ runs: vi.fn(), run: vi.fn(), confirm: vi.fn(), confirmMany: vi.fn(), start: vi.fn(), export: vi.fn(), downloadExport: vi.fn() }))
+const bidApi = vi.hoisted(() => ({ get: vi.fn(), recommendationTemplates: vi.fn(), recommendationTemplateMapping: vi.fn(), recommendationTemplateStructure: vi.fn(), updateRecommendationTemplateMapping: vi.fn(), update: vi.fn() }))
+vi.mock("../../api/recommendation", () => ({ recommendationApi }))
+vi.mock("../../api/bid", () => ({ bidApi }))
+vi.mock("../../stores/auth", () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
+vi.mock("vue-router", () => ({ useRoute: () => ({ params: { id: "project-1" } }), useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }))
+
+const project = { id: "project-1", project_name: "自由推品测试", project_type: "FREE_RECOMMENDATION", remark: "一段足够长的自由推品需求说明，用于真实组件挂载测试。" }
+const candidate = {
+  id: "candidate-1", product_id: "product-1", rank: 1, score: "90", reason: "适合活动场景",
+  // A historical pending flag must be ignored by the new UI flow.
+  manual_flags: { checks: [{ code: "DROP_SHIPPING", required: true, status: "PENDING" }] },
+  product_snapshot: { product_name: "测试商品", brand: "品牌" }, supplier_snapshot: {},
+  price_snapshot: { agreement_price: "99", discount_rate: "0.75", gross_margin: "0.06" }, factory_direct: null, confirmation: null,
+}
+
+function configure() {
+  const run = {
+    id: "run-1", project_id: "project-1", status: "WAITING_CONFIRMATION", progress_percent: 100,
+    progress_message: null, raw_requirement_snapshot: project.remark,
+    parsed_requirement: { gross_margin_min: "0.06", jd_price_min: null, jd_price_max: null, category_keywords: ["食品"], brand_keywords: [], scenario_keywords: [], fulfillment_mode: "DROP_SHIPPING", agreement_price_max: "200", discount_rate_max: "0.8", scenarios: ["中秋"] },
+    provider: "fake", model: "fake", prompt_version: "test", error: null, category_choices: [], candidates: [candidate], created_at: "2026-09-24T00:00:00", updated_at: "2026-09-24T00:00:00",
+  }
+  bidApi.get.mockResolvedValue(project)
+  bidApi.recommendationTemplates.mockResolvedValue([])
+  recommendationApi.runs.mockResolvedValue([run])
+  recommendationApi.run.mockResolvedValue(run)
+  recommendationApi.confirm.mockResolvedValue({ id: "confirmation-1" })
+  recommendationApi.confirmMany.mockResolvedValue([{ id: "confirmation-1" }])
+}
+
+async function mountWorkspace() {
+  configure()
+  const wrapper = mount(RecommendationWorkspaceView, {
+    global: { plugins: [createPinia(), ElementPlus], stubs: { ElDialog: { props: ["modelValue"], template: '<div v-if="modelValue" class="dialog"><slot /><slot name="footer" /></div>' } } },
+  })
+  await flushPromises()
+  return wrapper
+}
+
+afterEach(() => vi.clearAllMocks())
+
 describe("RecommendationWorkspaceView", () => {
-  it("requires confirmed template mapping and confirmed candidates before exporting", () => {
-    expect(source).toContain("mappingConfirmed")
-    expect(source).toContain("请先确认模板字段映射")
-    expect(source).toContain("recommendation:export")
-    expect(source).toContain("exportConfirmedCandidates")
-    expect(source).toContain("recommendationApi.downloadExport")
+  it("renders core price fields and marks non-price information as reference", async () => {
+    const wrapper = await mountWorkspace()
+    expect(wrapper.text()).toContain("筛选：协议价")
+    expect(wrapper.text()).toContain("参考：场景")
+    expect(wrapper.text()).toContain("折扣率")
+    expect(wrapper.text()).toContain("点位")
+    expect(wrapper.text()).not.toContain("人工核验")
   })
 
-  it("shows controlled Agent progress and human confirmation", () => {
-    expect(source).toContain("Agent 运行状态")
-    expect(source).toContain("需求理解")
-    expect(source).toContain("推荐类目方向")
-    expect(source).toContain("候选商品与人工确认")
-    expect(source).toContain("Agent 只提供排序建议")
-    expect(source).toContain("人工确认已保存")
-    expect(source).toContain("批量确认选中")
-    expect(source).toContain("recommendationApi.confirmMany")
-    expect(source).toContain("recommendationApi.run(runId)")
-    expect(source).toContain("runHistory")
+  it("allows a historical pending manual flag to enter the direct confirmation flow", async () => {
+    const wrapper = await mountWorkspace()
+    await wrapper.findAll("button").find((item) => item.text().includes("确认选品"))!.trigger("click")
+    await flushPromises()
+    await wrapper.findAll("button").find((item) => item.text().includes("确认保存"))!.trigger("click")
+    expect(recommendationApi.confirm).toHaveBeenCalledWith("candidate-1", expect.any(Object))
   })
-  it("maps uploaded template columns to searchable product master fields", () => {
-    expect(source).toContain("recommendationTemplateStructure")
-    expect(source).toContain("上传模板列（不可修改）")
-    expect(source).toContain("商品主数据字段（可搜索选择）")
-    expect(source).toContain("filterable clearable")
-    expect(source).toContain("selectedMappingJson")
-    expect(source).toContain("mapping_json: selectedMappingJson()")
+
+  it("allows the same historical candidate to be batch-confirmed", async () => {
+    const wrapper = await mountWorkspace()
+    wrapper.findComponent({ name: "ElTable" }).vm.$emit("selection-change", [candidate])
+    await flushPromises()
+    await wrapper.findAll("button").find((item) => item.text().includes("批量确认选中"))!.trigger("click")
+    expect(recommendationApi.confirmMany).toHaveBeenCalledWith("run-1", ["candidate-1"])
   })
-  it("shows the exact requirement snapshot and can resume after supplemental input", () => {
-    expect(source).toContain("本次 Agent 实际读取的需求")
-    expect(source).toContain("run.raw_requirement_snapshot")
-    expect(source).toContain("保存补充说明并重新生成")
-    expect(source).toContain("bidApi.update(projectId")
+
+  it("retains no manual API or checkbox gate in the workspace source", () => {
+    expect(source).not.toContain("updateManualChecks")
+    expect(source).not.toContain("manualChecksPassed")
+    expect(source).toContain("confirmMany")
   })
 })
