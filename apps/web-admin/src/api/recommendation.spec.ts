@@ -11,7 +11,7 @@ describe("recommendation api", () => {
     http.get
       .mockResolvedValueOnce([run])
       .mockResolvedValueOnce(run)
-      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({ items: [], total: 0, page: 1, page_size: 50, unconfirmed_total: 0, confirmed_total: 0 })
     http.post.mockResolvedValue(run)
     http.patch.mockResolvedValue({ id: "confirmation-1" })
     const { recommendationApi } = await import("./recommendation")
@@ -23,10 +23,10 @@ describe("recommendation api", () => {
 
     expect(http.get).toHaveBeenNthCalledWith(1, "/api/v1/recommendation-projects/p1/runs")
     expect(http.get).toHaveBeenNthCalledWith(2, "/api/v1/recommendation-projects/runs/r1")
-    expect(http.get).toHaveBeenNthCalledWith(3, "/api/v1/recommendation-projects/runs/r1/candidates")
+    expect(http.get).toHaveBeenNthCalledWith(3, "/api/v1/recommendation-projects/runs/r1/candidates?page=1&page_size=50")
     expect(http.post).toHaveBeenCalledWith("/api/v1/recommendation-projects/p1/runs", undefined, { timeoutMs: 300_000 })
     expect(http.patch).toHaveBeenCalledWith("/api/v1/recommendation-projects/candidates/c1/confirmation", { campaign_price: "100.00", fulfillment_cycle: "三天" })
-    expect(http.post).toHaveBeenCalledWith("/api/v1/recommendation-projects/runs/r1/confirmations", { candidate_ids: ["c1", "c2"] })
+    expect(http.post).toHaveBeenCalledWith("/api/v1/recommendation-projects/runs/r1/confirmations", { candidate_ids: ["c1", "c2"], select_all: false, excluded_candidate_ids: [] })
   })
 
   it("keeps complete confirmation data returned by the candidates endpoint", async () => {
@@ -36,11 +36,11 @@ describe("recommendation api", () => {
       inventory_status: "IN_STOCK", factory_direct: "YES", fulfillment_cycle: "48小时",
       evidence: "供应商确认", confirmed_by: "u1", confirmed_at: "now", updated_at: "now",
     }
-    http.get.mockResolvedValueOnce(run).mockResolvedValueOnce([{
+    http.get.mockResolvedValueOnce(run).mockResolvedValueOnce({ items: [{
       id: "c1", run_id: "r1", product_id: "p1", rank: 1, score: "99", reason: "适合",
       product_snapshot: {}, supplier_snapshot: {}, price_snapshot: {}, confirmation_id: "cf1",
       factory_direct: "YES", confirmation,
-    }])
+    }], total: 1, page: 1, page_size: 50, unconfirmed_total: 0, confirmed_total: 1 })
     const { recommendationApi } = await import("./recommendation")
 
     const result = await recommendationApi.run("r1")

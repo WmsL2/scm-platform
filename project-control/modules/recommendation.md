@@ -2,21 +2,22 @@
 
 状态：B_CORE_C_AGENT_WEB_INTEGRATED / EXPORT_IMPLEMENTED
 
+> 2026-09-28：Requirement V4 覆盖 V3 的类目与 AI 排序路径。新 Run 只按协议价、明确京东价、折扣率、点位等数值硬条件全量召回；场景、类目、数量、价格有效期及其他上下文不参与筛选。候选服务端分页，支持本页全选和全部待确认候选的服务端范围确认；页面保留商品主数据评分，移除逐条推荐理由。无 Migration，见 ADR-0039。
+
 > 2026-09-24：Requirement V3 已覆盖 V2 人工核验设计。只有明确类目（含排除）和协议价/明确京东价/折扣率/点位的数值范围进入确定性硬过滤；点位映射既有 `gross_margin`。品牌、场景、履约物流和商品属性均为参考信号。历史 `manual_flags` 可读但不再建单、不再门禁；模板保留 `supports_jd_or_sf` 派生字段。无 Migration。
 
 - 统一 Bid Project 类型、自由推品创建合同、模板版本和字段映射 API 已由 `20260923_0039` 提供。
 - B 已实现 Run、确定性商品/类目检索、候选快照、人工确认及受权限保护的独立 Router；Router 已注册到 API V1，C Agent 已通过 B Application Service 接入。
-- 商品检索固定过滤 `ACTIVE` 商品、已归档且正常合作的未删除供应商；类目及协议价、京东价、折扣率、点位范围只接受经 Pydantic 校验的结构化需求，不允许 AI 直连正式业务库。
+- 商品检索固定过滤 `ACTIVE` 商品、已归档且正常合作的未删除供应商；新 Run 的协议价、明确京东价、折扣率、点位范围只接受经 Pydantic 校验的结构化需求，不允许 AI 直连正式业务库。
 - 候选确认时会再次验证商品和供应商当前可用；确认记录存在即代表该候选可进入后续导出，未确认候选不应导出。
 - 导出已由 `20260923_0040` 实现：确认记录新增人工 `factory_direct` 三态字段，并使用独立 `scm_recommendation_export` 保存模板、映射快照、导出文件和操作者。普通投标报价导出不复用。
 - C 已实现 DeepSeek 适配器、严格结构化解析、受控 AgentRunner、任务 Job 入口和类型4 Web 页面；本机 Inline 模式创建 Run 后直接执行 Agent，DeepSeek 未配置时 Run 进入 `FAILED` 并返回安全提示。
 - 模板映射须经人工 PATCH 确认；模板文件按 `RECOMMENDATION_TEMPLATE` 递增版本保留。
 - FILTER 携带自由推品模板会被拒绝；PATCH 会校验已保存工作簿的 sheet、行号和源表头。
-- Agent 最多调用 8 次受控工具，Provider 失败只重试 1 次；模型不能生成 SQL，也不能返回工具未提供的类目或商品 ID。
+- Agent 只进行一次受控需求结构化解析，Provider 失败只重试 1 次；模型不能生成 SQL、不能筛选商品或写入候选。
 - 自由推品未指定类目、品牌、预算、价格或数量时按开放条件处理；仅需求不可执行、硬条件矛盾或存在必须人工决策的合规问题才进入 `NEEDS_INPUT`。页面支持补充说明后创建新 Run，并展示每次实际读取的需求快照。
-- Web 已支持类型1–3/类型4创建分流、类型5禁用、映射确认、运行状态、候选理由、人工确认和确认结果导出，并已对齐 B 的 `/recommendation-projects` 合同。导出仅允许已确认候选、`CONFIRMED` / `EXPORTED` Run 及 `recommendation:export` 权限。
-- Web 人工确认固定刷新当前 Run，并提供 Run 历史切换，后续失败 Run 不再覆盖当前成功候选；候选支持逐条确认和最多 30 条原子批量确认，复用 `recommendation:review`。
-- CandidateRanking 现以单一 `MAX_RANKING_CANDIDATES = 30` 收敛输入、结构化输出和持久化上限。多个 AI 类目方向的商品按 Repository 既有稳定顺序以确定性 round-robin 去重合并，避免首个类目占满名额。
+- Web 已支持类型1–3/类型4创建分流、类型5禁用、映射确认、运行状态、候选分页、人工确认和确认结果导出，并已对齐 B 的 `/recommendation-projects` 合同。导出仅允许已确认候选、`CONFIRMED` / `EXPORTED` Run 及 `recommendation:export` 权限。
+- Web 人工确认固定刷新当前 Run，并提供 Run 历史切换，后续失败 Run 不再覆盖当前成功候选；候选支持逐条确认、当前页全选和全部待确认候选的原子批量确认，复用 `recommendation:review`。
 - DeepSeek 结构化输出失败会保留 response model、错误类别和不含输入值的校验摘要；仅针对该类错误自动带脱敏纠错提示重试一次。两次失败会记录对应阶段的安全 FAILED 文案，日志不保存原始响应、Prompt 或候选 JSON。
 - 结果模板映射已改为按上传工作簿的真实 Sheet 与表头列展示：左侧模板列只读，右侧从商品主数据 43 个正式字段及人工“是否厂直”字段中可搜索选择；同名字段自动匹配，重复表头禁止映射。前端保存前仍转换为既有 `字段 key -> 模板表头` 合同，因此 Agent、映射持久化和导出运行方向不变。
 - 新建候选会冻结可导出的完整商品主数据快照和供应商名称；历史候选仍按创建时已有快照导出，未冻结字段保持为空，不回查当前商品覆盖历史结果。

@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-09-24
 
+> 2026-09-28：自由推品 V4 已在 `codex/fix/free-recommendation-hard-constraints` 实现（无 Migration）：新 Run 仅按协议价、明确京东价、折扣率、点位等数值硬条件全量召回；不再按场景/类目/数量/价格有效期筛选、不再选 1–5 个类目、不再限 30 条或生成逐条理由。候选 API 改为分页，Web 支持本页全选与全部待确认候选的服务端范围确认；评分显示商品主数据 `positive_rating`。后端推荐测试、前端类型检查和相关 Vitest 已通过；真实浏览器和真实 DeepSeek 新 Run 验收仍待执行。
+
 > 2026-09-24：自由推品 Requirement V3 已覆盖旧人工核验设计（无 Migration）。明确类目（含排除）以及协议价、明确京东价、折扣率、点位范围是确定性硬约束；点位复用 `gross_margin`。品牌、场景、履约物流和商品属性均为软参考；历史人工核验 JSON 不再阻止确认或导出。
 
 > 2026-09-23：自由推品确认结果导出已在分支 `feat/free-recommendation-export` 实现，Migration `20260923_0040` 新增导出审计记录和人工 `factory_direct` 三态字段；复用 `recommendation:export`，导出保留上传模板格式并仅包含已确认候选。后端迁移和模块测试、前端类型检查/Vitest/生产构建已执行；真实浏览器导出验收仍需授权账号和实际确认 Run。
@@ -106,7 +108,7 @@ Sprint 1 — Auth/RBAC + Supplier
 
 ## Workstreams / Implementation Context
 
-- Free Recommendation Ranking Stability：排序输入/输出/持久化已统一为最多 30 条。多个类目按确定性 round-robin 去重合并；DeepSeek 的结构化输出使用带 stage 与不含输入值摘要的安全错误，并仅自动纠错重试一次。无 Migration，前端既有 `run.error` 展示合同不变。
+- Free Recommendation V4 Hard-filter Recall：新 Run 只做一次受控需求解析，服务端全量持久化符合数值硬条件的候选；无类目方向、无 30 条上限、无 AI 排序或逐条理由。候选 API 服务端分页，支持本页及全部待确认候选的范围确认；DeepSeek 结构化输出仍仅自动纠错重试一次。无 Migration，前端既有 `run.error` 展示合同不变。
 - Free Recommendation Template Mapping UI：新增只读模板结构查询，映射页按上传表头逐列选择商品主数据来源字段；新 Run 的候选快照覆盖全部正式商品导出字段，保证模板可选字段具备稳定的历史导出数据。历史 Run 不反查当前 Product 补值。
 
 - Auth Real API Integration：已完成真实 Auth API 联调；分支与合入状态以 GitHub / `main` 历史为准。

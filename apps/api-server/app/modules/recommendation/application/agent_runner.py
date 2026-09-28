@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from typing import Protocol, TypeVar
 
 from pydantic import BaseModel
@@ -7,16 +7,9 @@ from pydantic import BaseModel
 from app.integrations.deepseek.client import (
     DeepSeekConfigurationError,
     DeepSeekStructuredOutputError,
-    compact_json,
 )
 from app.modules.recommendation.application.agent_schemas import (
-    MAX_RANKING_CANDIDATES,
     AgentRecommendationResult,
-    CandidateRanking,
-    CategoryChoiceList,
-    CategoryOption,
-    ProductCandidate,
-    ProductSearchRequest,
     RequirementAnalysis,
 )
 
@@ -48,12 +41,6 @@ class StructuredProvider(Protocol):
 class RecommendationTools(Protocol):
     async def prepare(self, analysis: RequirementAnalysis) -> None: ...
 
-    async def list_categories(
-        self, keywords: Sequence[str], *, limit: int
-    ) -> list[CategoryOption]: ...
-
-    async def search_products(self, request: ProductSearchRequest) -> list[ProductCandidate]: ...
-
 
 class RecommendationAgentCancelled(RuntimeError):
     pass
@@ -64,7 +51,6 @@ class RecommendationAgentContractError(RuntimeError):
 
 
 class AgentRunner:
-    MAX_TOOL_CALLS = 8
     MAX_PROVIDER_ATTEMPTS = 2
 
     def __init__(self, provider: StructuredProvider, tools: RecommendationTools) -> None:
@@ -89,15 +75,15 @@ class AgentRunner:
             RequirementAnalysis,
             system=(
                 "你是企业职工福利自由推品需求分析助手。只分析用户文字，不编造商品、供应商或数据库信息。"
-                "自由推品允许需求方不指定类目、品牌、单价、预算和数量；这些字段缺失或写明暂无时，"
-                "保留为空并继续推荐，绝不能仅因此设置 needs_input=true。"
-                "唯一硬条件是明确类目（含 excluded_category_keywords）及明确数字价格条件。"
+                "本版本只提取可由商品主数据确定性校验的数值硬条件：协议价、京东价、折扣率和点位（毛利率）。"
+                "场景、用途、主题、节日、类目、品牌、物流、库存、资质、数量、价格有效期、厂直、销量、评分和卖点"
+                "一律不参与筛选：这些字段必须返回空值或空数组，不能作为 needs_input 原因。"
+                "自由推品允许不指定任何价格条件；字段缺失或写明暂无时保持为空并继续推荐。"
                 "“200元以内”等未说明口径的价格写入 agreement_price_min/max；"
                 "只有明确说京东价时才写入 jd_price_min/max。"
-                "明确折扣率写入 discount_rate_min/max；“点位”映射为商品 gross_margin，"
-                "6% 写为 gross_margin_min=0.06。"
-                "品牌（包括“必须品牌”）、场景、节日、人群、特价、物流、一件代发、库存、厂家直发、销量、评分和卖点"
-                "都仅是排序或说明参考，绝不可作为硬过滤、needs_input 或人工核验。"
+                "折扣条件仅按上限/下限解析：例如“可以满足9折优惠”表示 discount_rate_max=0.9，"
+                "discount_rate_min 必须为空，不得把它解析成精确等于 0.9。"
+                "“点位”映射为商品 gross_margin，6% 写为 gross_margin_min=0.06。"
                 "不要输出人工核验字段。"
                 "只有需求"
                 "无法形成任何可执行场景、硬性条件互相矛盾或存在必须由需求方决策的合规问题时，才设置"
@@ -120,98 +106,12 @@ class AgentRunner:
 
         await self.tools.prepare(analysis)
         await self._check_cancelled(is_cancelled)
-        await self._report(report_progress, "RETRIEVING", 30, "正在读取可用商品类目")
-        categories = await self._call_list_categories(
-            analysis.category_keywords or analysis.keywords
-        )
-        if not categories:
-            return AgentRecommendationResult(
-                analysis=analysis,
-                category_choices=[],
-                candidates=[],
-                provider=self.provider.provider,
-                model=self.provider.model,
-                prompt_version=self.provider.prompt_version,
-                tool_call_count=self._tool_calls,
-            )
-        choices = await self._complete(
-            CategoryChoiceList,
-            system=(
-                "你只能从给定的真实类目中选择最多 5 个方向。category_key 必须原样返回，"
-                "不得创造新类目。为每个方向提供检索关键词和简洁理由。"
-            ),
-            user=f"需求={analysis.model_dump_json()}\n可选类目={compact_json(categories)}",
-        )
-        allowed_keys = {item.key for item in categories}
-        if any(choice.category_key not in allowed_keys for choice in choices.choices):
-            raise RecommendationAgentContractError("模型返回了商品主数据中不存在的类目")
-
-        await self._check_cancelled(is_cancelled)
-        category_candidates: list[list[ProductCandidate]] = []
-        for index, choice in enumerate(choices.choices, start=1):
-            await self._report(
-                report_progress,
-                "RETRIEVING",
-                30 + int(index / len(choices.choices) * 35),
-                f"正在检索第 {index}/{len(choices.choices)} 个类目方向",
-            )
-            request = ProductSearchRequest(
-                category_key=choice.category_key,
-                keywords=choice.search_keywords,
-                preferred_brands=list(
-                    dict.fromkeys([*analysis.preferred_brands, *analysis.required_brands])
-                ),
-                agreement_price_min=analysis.agreement_price_min or analysis.budget_min,
-                agreement_price_max=analysis.agreement_price_max or analysis.budget_max,
-            )
-            category_candidates.append(await self._call_search_products(request))
-            await self._check_cancelled(is_cancelled)
-
-        candidates = self._select_ranking_candidates(category_candidates)
-        if not candidates:
-            return AgentRecommendationResult(
-                analysis=analysis,
-                category_choices=choices.choices,
-                candidates=[],
-                provider=self.provider.provider,
-                model=self.provider.model,
-                prompt_version=self.provider.prompt_version,
-                tool_call_count=self._tool_calls,
-            )
-
-        await self._report(report_progress, "RANKING", 75, "正在生成候选排序和推荐理由")
-        logger.debug(
-            "recommendation provider call stage=CandidateRanking candidate_count=%s attempt=1",
-            len(candidates),
-        )
-        ranking = await self._complete(
-            CandidateRanking,
-            system=(
-                '只能返回 JSON object，顶层只能是 {"candidates":[...]}，不得输出 Markdown、'
-                "代码块或额外字段。每个 candidate 只能含 product_id、score、reason；product_id 必须"
-                "原样复制输入候选的 UUID，示例 UUID 仅表示结构，实际值只能来自输入。"
-                "score 必须为 0 到 100 的数字，reason 必须为非空字符串。"
-                "不得返回不存在或重复的 product_id，不得超过输入"
-                f"数量，也不得超过 {MAX_RANKING_CANDIDATES} 条。"
-                "硬约束已经由后端执行；仅将软偏好用于排序。"
-                "SPECIAL_PRICE 时只可引用输入中真实的折扣、协议价和京东价，"
-                "不能杜撰活动价、库存、时效、一件代发或物流能力；缺失信息只是不作承诺，"
-                "不能因此排除候选或阻止确认、导出。"
-            ),
-            user=f"需求={analysis.model_dump_json()}\n候选={compact_json(candidates)}",
-        )
-        candidate_ids = {item.product_id for item in candidates}
-        ranked_ids = [item.product_id for item in ranking.candidates]
-        if len(set(ranked_ids)) != len(ranked_ids) or any(
-            product_id not in candidate_ids for product_id in ranked_ids
-        ):
-            raise RecommendationAgentContractError("模型返回了无效或重复的候选商品 ID")
-        ordered = sorted(ranking.candidates, key=lambda item: item.score, reverse=True)
-        await self._report(report_progress, "CANDIDATES_READY", 100, "推荐候选已生成")
+        await self._report(report_progress, "RETRIEVING", 60, "正在按硬条件检索全部可用商品")
+        await self._report(report_progress, "CANDIDATES_READY", 100, "候选商品硬条件筛选完成")
         return AgentRecommendationResult(
             analysis=analysis,
-            category_choices=choices.choices,
-            candidates=ordered,
+            category_choices=[],
+            candidates=[],
             provider=self.provider.provider,
             model=self.provider.model,
             prompt_version=self.provider.prompt_version,
@@ -259,45 +159,6 @@ class AgentRunner:
                     raise
         assert last_error is not None
         raise last_error
-
-    @staticmethod
-    def _select_ranking_candidates(
-        category_candidates: Sequence[Sequence[ProductCandidate]],
-    ) -> list[ProductCandidate]:
-        """Round-robin deterministic repository-ordered candidates across AI choices."""
-        selected: list[ProductCandidate] = []
-        selected_ids: set[str] = set()
-        positions = [0] * len(category_candidates)
-        while len(selected) < MAX_RANKING_CANDIDATES:
-            progressed = False
-            for index, group in enumerate(category_candidates):
-                while positions[index] < len(group):
-                    candidate = group[positions[index]]
-                    positions[index] += 1
-                    if str(candidate.product_id) in selected_ids:
-                        continue
-                    selected.append(candidate)
-                    selected_ids.add(str(candidate.product_id))
-                    progressed = True
-                    break
-                if len(selected) == MAX_RANKING_CANDIDATES:
-                    break
-            if not progressed:
-                break
-        return selected
-
-    async def _call_list_categories(self, keywords: Sequence[str]) -> list[CategoryOption]:
-        self._consume_tool_call()
-        return await self.tools.list_categories(keywords, limit=100)
-
-    async def _call_search_products(self, request: ProductSearchRequest) -> list[ProductCandidate]:
-        self._consume_tool_call()
-        return await self.tools.search_products(request)
-
-    def _consume_tool_call(self) -> None:
-        if self._tool_calls >= self.MAX_TOOL_CALLS:
-            raise RecommendationAgentContractError("Agent 工具调用次数超过安全上限")
-        self._tool_calls += 1
 
     @staticmethod
     async def _report(

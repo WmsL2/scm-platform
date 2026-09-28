@@ -32,7 +32,11 @@ const mappingSelections = ref<Record<number, string>>({})
 const structureLoading = ref(false)
 const run = ref<RecommendationRun | null>(null)
 const runHistory = ref<RecommendationRun[]>([])
-const selectedCandidates = ref<RecommendationCandidate[]>([])
+const candidatePage = ref(1)
+const candidatePageSize = ref(50)
+const selectedCandidateIds = ref<Set<string>>(new Set())
+const excludedCandidateIds = ref<Set<string>>(new Set())
+const selectAllCandidates = ref(false)
 const confirmVisible = ref(false)
 const selectedCandidate = ref<RecommendationCandidate>()
 const supplementText = ref("")
@@ -52,10 +56,18 @@ const canStart = computed(() => mappingConfirmed.value && !activeRun.value && au
 const canExport = computed(() => Boolean(
   run.value
   && ["CONFIRMED", "EXPORTED"].includes(run.value.status)
-  && run.value.candidates.some((item) => item.confirmation)
+  && (run.value.candidate_page?.confirmed_total ?? 0) > 0
   && auth.hasPermission("recommendation:export"),
 ))
 const resultStatuses = new Set(["CANDIDATES_READY", "WAITING_CONFIRMATION", "CONFIRMED", "EXPORTED"])
+const candidateTotal = computed(() => run.value?.candidate_page?.total ?? 0)
+const unconfirmedTotal = computed(() => run.value?.candidate_page?.unconfirmed_total ?? 0)
+const selectedCandidateCount = computed(() => selectAllCandidates.value
+  ? Math.max(0, unconfirmedTotal.value - excludedCandidateIds.value.size)
+  : selectedCandidateIds.value.size)
+const selectableOnPage = computed(() => (run.value?.candidates ?? []).filter((item) => !item.confirmation))
+const pageAllSelected = computed(() => selectableOnPage.value.length > 0 && selectableOnPage.value.every(isCandidateSelected))
+const pagePartiallySelected = computed(() => selectableOnPage.value.some(isCandidateSelected) && !pageAllSelected.value)
 
 async function load() {
   loading.value = true
@@ -77,7 +89,7 @@ async function load() {
       const preferred = runHistory.value.find((item) =>
         resultStatuses.has(item.status) || ["QUEUED", "ANALYZING", "RETRIEVING", "RANKING"].includes(item.status),
       ) ?? runHistory.value[0]
-      run.value = preferred ? await recommendationApi.run(preferred.id) : null
+      run.value = preferred ? await recommendationApi.run(preferred.id, candidatePage.value, candidatePageSize.value) : null
     } catch (error) {
       if (!(error instanceof HttpError && error.status === 404)) throw error
       run.value = null
@@ -188,7 +200,7 @@ async function saveMapping() {
 
 async function startRun() {
   if (!mappingConfirmed.value) return ElMessage.warning("请先确认模板字段映射")
-  if (run.value?.candidates.length) {
+  if (candidateTotal.value) {
     try {
       await ElMessageBox.confirm(
         "重新生成会创建一条新的推荐记录，当前候选和确认结果仍会保留在历史记录中。是否继续？",
@@ -202,6 +214,8 @@ async function startRun() {
   acting.value = true
   try {
     run.value = await recommendationApi.start(projectId)
+    resetCandidateSelection()
+    candidatePage.value = 1
     await refreshRun(run.value.id)
     runHistory.value = await recommendationApi.runs(projectId)
     if (run.value?.status === "FAILED") ElMessage.error(run.value.error ?? "自由推品任务执行失败")
@@ -244,11 +258,10 @@ async function submitSupplement() {
 async function refreshRun(runId = run.value?.id) {
   if (!runId) return
   try {
-    run.value = await recommendationApi.run(runId)
+    run.value = await recommendationApi.run(runId, candidatePage.value, candidatePageSize.value)
     runHistory.value = runHistory.value.map((item) =>
       item.id === run.value?.id ? { ...item, ...run.value, candidates: [] } : item,
     )
-    selectedCandidates.value = []
     syncPolling()
   } catch (error) {
     if (!(error instanceof HttpError && error.status === 404)) ElMessage.error(messageFor(error, "刷新推荐进度失败"))
@@ -259,8 +272,9 @@ async function switchRun(runId: string) {
   if (run.value?.id === runId) return
   loading.value = true
   try {
-    run.value = await recommendationApi.run(runId)
-    selectedCandidates.value = []
+    candidatePage.value = 1
+    resetCandidateSelection()
+    run.value = await recommendationApi.run(runId, candidatePage.value, candidatePageSize.value)
     syncPolling()
   } catch (error) {
     ElMessage.error(messageFor(error, "加载推荐记录失败"))
@@ -323,25 +337,70 @@ async function exportConfirmedCandidates() {
   }
 }
 
-function handleCandidateSelection(rows: RecommendationCandidate[]) {
-  selectedCandidates.value = rows.filter((item) => !item.confirmation)
+function resetCandidateSelection(): void {
+  selectedCandidateIds.value = new Set()
+  excludedCandidateIds.value = new Set()
+  selectAllCandidates.value = false
 }
 
-function canSelectCandidate(candidate: RecommendationCandidate): boolean { return !candidate.confirmation }
+function isCandidateSelected(candidate: RecommendationCandidate): boolean {
+  if (candidate.confirmation) return false
+  return selectAllCandidates.value
+    ? !excludedCandidateIds.value.has(candidate.id)
+    : selectedCandidateIds.value.has(candidate.id)
+}
+
+function setCandidateSelected(candidate: RecommendationCandidate, selected: boolean): void {
+  if (candidate.confirmation) return
+  if (selectAllCandidates.value) {
+    const excluded = new Set(excludedCandidateIds.value)
+    if (selected) excluded.delete(candidate.id)
+    else excluded.add(candidate.id)
+    excludedCandidateIds.value = excluded
+    return
+  }
+  const ids = new Set(selectedCandidateIds.value)
+  if (selected) ids.add(candidate.id)
+  else ids.delete(candidate.id)
+  selectedCandidateIds.value = ids
+}
+
+function setCurrentPageSelected(selected: boolean): void {
+  for (const candidate of selectableOnPage.value) setCandidateSelected(candidate, selected)
+}
+
+function selectAllUnconfirmedCandidates(): void {
+  selectAllCandidates.value = true
+  selectedCandidateIds.value = new Set()
+  excludedCandidateIds.value = new Set()
+}
+
+async function changeCandidatePage(page: number): Promise<void> {
+  candidatePage.value = page
+  await refreshRun()
+}
+
+async function changeCandidatePageSize(pageSize: number): Promise<void> {
+  candidatePageSize.value = pageSize
+  candidatePage.value = 1
+  await refreshRun()
+}
 
 async function confirmSelectedCandidates() {
-  if (!run.value || selectedCandidates.value.length === 0) {
+  if (!run.value || selectedCandidateCount.value === 0) {
     return ElMessage.warning("请先勾选需要确认的候选商品")
   }
   acting.value = true
   try {
-    const count = selectedCandidates.value.length
-    await recommendationApi.confirmMany(
+    const result = await recommendationApi.confirmMany(
       run.value.id,
-      selectedCandidates.value.map((item) => item.id),
+      selectAllCandidates.value
+        ? { selectAll: true, excludedCandidateIds: [...excludedCandidateIds.value] }
+        : { candidateIds: [...selectedCandidateIds.value] },
     )
+    resetCandidateSelection()
     await refreshRun(run.value.id)
-    ElMessage.success(`已批量确认 ${count} 件商品`)
+    ElMessage.success(`已批量确认 ${result.confirmed_count} 件商品`)
   } catch (error) {
     ElMessage.error(messageFor(error, "批量确认选品失败"))
   } finally {
@@ -352,6 +411,16 @@ async function confirmSelectedCandidates() {
 function productValue(candidate: RecommendationCandidate, key: string): string {
   const value = candidate.product_snapshot[key] ?? candidate.price_snapshot[key]
   return value === null || value === undefined || value === "" ? "-" : String(value)
+}
+
+function ratioValue(value: unknown, fallback = "-"): string {
+  if (value === null || value === undefined || value === "") return fallback
+  const ratio = Number(value)
+  return Number.isFinite(ratio) ? `${(ratio * 100).toFixed(2)}%` : String(value)
+}
+
+function grossMarginValue(candidate: RecommendationCandidate): string {
+  return ratioValue(candidate.price_snapshot.gross_margin)
 }
 
 function syncPolling() {
@@ -402,13 +471,10 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
       <p class="muted">{{ run.progress_message ?? run.error ?? `模型：${run.provider ?? '-'} / ${run.model ?? '-'}` }}</p>
       <el-descriptions v-if="run.parsed_requirement" title="需求理解" :column="2" border>
         <el-descriptions-item label="本次读取的需求" :span="2">{{ run.raw_requirement_snapshot }}</el-descriptions-item>
-        <el-descriptions-item label="筛选：明确类目">{{ run.parsed_requirement.explicit_category_keywords?.join('、') || run.parsed_requirement.category_keywords.join('、') || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="筛选方式">仅按商品主数据可校验的价格、折扣率、毛利率等硬条件；场景、类目、数量、有效期不参与筛选</el-descriptions-item>
         <el-descriptions-item label="筛选：协议价">{{ run.parsed_requirement.agreement_price_min ?? '不限' }} ～ {{ run.parsed_requirement.agreement_price_max ?? '不限' }}</el-descriptions-item>
         <el-descriptions-item label="筛选：京东价">{{ run.parsed_requirement.jd_price_min ?? '不限' }} ～ {{ run.parsed_requirement.jd_price_max ?? '不限' }}</el-descriptions-item>
-        <el-descriptions-item label="筛选：折扣率 / 点位">{{ run.parsed_requirement.discount_rate_min ?? '不限' }} ～ {{ run.parsed_requirement.discount_rate_max ?? '不限' }} / {{ run.parsed_requirement.gross_margin_min ?? '不限' }} ～ {{ run.parsed_requirement.gross_margin_max ?? '不限' }}</el-descriptions-item>
-        <el-descriptions-item label="参考：场景">{{ run.parsed_requirement.scenarios?.join('、') || run.parsed_requirement.scenario_keywords.join('、') || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="参考：品牌">{{ run.parsed_requirement.preferred_brands?.join('、') || run.parsed_requirement.required_brands?.join('、') || run.parsed_requirement.brand_keywords.join('、') || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="参考：履约/物流">{{ run.parsed_requirement.fulfillment_mode ?? '-' }}</el-descriptions-item>
+        <el-descriptions-item label="筛选：折扣率 / 毛利率">{{ run.parsed_requirement.discount_rate_min ?? '不限' }} ～ {{ run.parsed_requirement.discount_rate_max ?? '不限' }} / {{ ratioValue(run.parsed_requirement.gross_margin_min, '不限') }} ～ {{ ratioValue(run.parsed_requirement.gross_margin_max, '不限') }}</el-descriptions-item>
       </el-descriptions>
       <el-descriptions v-else title="本次 Agent 实际读取的需求" :column="1" border>
         <el-descriptions-item label="需求快照">{{ run.raw_requirement_snapshot }}</el-descriptions-item>
@@ -420,25 +486,20 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
       </div>
     </el-card>
 
-    <el-card v-if="run?.category_choices.length">
-      <template #header><strong>推荐类目方向</strong></template>
-      <div class="category-grid"><div v-for="choice in run.category_choices" :key="choice.id" class="category-card"><strong>{{ [choice.level1_name, choice.level2_name, choice.level3_name].filter(Boolean).join(' / ') }}</strong><span>{{ choice.reason }}</span><el-tag size="small">{{ choice.candidate_count }} 个候选</el-tag></div></div>
-    </el-card>
-
-    <el-card v-if="run?.candidates.length">
-      <template #header><div class="card-header"><div><strong>候选商品与人工确认</strong><span class="muted"> Agent 只提供排序建议，最终结果由人工确认。</span></div><el-button type="primary" :disabled="selectedCandidates.length === 0" :loading="acting" @click="confirmSelectedCandidates">批量确认选中（{{ selectedCandidates.length }}）</el-button></div></template>
-      <el-table :data="run.candidates" @selection-change="handleCandidateSelection">
-        <el-table-column type="selection" width="48" :selectable="canSelectCandidate" />
-        <el-table-column prop="rank" label="排名" width="70" />
+    <el-card v-if="candidateTotal">
+      <template #header><div class="card-header"><div><strong>候选商品与人工确认</strong><span class="muted">仅按硬条件筛选，评分取商品主数据；最终结果由人工确认。</span></div><div class="selection-actions"><el-button @click="setCurrentPageSelected(true)">全选本页</el-button><el-button @click="selectAllUnconfirmedCandidates">全选全部待确认商品</el-button><el-button @click="resetCandidateSelection">清空选择</el-button><el-button v-if="auth.hasPermission('recommendation:review')" type="primary" :disabled="selectedCandidateCount === 0" :loading="acting" @click="confirmSelectedCandidates">批量确认选中（{{ selectedCandidateCount }}）</el-button></div></div></template>
+      <el-table :data="run?.candidates ?? []">
+        <el-table-column width="52"><template #header><el-checkbox :model-value="pageAllSelected" :indeterminate="pagePartiallySelected" :disabled="selectableOnPage.length === 0" @change="(value: string | number | boolean) => setCurrentPageSelected(Boolean(value))" /></template><template #default="{ row }"><el-checkbox :model-value="isCandidateSelected(row)" :disabled="Boolean(row.confirmation)" @change="(value: string | number | boolean) => setCandidateSelected(row, Boolean(value))" /></template></el-table-column>
+        <el-table-column prop="rank" label="序号" width="70" />
         <el-table-column label="商品" min-width="220"><template #default="{ row }"><strong>{{ productValue(row, 'product_name') }}</strong><div class="muted">{{ productValue(row, 'brand') }} / {{ productValue(row, 'model') }}</div></template></el-table-column>
         <el-table-column label="协议价"><template #default="{ row }">¥ {{ productValue(row, 'agreement_price') }}</template></el-table-column>
         <el-table-column label="折扣率"><template #default="{ row }">{{ productValue(row, 'discount_rate') }}</template></el-table-column>
-        <el-table-column label="点位"><template #default="{ row }">{{ productValue(row, 'gross_margin') }}</template></el-table-column>
-        <el-table-column prop="score" label="推荐分" width="90" />
-        <el-table-column prop="reason" label="推荐理由" min-width="260" />
+        <el-table-column label="毛利率"><template #default="{ row }">{{ grossMarginValue(row) }}</template></el-table-column>
+        <el-table-column label="评分" width="90"><template #default="{ row }">{{ productValue(row, 'positive_rating') }}</template></el-table-column>
         <el-table-column label="确认状态" width="120"><template #default="{ row }"><el-tag :type="row.confirmation ? 'success' : 'info'">{{ row.confirmation ? '已确认' : '待确认' }}</el-tag></template></el-table-column>
         <el-table-column label="操作" width="110"><template #default="{ row }"><el-button v-if="auth.hasPermission('recommendation:review')" link type="primary" @click="openConfirmation(row)">确认选品</el-button></template></el-table-column>
       </el-table>
+      <el-pagination v-model:current-page="candidatePage" v-model:page-size="candidatePageSize" :page-sizes="[50, 100, 200]" :total="candidateTotal" layout="total, sizes, prev, pager, next" @current-change="changeCandidatePage" @size-change="changeCandidatePageSize" />
     </el-card>
 
     <el-empty v-if="mappingConfirmed && !run" description="模板已确认，可以开始生成自由推品推荐" />
@@ -451,7 +512,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
 </template>
 
 <style scoped>
-.workspace { display: grid; gap: 18px; }.workspace header { display: flex; justify-content: space-between; gap: 20px; padding: 24px 28px; border-radius: 14px; background: linear-gradient(135deg, #edf5ff, #f2f8f5); }.workspace h1 { margin: 4px 0; }.workspace header p { margin: 0; color: #2670ca; font-weight: 700; }.actions, .card-header, .run-actions, .mapping-meta, .card-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }.card-header { justify-content: space-between; }.mapping-tip { margin-bottom: 16px; }.mapping-meta { margin-bottom: 16px; }.mapping-meta .el-select { width: 280px; }.mapping-table { overflow: hidden; border: 1px solid #e4e7ed; border-radius: 8px; }.mapping-table-head, .mapping-row { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(280px, 1fr); gap: 16px; align-items: center; padding: 10px 14px; }.mapping-table-head { background: #f5f7fa; color: #606266; font-weight: 600; }.mapping-row + .mapping-row { border-top: 1px solid #ebeef5; }.template-column { display: flex; align-items: center; gap: 10px; min-width: 0; }.column-index { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: 0 0 auto; border-radius: 50%; background: #ecf5ff; color: #409eff; font-size: 12px; }.card-actions { justify-content: flex-end; margin-top: 16px; }.category-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }.category-card { display: grid; gap: 10px; padding: 16px; border: 1px solid #e4e7ed; border-radius: 10px; }.muted { color: #909399; font-size: 13px; }.el-progress + .muted { margin-bottom: 18px; }
+.workspace { display: grid; gap: 18px; }.workspace header { display: flex; justify-content: space-between; gap: 20px; padding: 24px 28px; border-radius: 14px; background: linear-gradient(135deg, #edf5ff, #f2f8f5); }.workspace h1 { margin: 4px 0; }.workspace header p { margin: 0; color: #2670ca; font-weight: 700; }.actions, .card-header, .run-actions, .mapping-meta, .card-actions, .selection-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }.card-header { justify-content: space-between; }.mapping-tip { margin-bottom: 16px; }.mapping-meta { margin-bottom: 16px; }.mapping-meta .el-select { width: 280px; }.mapping-table { overflow: hidden; border: 1px solid #e4e7ed; border-radius: 8px; }.mapping-table-head, .mapping-row { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(280px, 1fr); gap: 16px; align-items: center; padding: 10px 14px; }.mapping-table-head { background: #f5f7fa; color: #606266; font-weight: 600; }.mapping-row + .mapping-row { border-top: 1px solid #ebeef5; }.template-column { display: flex; align-items: center; gap: 10px; min-width: 0; }.column-index { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: 0 0 auto; border-radius: 50%; background: #ecf5ff; color: #409eff; font-size: 12px; }.card-actions { justify-content: flex-end; margin-top: 16px; }.muted { color: #909399; font-size: 13px; }.el-progress + .muted { margin-bottom: 18px; }.el-pagination { justify-content: flex-end; margin-top: 16px; }
 .supplement-box { display: grid; gap: 12px; margin-top: 18px; justify-items: start; }.supplement-box .el-textarea { width: 100%; }
 @media (max-width: 767px) { .workspace header { flex-direction: column; }.mapping-table-head { display: none; }.mapping-row { grid-template-columns: 1fr; gap: 8px; } }
 </style>

@@ -26,14 +26,14 @@ function configure() {
     id: "run-1", project_id: "project-1", status: "WAITING_CONFIRMATION", progress_percent: 100,
     progress_message: null, raw_requirement_snapshot: project.remark,
     parsed_requirement: { gross_margin_min: "0.06", jd_price_min: null, jd_price_max: null, category_keywords: ["食品"], brand_keywords: [], scenario_keywords: [], fulfillment_mode: "DROP_SHIPPING", agreement_price_max: "200", discount_rate_max: "0.8", scenarios: ["中秋"] },
-    provider: "fake", model: "fake", prompt_version: "test", error: null, category_choices: [], candidates: [candidate], created_at: "2026-09-24T00:00:00", updated_at: "2026-09-24T00:00:00",
+    provider: "fake", model: "fake", prompt_version: "test", error: null, category_choices: [], candidates: [candidate], candidate_page: { items: [candidate], total: 1, page: 1, page_size: 50, unconfirmed_total: 1, confirmed_total: 0 }, created_at: "2026-09-24T00:00:00", updated_at: "2026-09-24T00:00:00",
   }
   bidApi.get.mockResolvedValue(project)
   bidApi.recommendationTemplates.mockResolvedValue([])
   recommendationApi.runs.mockResolvedValue([run])
   recommendationApi.run.mockResolvedValue(run)
   recommendationApi.confirm.mockResolvedValue({ id: "confirmation-1" })
-  recommendationApi.confirmMany.mockResolvedValue([{ id: "confirmation-1" }])
+  recommendationApi.confirmMany.mockResolvedValue({ confirmed_count: 1 })
 }
 
 async function mountWorkspace() {
@@ -48,12 +48,12 @@ async function mountWorkspace() {
 afterEach(() => vi.clearAllMocks())
 
 describe("RecommendationWorkspaceView", () => {
-  it("renders core price fields and marks non-price information as reference", async () => {
+  it("renders core price fields and explains the hard-filter boundary", async () => {
     const wrapper = await mountWorkspace()
     expect(wrapper.text()).toContain("筛选：协议价")
-    expect(wrapper.text()).toContain("参考：场景")
+    expect(wrapper.text()).toContain("场景、类目、数量、有效期不参与筛选")
     expect(wrapper.text()).toContain("折扣率")
-    expect(wrapper.text()).toContain("点位")
+    expect(wrapper.text()).toContain("毛利率")
     expect(wrapper.text()).not.toContain("人工核验")
   })
 
@@ -67,10 +67,10 @@ describe("RecommendationWorkspaceView", () => {
 
   it("allows the same historical candidate to be batch-confirmed", async () => {
     const wrapper = await mountWorkspace()
-    wrapper.findComponent({ name: "ElTable" }).vm.$emit("selection-change", [candidate])
+    ;(wrapper.vm as unknown as { setCandidateSelected: (row: typeof candidate, selected: boolean) => void }).setCandidateSelected(candidate, true)
     await flushPromises()
     await wrapper.findAll("button").find((item) => item.text().includes("批量确认选中"))!.trigger("click")
-    expect(recommendationApi.confirmMany).toHaveBeenCalledWith("run-1", ["candidate-1"])
+    expect(recommendationApi.confirmMany).toHaveBeenCalledWith("run-1", { candidateIds: ["candidate-1"] })
   })
 
   it("retains no manual API or checkbox gate in the workspace source", () => {
