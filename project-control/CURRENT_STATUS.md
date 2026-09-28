@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-09-28
 
+> 2026-09-28：修复商品详情编辑的百分比浮点精度问题。京东价毛利、扣点复核、毛利率、好评率、折扣率和价格虚高比例改用十进制字符串移位，数据库 `0.1970` 精确显示为 `19.70%` 并按 `0.1970` 回传，避免完整编辑请求因 JavaScript 浮点长尾触发 422。无 Migration、API 或权限变化。
+
 > 2026-09-28：类型4自由推品项目工作流第一版完成：项目状态按 `IMPORTED → MATCHING → SELECTING → READY → EXPORTED → SUBMITTED → WON / LOST` 推进，前三阶段由创建、Agent 执行与候选生成自动识别，后续由完成选品、导出、提交和人工登记结果推进。工作台改为 Agent 候选与人工选择左右双栏，支持增删、完成选品、返回调整、仅导出已选商品及中标/未中标登记；列表和详情统一状态颜色。无 Migration。
 
 > 2026-09-28：自由推品 V4 已在 `codex/fix/free-recommendation-hard-constraints` 实现（无 Migration）：新 Run 仅按协议价、明确京东价、折扣率、点位等数值硬条件全量召回；不再按场景/类目/数量/价格有效期筛选、不再选 1–5 个类目、不再限 30 条或生成逐条理由。候选 API 改为分页，Web 支持本页全选与全部待确认候选的服务端范围确认；评分显示商品主数据 `positive_rating`。后端推荐测试、前端类型检查和相关 Vitest 已通过；真实浏览器和真实 DeepSeek 新 Run 验收仍待执行。

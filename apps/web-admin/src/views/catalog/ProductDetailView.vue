@@ -7,6 +7,7 @@ import { productApi } from "../../api/catalog"
 import { HttpError } from "../../shared/http"
 import { useAuthStore } from "../../stores/auth"
 import type { ProductCategoryFilterOption, ProductDetail, ProductUpdatePayload } from "../../types/catalog"
+import { percentageToRatio, ratioToPercentage } from "./productPercentage"
 
 const route = useRoute()
 const router = useRouter()
@@ -105,9 +106,9 @@ async function loadProduct(): Promise<void> {
 function money(value: string | null): string {
   return value === null ? "—" : `¥ ${value}`
 }
-function percent(value: string | null): string { return value === null ? "—" : `${(Number(value) * 100).toFixed(2).replace(/\.00$/, "")}%` }
-function percentInput(value: string | null): string { return value === null ? "" : String(Number(value) * 100) }
-function percentPayload(value: string): string | null { const parsed = nullable(value); return parsed === null ? null : String(Number(parsed) / 100) }
+function percent(value: string | null): string { return value === null ? "—" : `${ratioToPercentage(value)}%` }
+function percentInput(value: string | null): string { return value === null ? "" : ratioToPercentage(value) }
+function percentPayload(value: string): string | null { const parsed = nullable(value); return parsed === null ? null : percentageToRatio(parsed) }
 
 async function updateCost(): Promise<void> {
   submitting.value = true
