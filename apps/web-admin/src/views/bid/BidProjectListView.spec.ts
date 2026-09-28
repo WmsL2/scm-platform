@@ -4,6 +4,7 @@ import source from "./BidProjectListView.vue?raw"
 describe("BidProjectListView", () => {
   it("gates creation and delegates filtering and pagination to the API", () => {
     expect(source).toContain("auth.hasPermission('bid:create')")
+    expect(source).toContain('route.query.action === "create"')
     expect(source).toContain("const result = await bidApi.list({")
     expect(source).toContain("page: target")
     expect(source).toContain("page_size: pageSize.value")

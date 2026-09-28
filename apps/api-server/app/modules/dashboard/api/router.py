@@ -16,6 +16,10 @@ SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 @router.get("/summary", response_model=ApiResponse[DashboardSummaryResponse])
 async def dashboard_summary(
-    _: Annotated[CurrentUser, Depends(get_current_user)], session: SessionDep
+    current: Annotated[CurrentUser, Depends(get_current_user)], session: SessionDep
 ) -> ApiResponse[DashboardSummaryResponse]:
-    return success(await DashboardService(session).summary())
+    return success(
+        await DashboardService(session).summary(
+            include_recent_projects="bid:list" in current.permissions
+        )
+    )
