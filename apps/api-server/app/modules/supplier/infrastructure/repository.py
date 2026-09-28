@@ -1,5 +1,5 @@
 import uuid
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import Select, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -141,7 +141,9 @@ class SupplierRepository:
             .offset((page_params.page - 1) * page_params.page_size)
             .limit(page_params.page_size)
         )
-        suppliers = list((await self.session.scalars(statement)).all())
+        suppliers = cast(
+            list[Supplier], list(cast(Any, (await self.session.scalars(statement)).all()))
+        )
         total = cast(int, await self.session.scalar(count_statement))
         return suppliers, total
 
@@ -155,12 +157,18 @@ class SupplierRepository:
         statement = self._filtered_statement(keyword, archive_status, cooperation_status).options(
             selectinload(Supplier.contacts)
         )
-        return list(
-            (
-                await self.session.scalars(
-                    statement.order_by(Supplier.created_at.desc(), Supplier.id.desc())
+        return cast(
+            list[Supplier],
+            list(
+                cast(
+                    Any,
+                    (
+                        await self.session.scalars(
+                            statement.order_by(Supplier.created_at.desc(), Supplier.id.desc())
+                        )
+                    ).all(),
                 )
-            ).all()
+            ),
         )
 
     async def selection_ids(
@@ -198,7 +206,7 @@ class SupplierRepository:
         archive_status: ArchiveStatus | None,
         cooperation_status: CooperationStatus | None,
     ) -> Select[tuple[Supplier]]:
-        statement: Select[tuple[Supplier]] = select(Supplier).where(Supplier.is_deleted.is_(False))
+        statement = select(Supplier).where(Supplier.is_deleted.is_(False))
         if keyword:
             statement = statement.where(
                 or_(
@@ -211,7 +219,8 @@ class SupplierRepository:
             statement = statement.where(Supplier.archive_status == archive_status)
         if cooperation_status:
             statement = statement.where(Supplier.cooperation_status == cooperation_status)
-        return statement
+        # SQLAlchemy's Select generic differs between the local and CI stubs.
+        return cast(Select[tuple[Supplier]], cast(Any, statement))
 
     async def import_batch_by_id_for_update(
         self, batch_id: uuid.UUID
