@@ -1,6 +1,6 @@
 # ADR-0041：类型 5 PPT 方案使用 Kimi 与人工选品闭环
 
-状态：ACCEPTED  
+状态：ACCEPTED
 日期：2026-09-28
 
 ## 决策
