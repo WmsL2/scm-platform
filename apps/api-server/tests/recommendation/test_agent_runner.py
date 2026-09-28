@@ -38,11 +38,13 @@ class FakeTools:
 
 
 @pytest.mark.asyncio
-async def test_agent_only_parses_numeric_hard_constraints_then_delegates_full_recall() -> None:
+async def test_agent_parses_numeric_and_explicit_brand_category_constraints() -> None:
     analysis = RequirementAnalysis(
         summary="中秋出行推品",
         keywords=["中秋"],
-        category_keywords=["旅行用品"],
+        explicit_category_keywords=["旅行用品"],
+        category_intents=["旅行用品", "箱包"],
+        required_brands=["指定品牌"],
         scenarios=["中秋十一出行"],
         quantity=1,
         discount_rate_max="0.9",
@@ -58,7 +60,8 @@ async def test_agent_only_parses_numeric_hard_constraints_then_delegates_full_re
     assert result.category_choices == []
     assert result.tool_call_count == 0
     assert tools.prepared is analysis
-    assert "类目、品牌、物流、库存、资质、数量、价格有效期" in provider.system_prompts[0]
+    assert "required_brands" in provider.system_prompts[0]
+    assert "category_intents" in provider.system_prompts[0]
     assert "discount_rate_max=0.9" in provider.system_prompts[0]
 
 

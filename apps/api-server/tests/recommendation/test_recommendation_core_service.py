@@ -270,6 +270,29 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
             actor_id,
         )
         assert all_confirmed.confirmed_count == direct_count - 1
+
+        # V5 treats an explicitly required brand as hard-filtered and uses the
+        # AI-provided semantic category terms instead of requiring identical names.
+        semantic_run = await service.create_run(project.id, actor_id)
+        await service.save_parsed_requirement(
+            semantic_run.id,
+            ParsedRequirement(
+                requirement_version="v5",
+                required_brands=["测试"],
+                explicit_category_keywords=["出行用品"],
+                category_intents=["坚果"],
+                discount_rate_max=Decimal("0.8"),
+                gross_margin_min=Decimal("0.06"),
+            ),
+            provider="deepseek",
+            model="deepseek-chat",
+            prompt_version="free-v5",
+        )
+        assert await service.persist_all_eligible_candidates(semantic_run.id) == 1
+        semantic_page = await service.list_candidates(
+            semantic_run.id, PageParams(page=1, page_size=50)
+        )
+        assert semantic_page.items[0].product_id == eligible_second.id  # type: ignore[union-attr]
         assert (await session.get(RecommendationCandidate, saved[0].id)) is not None
         await session.rollback()
 
