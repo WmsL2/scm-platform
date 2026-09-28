@@ -37,12 +37,15 @@ async def test_default_budget_maps_to_agreement_price_and_explicit_jd_stays_jd()
     )
     await tools.prepare(
         RequirementAnalysis(
-            summary="小家电，预算200元以内，京东价300元以内，点位6%以上，折扣率8折以内",
+            summary="指定测试品牌的旅行用品，预算200元以内，京东价300元以内，点位6%以上，折扣率8折以内",
             keywords=["小家电"],
             budget_max=Decimal("200"),
             jd_price_max=Decimal("300"),
             gross_margin_min=Decimal("0.06"),
             discount_rate_max=Decimal("0.8"),
+            required_brands=["测试品牌"],
+            explicit_category_keywords=["旅行用品"],
+            category_intents=["旅行用品", "箱包"],
         )
     )
     assert stub.requirement is not None
@@ -50,3 +53,7 @@ async def test_default_budget_maps_to_agreement_price_and_explicit_jd_stays_jd()
     assert stub.requirement.jd_price_max == Decimal("300")
     assert stub.requirement.gross_margin_min == Decimal("0.06")
     assert stub.requirement.discount_rate_max == Decimal("0.8")
+    assert stub.requirement.requirement_version == "v5"
+    assert stub.requirement.required_brands == ["测试品牌"]
+    assert stub.requirement.explicit_category_keywords == ["旅行用品"]
+    assert stub.requirement.category_intents == ["旅行用品", "箱包"]

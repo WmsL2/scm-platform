@@ -33,7 +33,7 @@ class RecommendationServiceTools(RecommendationTools):
         await self.service.save_parsed_requirement(
             self.run_id,
             ParsedRequirement(
-                requirement_version="v4",
+                requirement_version="v5",
                 gross_margin_min=analysis.gross_margin_min,
                 gross_margin_max=analysis.gross_margin_max,
                 agreement_price_min=analysis.agreement_price_min or analysis.budget_min,
@@ -42,7 +42,12 @@ class RecommendationServiceTools(RecommendationTools):
                 jd_price_max=analysis.jd_price_max,
                 discount_rate_min=analysis.discount_rate_min,
                 discount_rate_max=analysis.discount_rate_max,
-                # Type-4 v4 deliberately ignores all non-numeric context.
+                # Only explicitly mandatory brand/category requirements are filters.
+                required_brands=analysis.required_brands,
+                explicit_category_keywords=analysis.explicit_category_keywords,
+                category_intents=(
+                    analysis.category_intents if analysis.explicit_category_keywords else []
+                ),
             ),
             provider=self.provider,
             model=self.model,

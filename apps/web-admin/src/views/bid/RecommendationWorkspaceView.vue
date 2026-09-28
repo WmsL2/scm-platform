@@ -518,10 +518,12 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
       <p class="muted">{{ run.progress_message ?? run.error ?? `模型：${run.provider ?? '-'} / ${run.model ?? '-'}` }}</p>
       <el-descriptions v-if="run.parsed_requirement" title="需求理解" :column="2" border>
         <el-descriptions-item label="本次读取的需求" :span="2">{{ run.raw_requirement_snapshot }}</el-descriptions-item>
-        <el-descriptions-item label="筛选方式">仅按商品主数据可校验的价格、折扣率、毛利率等硬条件；场景、类目、数量、有效期不参与筛选</el-descriptions-item>
+        <el-descriptions-item label="筛选方式">按数值硬条件，以及客户明确指定的品牌、类目筛选；场景、用途、数量、有效期不参与筛选</el-descriptions-item>
         <el-descriptions-item label="筛选：协议价">{{ run.parsed_requirement.agreement_price_min ?? '不限' }} ～ {{ run.parsed_requirement.agreement_price_max ?? '不限' }}</el-descriptions-item>
         <el-descriptions-item label="筛选：京东价">{{ run.parsed_requirement.jd_price_min ?? '不限' }} ～ {{ run.parsed_requirement.jd_price_max ?? '不限' }}</el-descriptions-item>
         <el-descriptions-item label="筛选：折扣率 / 毛利率">{{ run.parsed_requirement.discount_rate_min ?? '不限' }} ～ {{ run.parsed_requirement.discount_rate_max ?? '不限' }} / {{ ratioValue(run.parsed_requirement.gross_margin_min, '不限') }} ～ {{ ratioValue(run.parsed_requirement.gross_margin_max, '不限') }}</el-descriptions-item>
+        <el-descriptions-item label="筛选：指定品牌">{{ run.parsed_requirement.required_brands?.join('、') || '不限' }}</el-descriptions-item>
+        <el-descriptions-item label="筛选：指定类目">{{ run.parsed_requirement.explicit_category_keywords?.join('、') || '不限' }}</el-descriptions-item>
       </el-descriptions>
       <el-descriptions v-else title="本次 Agent 实际读取的需求" :column="1" border>
         <el-descriptions-item label="需求快照">{{ run.raw_requirement_snapshot }}</el-descriptions-item>

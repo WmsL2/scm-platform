@@ -426,10 +426,11 @@ class RecommendationRepository:
             filters.append(Product.discount_rate >= requirement.discount_rate_min)
         if requirement.discount_rate_max is not None:
             filters.append(Product.discount_rate <= requirement.discount_rate_max)
-        explicit_categories = (
-            requirement.explicit_category_keywords or requirement.category_keywords
-        )
-        if explicit_categories:
+        if requirement.requirement_version == "v5":
+            category_terms = requirement.category_intents or requirement.explicit_category_keywords
+        else:
+            category_terms = requirement.explicit_category_keywords or requirement.category_keywords
+        if category_terms:
             filters.append(
                 or_(
                     *[
@@ -438,8 +439,20 @@ class RecommendationRepository:
                             Product.category_level2_name.contains(keyword),
                             Product.category_level3_name.contains(keyword),
                         )
-                        for keyword in explicit_categories
+                        for keyword in category_terms
                     ]
+                )
+            )
+        if requirement.requirement_version == "v5" and requirement.required_brands:
+            filters.append(
+                and_(
+                    Product.brand.is_not(None),
+                    or_(
+                        *[
+                            func.lower(Product.brand).contains(brand.casefold())
+                            for brand in requirement.required_brands
+                        ]
+                    ),
                 )
             )
         if requirement.excluded_category_keywords:

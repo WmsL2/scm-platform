@@ -51,7 +51,10 @@ describe("RecommendationWorkspaceView", () => {
   it("renders core price fields and explains the hard-filter boundary", async () => {
     const wrapper = await mountWorkspace()
     expect(wrapper.text()).toContain("筛选：协议价")
-    expect(wrapper.text()).toContain("场景、类目、数量、有效期不参与筛选")
+    expect(wrapper.text()).toContain("客户明确指定的品牌、类目筛选")
+    expect(wrapper.text()).toContain("场景、用途、数量、有效期不参与筛选")
+    expect(wrapper.text()).toContain("筛选：指定品牌")
+    expect(wrapper.text()).toContain("筛选：指定类目")
     expect(wrapper.text()).toContain("折扣率")
     expect(wrapper.text()).toContain("毛利率")
     expect(wrapper.text()).not.toContain("人工核验")
