@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from decimal import Decimal
 from typing import cast
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -153,7 +153,7 @@ class RecommendationRepository:
         keywords: Sequence[str] = (),
         preferred_brands: Sequence[str] = (),
     ) -> list[tuple[Product, Supplier]]:
-        statement: Select[tuple[Product, Supplier]] = (
+        statement = (
             select(Product, Supplier)
             .join(Supplier, Product.source_supplier_id == Supplier.id)
             .where(*self._eligibility_filters(requirement))
@@ -174,13 +174,13 @@ class RecommendationRepository:
                     parts.append(Product.category_level3_name == path.level3_name)
                 path_conditions.append(and_(*parts))
             statement = statement.where(or_(*path_conditions))
-        rows = [(row[0], row[1]) for row in (await self.session.execute(statement)).all()]
+        rows = list((await self.session.execute(statement)).tuples().all())
         normalized_keywords = tuple(value.casefold() for value in keywords if value.strip())
         normalized_brands = tuple(value.casefold() for value in preferred_brands if value.strip())
 
         def bucket(
             row: tuple[Product, Supplier],
-        ) -> tuple[int, bool, Decimal | int, int, bool, uuid.UUID]:
+        ) -> tuple[int, bool, Decimal, int, bool, str]:
             product, _ = row
             searchable = " ".join(
                 str(value or "")
@@ -212,10 +212,10 @@ class RecommendationRepository:
                     else 1 if brand_match else 2 if product.discount_rate is not None else 3
                 ),
                 product.discount_rate is None,
-                product.discount_rate if product.discount_rate is not None else 0,
+                product.discount_rate if product.discount_rate is not None else Decimal(0),
                 -(product.sales_volume or 0),
                 product.jd_price is None,
-                product.id,
+                str(product.id),
             )
 
         prioritized = sorted(rows, key=bucket)

@@ -608,7 +608,7 @@ class ProductRepository:
         if range_criteria:
             statement = statement.where(*range_criteria)
             count_statement = count_statement.where(*range_criteria)
-        return statement, count_statement
+        return statement, cast(Select[tuple[int]], count_statement)  # type: ignore[redundant-cast]
 
     async def list(
         self,
@@ -673,14 +673,17 @@ class ProductRepository:
             sales_volume_max=sales_volume_max,
             status=status,
         )
-        products = list(
-            (
-                await self.session.scalars(
-                    statement.order_by(Product.updated_at.desc(), Product.id.desc())
-                    .offset((page_params.page - 1) * page_params.page_size)
-                    .limit(page_params.page_size)
-                )
-            ).all()
+        products = cast(
+            list[Product],
+            list(
+                (
+                    await self.session.scalars(
+                        statement.order_by(Product.updated_at.desc(), Product.id.desc())
+                        .offset((page_params.page - 1) * page_params.page_size)
+                        .limit(page_params.page_size)
+                    )
+                ).all()
+            ),
         )
         return products, cast(int, await self.session.scalar(count_statement))
 

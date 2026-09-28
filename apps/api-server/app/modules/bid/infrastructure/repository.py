@@ -146,7 +146,10 @@ class BidProjectRepository:
             count_statement = count_statement.where(condition)
         statement = statement.order_by(BidProjectItem.sheet_name, BidProjectItem.source_row_number)
         statement = statement.offset((page - 1) * page_size).limit(page_size)
-        rows = [(row[0], row[1]) for row in (await self.session.execute(statement)).all()]
+        rows = cast(
+            list[tuple[BidProjectItem, BidItemSelection | None]],
+            list((await self.session.execute(statement)).tuples().all()),
+        )
         return rows, cast(int, await self.session.scalar(count_statement))
 
     async def export_rows(
