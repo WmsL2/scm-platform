@@ -5,14 +5,14 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import RecommendationWorkspaceView from "./RecommendationWorkspaceView.vue"
 import source from "./RecommendationWorkspaceView.vue?raw"
 
-const recommendationApi = vi.hoisted(() => ({ runs: vi.fn(), run: vi.fn(), confirm: vi.fn(), confirmMany: vi.fn(), start: vi.fn(), export: vi.fn(), downloadExport: vi.fn() }))
-const bidApi = vi.hoisted(() => ({ get: vi.fn(), recommendationTemplates: vi.fn(), recommendationTemplateMapping: vi.fn(), recommendationTemplateStructure: vi.fn(), updateRecommendationTemplateMapping: vi.fn(), update: vi.fn() }))
+const recommendationApi = vi.hoisted(() => ({ runs: vi.fn(), run: vi.fn(), confirm: vi.fn(), removeConfirmation: vi.fn(), confirmMany: vi.fn(), completeSelection: vi.fn(), reopenSelection: vi.fn(), start: vi.fn(), export: vi.fn(), downloadExport: vi.fn() }))
+const bidApi = vi.hoisted(() => ({ get: vi.fn(), recommendationTemplates: vi.fn(), recommendationTemplateMapping: vi.fn(), recommendationTemplateStructure: vi.fn(), updateRecommendationTemplateMapping: vi.fn(), update: vi.fn(), submit: vi.fn(), win: vi.fn(), lose: vi.fn() }))
 vi.mock("../../api/recommendation", () => ({ recommendationApi }))
 vi.mock("../../api/bid", () => ({ bidApi }))
 vi.mock("../../stores/auth", () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
 vi.mock("vue-router", () => ({ useRoute: () => ({ params: { id: "project-1" } }), useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }))
 
-const project = { id: "project-1", project_name: "自由推品测试", project_type: "FREE_RECOMMENDATION", remark: "一段足够长的自由推品需求说明，用于真实组件挂载测试。" }
+const project = { id: "project-1", project_name: "自由推品测试", project_type: "FREE_RECOMMENDATION", status: "SELECTING", files: [], remark: "一段足够长的自由推品需求说明，用于真实组件挂载测试。" }
 const candidate = {
   id: "candidate-1", product_id: "product-1", rank: 1, score: "90", reason: "适合活动场景",
   // A historical pending flag must be ignored by the new UI flow.
@@ -57,11 +57,11 @@ describe("RecommendationWorkspaceView", () => {
     expect(wrapper.text()).not.toContain("人工核验")
   })
 
-  it("allows a historical pending manual flag to enter the direct confirmation flow", async () => {
+  it("allows a historical pending manual flag to enter the direct selection flow", async () => {
     const wrapper = await mountWorkspace()
-    await wrapper.findAll("button").find((item) => item.text().includes("确认选品"))!.trigger("click")
+    wrapper.findComponent({ name: "ElTable" }).vm.$emit("row-click", candidate)
     await flushPromises()
-    await wrapper.findAll("button").find((item) => item.text().includes("确认保存"))!.trigger("click")
+    await wrapper.findAll("button").find((item) => item.text().includes("加入人工选品"))!.trigger("click")
     expect(recommendationApi.confirm).toHaveBeenCalledWith("candidate-1", expect.any(Object))
   })
 
@@ -69,7 +69,7 @@ describe("RecommendationWorkspaceView", () => {
     const wrapper = await mountWorkspace()
     wrapper.findComponent({ name: "ElTable" }).vm.$emit("selection-change", [candidate])
     await flushPromises()
-    await wrapper.findAll("button").find((item) => item.text().includes("批量确认选中"))!.trigger("click")
+    await wrapper.findAll("button").find((item) => item.text().includes("批量加入"))!.trigger("click")
     expect(recommendationApi.confirmMany).toHaveBeenCalledWith("run-1", ["candidate-1"])
   })
 

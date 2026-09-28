@@ -136,6 +136,7 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
         run = await service.create_run(project.id, actor_id)
         assert run.status == "QUEUED"
         assert run.raw_requirement_snapshot == project.remark
+        assert project.status == BidProjectStatus.MATCHING.value
 
         parsed = ParsedRequirement(
             requirement_version="v3",
@@ -191,6 +192,11 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
         assert saved[0].product_snapshot["company_name"] == "测试所属公司"
         assert saved[0].supplier_snapshot["supplier_name"] == supplier.supplier_name
         assert (await service.get_run(run.id)).status == "WAITING_CONFIRMATION"
+        assert project.status == BidProjectStatus.SELECTING.value
+        failed_rerun = await service.create_run(project.id, actor_id)
+        assert project.status == BidProjectStatus.MATCHING.value
+        await service.mark_failed(failed_rerun.id, "安全失败信息")
+        assert project.status == BidProjectStatus.SELECTING.value
         historical_candidate = await session.get(RecommendationCandidate, saved[0].id)
         assert historical_candidate is not None
         historical_candidate.manual_flags = {
@@ -218,6 +224,20 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
         assert returned.confirmation.inventory_status == "IN_STOCK"
         assert returned.confirmation.fulfillment_cycle == "48小时"
 
+        assert await service.remove_confirmation(saved[0].id, actor_id) is True
+        assert (await service.list_candidates(run.id))[0].confirmation is None
+        assert (await service.get_run(run.id)).status == "WAITING_CONFIRMATION"
+        await service.confirm_candidate(
+            saved[0].id,
+            ConfirmationUpdateRequest(
+                campaign_price=Decimal("88"),
+                delivery_status="JD_OR_SF_SUPPORTED",
+                inventory_status="IN_STOCK",
+                fulfillment_cycle="48小时",
+            ),
+            actor_id,
+        )
+
         # PATCH semantics: an exported run can update only the one explicitly supplied field.
         run_model = await session.get(RecommendationRun, run.id)
         assert run_model is not None
@@ -237,6 +257,13 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
             actor_id,
         )
         assert [item.candidate_id for item in batch_confirmed] == [saved[1].id]
+        completed = await service.complete_selection(project.id, run.id, actor_id)
+        assert completed.status == BidProjectStatus.READY
+        assert project.status == BidProjectStatus.READY.value
+        reopened = await service.reopen_selection(project.id, run.id, actor_id)
+        assert reopened.status == BidProjectStatus.SELECTING
+        assert project.status == BidProjectStatus.SELECTING.value
+        assert (await service.get_run(run.id)).status == RecommendationRunStatus.CONFIRMED
         assert (await session.get(RecommendationCandidate, saved[0].id)) is not None
         await session.rollback()
 

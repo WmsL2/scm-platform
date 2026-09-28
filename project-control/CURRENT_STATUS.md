@@ -3,7 +3,9 @@
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
-日期：2026-09-24
+日期：2026-09-28
+
+> 2026-09-28：类型4自由推品项目工作流第一版完成：项目状态按 `IMPORTED → MATCHING → SELECTING → READY → EXPORTED → SUBMITTED → WON / LOST` 推进，前三阶段由创建、Agent 执行与候选生成自动识别，后续由完成选品、导出、提交和人工登记结果推进。工作台改为 Agent 候选与人工选择左右双栏，支持增删、完成选品、返回调整、仅导出已选商品及中标/未中标登记；列表和详情统一状态颜色。无 Migration。
 
 > 2026-09-24：自由推品 Requirement V3 已覆盖旧人工核验设计（无 Migration）。明确类目（含排除）以及协议价、明确京东价、折扣率、点位范围是确定性硬约束；点位复用 `gross_margin`。品牌、场景、履约物流和商品属性均为软参考；历史人工核验 JSON 不再阻止确认或导出。
 

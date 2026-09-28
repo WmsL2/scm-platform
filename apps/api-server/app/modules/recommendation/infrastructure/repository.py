@@ -248,6 +248,15 @@ class RecommendationRepository:
         )
         return [(row[0], row[1]) for row in rows]
 
+    async def project_has_candidates(self, project_id: uuid.UUID) -> bool:
+        candidate_id = await self.session.scalar(
+            select(RecommendationCandidate.id)
+            .join(RecommendationRun, RecommendationRun.id == RecommendationCandidate.run_id)
+            .where(RecommendationRun.project_id == project_id)
+            .limit(1)
+        )
+        return candidate_id is not None
+
     async def candidate_with_run_for_update(
         self, candidate_id: uuid.UUID
     ) -> (

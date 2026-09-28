@@ -12,6 +12,7 @@ import { useAuthStore } from "../../stores/auth"
 import {
   IMPORT_STATUS_LABELS,
   PROJECT_STATUS_LABELS,
+  PROJECT_STATUS_TAG_TYPES,
   PROJECT_TYPE_LABELS,
   type BidProjectListItem,
   type BidProjectStatus,
@@ -23,6 +24,7 @@ const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const submitting = ref(false)
+const statusTagType = (status: string) => PROJECT_STATUS_TAG_TYPES[status as BidProjectStatus]
 const operationTimer = useOperationTimer()
 const importNavigationLock = useExcelImportNavigationLock(operationTimer)
 const projects = ref<BidProjectListItem[]>([])
@@ -177,7 +179,7 @@ onMounted(() => {
     <el-card>
       <el-form class="filter-form" @submit.prevent="load(1)">
         <el-form-item label="项目"><el-input v-model="filters.keyword" clearable placeholder="搜索项目编号或项目名称" @change="load(1)" /></el-form-item>
-        <el-form-item label="状态"><el-select v-model="filters.status" clearable placeholder="全部状态" @change="load(1)"><el-option v-for="(label, key) in PROJECT_STATUS_LABELS" :key="key" :label="label" :value="key" /></el-select></el-form-item>
+        <el-form-item label="状态"><el-select v-model="filters.status" clearable placeholder="全部状态" @change="load(1)"><el-option v-for="(label, key) in PROJECT_STATUS_LABELS" :key="key" :label="label" :value="key"><el-tag :type="statusTagType(String(key))" size="small" effect="plain">{{ label }}</el-tag></el-option></el-select></el-form-item>
         <el-form-item><el-button type="primary" @click="load(1)">查询</el-button></el-form-item>
       </el-form>
     </el-card>
@@ -187,7 +189,7 @@ onMounted(() => {
         <el-table-column prop="project_name" label="项目名称" min-width="180" />
         <el-table-column label="项目类型" min-width="150"><template #default="{ row }">{{ projectTypeLabel(row.project_type) }}</template></el-table-column>
         <el-table-column prop="buyer_name" label="需求方" min-width="150" />
-        <el-table-column label="项目状态"><template #default="{ row }"><el-tag>{{ PROJECT_STATUS_LABELS[row.status] }}</el-tag></template></el-table-column>
+        <el-table-column label="项目状态"><template #default="{ row }"><el-tag :type="statusTagType(row.status)" effect="plain">{{ PROJECT_STATUS_LABELS[row.status] }}</el-tag></template></el-table-column>
         <el-table-column label="导入状态"><template #default="{ row }">{{ IMPORT_STATUS_LABELS[row.import_status] }}</template></el-table-column>
         <el-table-column prop="total_item_count" label="需求总数" />
         <el-table-column prop="processed_item_count" label="匹配处理数" />
