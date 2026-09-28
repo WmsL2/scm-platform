@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -179,4 +180,106 @@ class RecommendationExport(Base):
     exported_by: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), nullable=False)
     exported_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class PptSolutionPackage(Base):
+    __tablename__ = "scm_ppt_solution_package"
+    __table_args__ = (
+        Index("ix_scm_ppt_solution_package_run_id", "run_id"),
+        Index("ix_scm_ppt_solution_package_selected", "run_id", "is_selected"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_recommendation_run.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    price_tier: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    total_price: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_selected: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    created_by: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), nullable=False)
+    selected_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+    selected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
+    )
+
+
+class PptSolutionPackageItem(Base):
+    __tablename__ = "scm_ppt_solution_package_item"
+    __table_args__ = (
+        UniqueConstraint(
+            "package_id", "candidate_id", name="uq_scm_ppt_solution_package_item_candidate"
+        ),
+        Index("ix_scm_ppt_solution_package_item_package_id", "package_id"),
+        Index("ix_scm_ppt_solution_package_item_candidate_id", "candidate_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
+    package_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_ppt_solution_package.id", ondelete="RESTRICT"), nullable=False
+    )
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDChar36(),
+        ForeignKey("scm_recommendation_candidate.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    line_total: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class PptGenerationTask(Base):
+    __tablename__ = "scm_ppt_generation_task"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED')",
+            name="ck_scm_ppt_generation_task_status",
+        ),
+        Index("ix_scm_ppt_generation_task_project_id", "project_id"),
+        Index("ix_scm_ppt_generation_task_run_id", "run_id"),
+        Index("ix_scm_ppt_generation_task_status", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_bid_project.id", ondelete="RESTRICT"), nullable=False
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_recommendation_run.id", ondelete="RESTRICT"), nullable=False
+    )
+    template_file_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_bid_project_file.id", ondelete="RESTRICT"), nullable=True
+    )
+    output_file_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_bid_project_file.id", ondelete="RESTRICT"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_session_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider_artifact_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
     )

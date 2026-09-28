@@ -5,9 +5,11 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-09-28
 
+> 2026-09-28：类型 5 PPT 方案首版已在 `feat/ppt-solution-kimi-workflow` 实现：Kimi 对甲方需求做语义选品，人工确认商品并可组合价格档位套装，有客户 PPTX 模板则优先使用，无模板则使用系统默认商务版式，最终生成可编辑 PPTX。Revision `20260928_0041` 新增套装和 PPT 生成任务表；真实 Kimi Hosted Agent 凭据、商品图片资源上传及正式后台队列仍待联调。
+
 > 2026-09-28：修复商品详情编辑的百分比浮点精度问题。京东价毛利、扣点复核、毛利率、好评率、折扣率和价格虚高比例改用十进制字符串移位，数据库 `0.1970` 精确显示为 `19.70%` 并按 `0.1970` 回传，避免完整编辑请求因 JavaScript 浮点长尾触发 422。无 Migration、API 或权限变化。
 
-> 2026-09-28：自由推品 Requirement V5 已在 `codex/feat/free-recommendation-brand-category` 实现：新 Run 保留 V4 数值硬条件全量召回，并且仅将客户以强制语气明确指定的品牌和类目作为筛选条件；Agent 为明确类目输出近义类目词以覆盖商品三级类目名称不完全一致的情形。场景、用途、数量、库存、物流和有效期仍忽略。无 Migration；后端 Ruff/Mypy/6 项推荐测试及前端类型检查/4 项工作台测试已通过，真实 DeepSeek 与浏览器验收待执行。
+> 2026-09-28：自由推品 Requirement V5 已在 `codex/feat/free-recommendation-brand-category` 实现：新 Run 保留 V4 数值硬条件全量召回，并且仅将客户以强制语气明确指定的品牌和类目作为筛选条件；Agent 为明确类目输出近义类目词以覆盖商品三级类目名称不完全一致的情形。场景、用途、数量、库存、物流和有效期仍忽略。无 Migration；后端 Ruff/Mypy/6 项推荐测试及前端类型检查/4 项工作台测试已通过，真实 DeepSeek 与浏览器验收待执行（ADR-0042）。
 
 > 2026-09-28：类型4自由推品项目工作流第一版完成：项目状态按 `IMPORTED → MATCHING → SELECTING → READY → EXPORTED → SUBMITTED → WON / LOST` 推进，前三阶段由创建、Agent 执行与候选生成自动识别，后续由完成选品、导出、提交和人工登记结果推进。工作台改为 Agent 候选与人工选择左右双栏，支持增删、完成选品、返回调整、仅导出已选商品及中标/未中标登记；列表和详情统一状态颜色。无 Migration。
 

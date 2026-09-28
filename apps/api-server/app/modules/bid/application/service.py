@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+from zipfile import BadZipFile, ZipFile
 
 from openpyxl import load_workbook
 from sqlalchemy import func, select
@@ -78,8 +79,6 @@ class BidProjectService:
     ) -> BidProjectCreateResponse:
         if start_at is not None and deadline_at is not None and start_at > deadline_at:
             raise AppError("BID_PROJECT_INVALID_TIME_RANGE", "项目开始时间不能晚于截止时间", 422)
-        if project_type == BidProjectType.PPT_SOLUTION:
-            raise AppError("BID_PROJECT_TYPE_NOT_AVAILABLE", "PPT 方案项目暂未开放", 409)
         if project_type == BidProjectType.FILTER_RECOMMENDATION:
             if (
                 recommendation_template_filename is not None
@@ -93,7 +92,7 @@ class BidProjectService:
             if filename is None or file_bytes is None:
                 raise AppError("BID_EXCEL_REQUIRED", "筛选推品必须上传客户需求 Excel", 422)
             self._validate_upload(filename, file_bytes)
-        else:
+        elif project_type == BidProjectType.FREE_RECOMMENDATION:
             if not remark or len(remark.strip()) < 20:
                 raise AppError(
                     "FREE_RECOMMENDATION_REMARK_REQUIRED",
@@ -105,6 +104,19 @@ class BidProjectService:
             self._validate_recommendation_template(
                 recommendation_template_filename, recommendation_template_bytes
             )
+        else:
+            if not remark or len(remark.strip()) < 20:
+                raise AppError(
+                    "PPT_SOLUTION_REMARK_REQUIRED",
+                    "PPT 方案需求说明至少需要 20 个有效字符",
+                    422,
+                )
+            if recommendation_template_filename is not None:
+                if recommendation_template_bytes is None:
+                    raise AppError("PPT_TEMPLATE_INVALID", "PPT 模板文件无效", 422)
+                self._validate_ppt_template(
+                    recommendation_template_filename, recommendation_template_bytes
+                )
         project_id = uuid.uuid4()
         template: BidTemplate | None = None
         parsed_rows: list[dict[str, Any]] = []
@@ -142,10 +154,16 @@ class BidProjectService:
                     f"bid-projects/{project_id}/original/source.xlsx", file_bytes
                 )
                 saved_keys.append(storage_key)
-            else:
+            elif project_type == BidProjectType.FREE_RECOMMENDATION:
                 assert recommendation_template_bytes is not None
                 template_storage_key = await self.storage.save(
                     f"bid-projects/{project_id}/recommendation-templates/v1.xlsx",
+                    recommendation_template_bytes,
+                )
+                saved_keys.append(template_storage_key)
+            elif recommendation_template_bytes is not None:
+                template_storage_key = await self.storage.save(
+                    f"bid-projects/{project_id}/ppt-templates/v1.pptx",
                     recommendation_template_bytes,
                 )
                 saved_keys.append(template_storage_key)
@@ -183,7 +201,10 @@ class BidProjectService:
                             created_by=actor_id,
                         )
                     )
-                if template_storage_key is not None:
+                if (
+                    template_storage_key is not None
+                    and project_type == BidProjectType.FREE_RECOMMENDATION
+                ):
                     assert recommendation_template_bytes is not None
                     assert recommendation_template_filename is not None
                     assert analysis is not None
@@ -208,6 +229,21 @@ class BidProjectService:
                             header_row=analysis.header_row,
                             data_start_row=analysis.data_start_row,
                             mapping_json=analysis.mapping_json,
+                        )
+                    )
+                elif template_storage_key is not None:
+                    assert recommendation_template_bytes is not None
+                    assert recommendation_template_filename is not None
+                    self.session.add(
+                        BidProjectFile(
+                            project_id=project_id,
+                            file_type=BidFileType.PPT_TEMPLATE.value,
+                            version_no=1,
+                            original_filename=Path(recommendation_template_filename).name[:255],
+                            storage_key=template_storage_key,
+                            file_size=len(recommendation_template_bytes),
+                            sha256=hashlib.sha256(recommendation_template_bytes).hexdigest(),
+                            created_by=actor_id,
                         )
                     )
                 for row in parsed_rows:
@@ -537,19 +573,19 @@ class BidProjectService:
         async with transaction_scope(self.session):
             project = await self._project_or_404(project_id, lock=True)
             file = await self.repository.file_by_id(project_id, file_id)
-            expected_file_type = (
-                BidFileType.RECOMMENDATION_EXPORT
-                if project.project_type == BidProjectType.FREE_RECOMMENDATION.value
-                else BidFileType.QUOTED_EXPORT
-            )
+            expected_file_type = {
+                BidProjectType.FREE_RECOMMENDATION.value: BidFileType.RECOMMENDATION_EXPORT,
+                BidProjectType.PPT_SOLUTION.value: BidFileType.PPT_EXPORT,
+            }.get(project.project_type, BidFileType.QUOTED_EXPORT)
             if file is None or file.file_type != expected_file_type.value:
                 raise AppError(
                     "BID_SUBMITTED_FILE_INVALID",
-                    (
-                        "提交文件必须是当前项目的自由推品导出文件"
-                        if expected_file_type == BidFileType.RECOMMENDATION_EXPORT
-                        else "实际投标文件必须是当前项目的报价导出文件"
-                    ),
+                    {
+                        BidFileType.RECOMMENDATION_EXPORT: (
+                            "提交文件必须是当前项目的自由推品导出文件"
+                        ),
+                        BidFileType.PPT_EXPORT: "提交文件必须是当前项目生成的 PPT 方案",
+                    }.get(expected_file_type, "实际投标文件必须是当前项目的报价导出文件"),
                     409,
                 )
             self._transition(
@@ -881,6 +917,19 @@ class BidProjectService:
             raise AppError("RECOMMENDATION_TEMPLATE_INVALID", "推荐模板必须是非空 .xlsx 文件", 422)
         if len(file_bytes) > MAX_FILE_BYTES:
             raise AppError("RECOMMENDATION_TEMPLATE_INVALID", "推荐模板超过大小限制", 422)
+
+    @staticmethod
+    def _validate_ppt_template(filename: str, file_bytes: bytes) -> None:
+        if Path(filename).suffix.lower() != ".pptx" or not file_bytes:
+            raise AppError("PPT_TEMPLATE_INVALID", "PPT 模板必须是非空 .pptx 文件", 422)
+        if len(file_bytes) > MAX_FILE_BYTES:
+            raise AppError("PPT_TEMPLATE_INVALID", "PPT 模板超过大小限制", 422)
+        try:
+            with ZipFile(BytesIO(file_bytes)) as archive:
+                if "ppt/presentation.xml" not in archive.namelist():
+                    raise AppError("PPT_TEMPLATE_INVALID", "文件不是有效的 PPTX 模板", 422)
+        except BadZipFile:
+            raise AppError("PPT_TEMPLATE_INVALID", "文件不是有效的 PPTX 模板", 422) from None
 
     @staticmethod
     def _fingerprint(sheet_name: str, header_row: int, headers: list[str | None]) -> str:

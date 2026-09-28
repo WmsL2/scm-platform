@@ -50,7 +50,7 @@ async def create_bid_project(
     recommendation_template: Annotated[UploadFile | None, File()] = None,
 ) -> ApiResponse[BidProjectCreateResponse]:
     if (
-        project_type == BidProjectType.FREE_RECOMMENDATION
+        project_type in {BidProjectType.FREE_RECOMMENDATION, BidProjectType.PPT_SOLUTION}
         and "recommendation:create" not in current.permissions
     ):
         raise AppError("AUTH_FORBIDDEN", "Permission denied", 403)

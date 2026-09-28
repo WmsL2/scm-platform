@@ -42,6 +42,26 @@ class RecommendationRepository:
             ),
         )
 
+    async def recommendation_project_for_update(
+        self, project_id: uuid.UUID
+    ) -> BidProject | None:
+        return cast(
+            BidProject | None,
+            await self.session.scalar(
+                select(BidProject)
+                .where(
+                    BidProject.id == project_id,
+                    BidProject.project_type.in_(
+                        (
+                            BidProjectType.FREE_RECOMMENDATION.value,
+                            BidProjectType.PPT_SOLUTION.value,
+                        )
+                    ),
+                )
+                .with_for_update()
+            ),
+        )
+
     async def latest_template_mapping(
         self, project_id: uuid.UUID
     ) -> tuple[RecommendationTemplateMapping, BidProjectFile] | None:

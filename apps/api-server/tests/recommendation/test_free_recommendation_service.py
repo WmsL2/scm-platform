@@ -229,7 +229,7 @@ async def test_free_create_validation_rejects_invalid_contract(
 
 
 @pytest.mark.asyncio
-async def test_ppt_is_rejected_before_sequence_or_storage(
+async def test_ppt_requires_requirement_before_sequence_or_storage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     storage = FakeStorage()
@@ -254,6 +254,12 @@ async def test_ppt_is_rejected_before_sequence_or_storage(
             project_type=BidProjectType.PPT_SOLUTION,
             actor_id=uuid.uuid4(),
         )
-    assert exc_info.value.code == "BID_PROJECT_TYPE_NOT_AVAILABLE"
+    assert exc_info.value.code == "PPT_SOLUTION_REMARK_REQUIRED"
     assert not called
     assert storage.saved == {}
+
+
+def test_ppt_template_must_be_real_pptx_package() -> None:
+    with pytest.raises(AppError) as exc_info:
+        BidProjectService._validate_ppt_template("template.pptx", b"not-a-pptx")
+    assert exc_info.value.code == "PPT_TEMPLATE_INVALID"
