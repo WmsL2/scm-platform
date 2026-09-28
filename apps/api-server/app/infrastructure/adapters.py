@@ -23,6 +23,12 @@ class ArqTaskQueue:
         raise RuntimeError("ARQ task queue is not configured")
 
 
+def get_task_queue() -> TaskQueue:
+    from app.core.config import get_settings
+
+    return InlineTaskQueue() if get_settings().task_mode == "inline" else ArqTaskQueue()
+
+
 class ObjectStorage(Protocol):
     async def save(self, name: str, content: bytes) -> str: ...
 

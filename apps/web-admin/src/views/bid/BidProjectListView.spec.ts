@@ -17,10 +17,11 @@ describe("BidProjectListView", () => {
     expect(source).toContain("Excel 未识别到模板，需要完成模板配置")
     expect(source).toContain("Excel 解析失败")
   })
-  it("supports type 4 creation and keeps type 5 closed", () => {
+  it("supports type 4 and type 5 creation", () => {
     expect(source).toContain('value: "FREE_RECOMMENDATION"')
     expect(source).toContain('value: "PPT_SOLUTION"')
-    expect(source).toContain('disabled: true')
+    expect(source).toContain("PPT 方案需求说明不能少于 20 个字符")
+    expect(source).toContain("使用系统默认模板")
     expect(source).toContain("自由推品需求说明不能少于 20 个字符")
     expect(source).toContain("recommendation_template: recommendationTemplate.value")
     expect(source).toContain(':show-file-list="false"')

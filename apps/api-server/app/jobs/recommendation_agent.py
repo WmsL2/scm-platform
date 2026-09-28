@@ -10,6 +10,13 @@ from app.integrations.deepseek.client import (
     DeepSeekProviderError,
     DeepSeekStructuredOutputError,
 )
+from app.integrations.kimi.client import (
+    KimiClient,
+    KimiConfigurationError,
+    KimiProviderError,
+    KimiStructuredOutputError,
+)
+from app.modules.bid.domain.lifecycle import BidProjectType
 from app.modules.recommendation.application.agent_runner import (
     AgentRunner,
     RecommendationAgentCancelled,
@@ -20,6 +27,11 @@ from app.modules.recommendation.application.agent_service_adapter import (
     RecommendationServiceJobPort,
     RecommendationServiceTools,
 )
+from app.modules.recommendation.application.ppt_selection_adapter import (
+    PptSelectionJobPort,
+    PptSelectionServiceTools,
+)
+from app.modules.recommendation.application.ppt_selection_runner import PptSelectionAgentRunner
 from app.modules.recommendation.application.service import RecommendationService
 
 logger = logging.getLogger(__name__)
@@ -74,16 +86,16 @@ async def execute_recommendation_agent(
         await job_port.complete(run_id, result)
     except RecommendationAgentCancelled:
         await job_port.cancelled(run_id)
-    except DeepSeekConfigurationError as exc:
+    except (DeepSeekConfigurationError, KimiConfigurationError) as exc:
         await job_port.fail(run_id, str(exc))
-    except DeepSeekStructuredOutputError as exc:
+    except (DeepSeekStructuredOutputError, KimiStructuredOutputError) as exc:
         logger.warning(
             "recommendation structured output failed run_id=%s "
             "stage=%s attempt=%s error_kind=%s validation=%s",
             run_id,
             exc.response_model_name,
             AgentRunner.MAX_PROVIDER_ATTEMPTS,
-            exc.error_kind,
+            getattr(exc, "error_kind", "SCHEMA_VALIDATION"),
             exc.safe_validation_summary,
         )
         await job_port.fail(
@@ -92,7 +104,7 @@ async def execute_recommendation_agent(
                 exc.response_model_name, "推荐结果格式异常，已自动重试仍失败，请重新生成推荐"
             ),
         )
-    except DeepSeekProviderError as exc:
+    except (DeepSeekProviderError, KimiProviderError) as exc:
         logger.warning(
             "recommendation provider failed run_id=%s error_class=%s",
             run_id,
@@ -114,8 +126,23 @@ async def execute_recommendation_agent(
 async def execute_recommendation_agent_inline(run_id: UUID, session: AsyncSession) -> None:
     """Local-first execution wired only through B's public RecommendationService."""
 
-    provider = DeepSeekClient()
     service = RecommendationService(session)
+    if await service.project_type_for_run(run_id) == BidProjectType.PPT_SOLUTION:
+        kimi = KimiClient()
+        ppt_tools = PptSelectionServiceTools(
+            run_id,
+            service,
+            provider=kimi.provider,
+            model=kimi.model,
+            prompt_version=kimi.prompt_version,
+        )
+        await execute_recommendation_agent(
+            run_id,
+            runner=PptSelectionAgentRunner(kimi, ppt_tools),
+            job_port=PptSelectionJobPort(service),
+        )
+        return
+    provider = DeepSeekClient()
     tools = RecommendationServiceTools(
         run_id,
         service,

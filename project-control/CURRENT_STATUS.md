@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-09-28
 
+> 2026-09-28：类型 5 PPT 方案首版已在 `feat/ppt-solution-kimi-workflow` 实现：Kimi 对甲方需求做语义选品，人工确认商品并可组合价格档位套装，有客户 PPTX 模板则优先使用，无模板则使用系统默认商务版式，最终生成可编辑 PPTX。Revision `20260928_0041` 新增套装和 PPT 生成任务表；真实 Kimi Hosted Agent 凭据、商品图片资源上传及正式后台队列仍待联调。
+
 > 2026-09-28：修复商品详情编辑的百分比浮点精度问题。京东价毛利、扣点复核、毛利率、好评率、折扣率和价格虚高比例改用十进制字符串移位，数据库 `0.1970` 精确显示为 `19.70%` 并按 `0.1970` 回传，避免完整编辑请求因 JavaScript 浮点长尾触发 422。无 Migration、API 或权限变化。
 
 > 2026-09-28：类型4自由推品项目工作流第一版完成：项目状态按 `IMPORTED → MATCHING → SELECTING → READY → EXPORTED → SUBMITTED → WON / LOST` 推进，前三阶段由创建、Agent 执行与候选生成自动识别，后续由完成选品、导出、提交和人工登记结果推进。工作台改为 Agent 候选与人工选择左右双栏，支持增删、完成选品、返回调整、仅导出已选商品及中标/未中标登记；列表和详情统一状态颜色。无 Migration。
