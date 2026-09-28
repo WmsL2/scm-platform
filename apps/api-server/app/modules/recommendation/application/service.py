@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.contracts import AppError
+from app.common.contracts import AppError, PageParams
 from app.core.transaction import transaction_scope
 from app.modules.bid.domain.lifecycle import (
     BidProjectStatus,
@@ -28,6 +28,7 @@ from app.modules.recommendation.infrastructure.models import (
 from app.modules.recommendation.infrastructure.repository import RecommendationRepository
 from app.modules.recommendation.schemas import (
     BatchConfirmationRequest,
+    BatchConfirmationResult,
     CandidateRankInput,
     CategoryChoiceInput,
     CategoryPath,
@@ -37,6 +38,7 @@ from app.modules.recommendation.schemas import (
     ParsedRequirement,
     PersistCandidatesRequest,
     ProductCandidateRow,
+    RecommendationCandidatePageResponse,
     RecommendationCandidateResponse,
     RecommendationConfirmationResponse,
     RecommendationRunResponse,
@@ -278,6 +280,42 @@ class RecommendationService:
                 await self.session.refresh(candidate)
         return [self._candidate_response(candidate, None) for candidate in candidates]
 
+    async def persist_all_eligible_candidates(self, run_id: uuid.UUID) -> int:
+        """Persist every product satisfying the Type-4 hard constraints."""
+        async with transaction_scope(self.session):
+            run = await self._run_or_404_for_update(run_id)
+            if run.status != RecommendationRunStatus.RETRIEVING.value:
+                raise AppError(
+                    "RECOMMENDATION_RUN_NOT_RETRIEVING", "当前推品任务不能保存候选商品", 409
+                )
+            if await self.repository.candidates(run_id):
+                raise AppError(
+                    "RECOMMENDATION_CANDIDATES_ALREADY_PERSISTED", "候选商品已保存，不能覆盖", 409
+                )
+            rows = await self.repository.all_eligible_products(self._parsed_requirement(run))
+            if not rows:
+                self._transition(run, RecommendationRunStatus.NO_CANDIDATES)
+                await self._restore_project_after_terminal_run(run, "RECOMMENDATION_NO_CANDIDATES")
+                return 0
+            candidates = [
+                self._candidate_from_product(run.id, rank, product, supplier)
+                for rank, (product, supplier) in enumerate(rows, start=1)
+            ]
+            self.session.add_all(candidates)
+            self._transition(run, RecommendationRunStatus.CANDIDATES_READY)
+            self._transition(run, RecommendationRunStatus.WAITING_CONFIRMATION)
+            project = await self.repository.free_project_for_update(run.project_id)
+            if project is None:
+                raise AppError("FREE_RECOMMENDATION_PROJECT_NOT_FOUND", "自由推品项目不存在", 404)
+            self._set_project_status(
+                project,
+                BidProjectStatus.SELECTING,
+                actor_id=run.created_by,
+                event_type="RECOMMENDATION_CANDIDATES_READY",
+            )
+            await self.session.flush()
+        return len(candidates)
+
     async def mark_no_candidates(self, run_id: uuid.UUID) -> RecommendationRunResponse:
         async with transaction_scope(self.session):
             run = await self._run_or_404_for_update(run_id)
@@ -328,8 +366,25 @@ class RecommendationService:
             allow_run_recovery=True,
         )
 
-    async def list_candidates(self, run_id: uuid.UUID) -> list[RecommendationCandidateResponse]:
+    async def list_candidates(
+        self, run_id: uuid.UUID, page_params: PageParams | None = None
+    ) -> list[RecommendationCandidateResponse] | RecommendationCandidatePageResponse:
         await self._run_or_404(run_id)
+        if page_params is not None:
+            rows, total, confirmed_total = await self.repository.candidate_page(
+                run_id, page=page_params.page, page_size=page_params.page_size
+            )
+            return RecommendationCandidatePageResponse(
+                items=[
+                    self._candidate_response(candidate, confirmation)
+                    for candidate, confirmation in rows
+                ],
+                total=total,
+                page=page_params.page,
+                page_size=page_params.page_size,
+                confirmed_total=confirmed_total,
+                unconfirmed_total=total - confirmed_total,
+            )
         return [
             self._candidate_response(candidate, confirmation)
             for candidate, confirmation in await self.repository.candidates(run_id)
@@ -418,7 +473,7 @@ class RecommendationService:
         run_id: uuid.UUID,
         payload: BatchConfirmationRequest,
         actor_id: uuid.UUID,
-    ) -> list[RecommendationConfirmationResponse]:
+    ) -> BatchConfirmationResult:
         async with transaction_scope(self.session):
             run = await self._run_or_404_for_update(run_id)
             await self._ensure_selection_editable(run)
@@ -431,10 +486,16 @@ class RecommendationService:
                 raise AppError(
                     "RECOMMENDATION_CONFIRMATION_NOT_ALLOWED", "当前推品任务不能人工确认", 409
                 )
-            rows = await self.repository.candidates_with_confirmations_for_update(
-                run_id, payload.candidate_ids
+            rows = (
+                await self.repository.unconfirmed_candidates_for_update(
+                    run_id, payload.excluded_candidate_ids
+                )
+                if payload.select_all
+                else await self.repository.candidates_with_confirmations_for_update(
+                    run_id, payload.candidate_ids
+                )
             )
-            if len(rows) != len(payload.candidate_ids):
+            if not payload.select_all and len(rows) != len(payload.candidate_ids):
                 raise AppError(
                     "RECOMMENDATION_CANDIDATE_NOT_FOUND",
                     "部分推品候选不存在或不属于当前任务",
@@ -466,9 +527,7 @@ class RecommendationService:
             elif run.status == RecommendationRunStatus.EXPORTED.value:
                 self._transition(run, RecommendationRunStatus.CONFIRMED)
             await self.session.flush()
-            for confirmation in confirmations:
-                await self.session.refresh(confirmation)
-        return [self._confirmation_response(item) for item in confirmations]
+        return BatchConfirmationResult(confirmed_count=len(confirmations))
 
     async def _ensure_selection_editable(self, run: RecommendationRun) -> BidProject:
         project = await self.repository.free_project_for_update(run.project_id)
@@ -685,10 +744,15 @@ class RecommendationService:
     @staticmethod
     def _candidate(
         run_id: uuid.UUID,
-        item: CandidateRankInput,
+        item: CandidateRankInput | None,
         product: Product,
         supplier: Supplier,
+        *,
+        rank: int | None = None,
     ) -> RecommendationCandidate:
+        if item is None and rank is None:
+            raise ValueError("rank is required when the candidate has no ranking input")
+        candidate_rank = rank if rank is not None else item.rank  # type: ignore[union-attr]
         product_snapshot: dict[str, object | None] = {"id": str(product.id)}
         price_snapshot: dict[str, object | None] = {}
         for field in PRODUCT_EXPORT_COLUMN_KEYS:
@@ -703,10 +767,10 @@ class RecommendationService:
         return RecommendationCandidate(
             run_id=run_id,
             product_id=product.id,
-            rank=item.rank,
-            score=item.score,
-            reason=item.reason.strip() if item.reason else None,
-            manual_flags=item.manual_flags,
+            rank=candidate_rank,
+            score=item.score if item else None,
+            reason=item.reason.strip() if item and item.reason else None,
+            manual_flags=item.manual_flags if item else None,
             product_snapshot=product_snapshot,
             supplier_snapshot={
                 "id": str(supplier.id),
@@ -717,6 +781,12 @@ class RecommendationService:
             },
             price_snapshot=price_snapshot,
         )
+
+    @staticmethod
+    def _candidate_from_product(
+        run_id: uuid.UUID, rank: int, product: Product, supplier: Supplier
+    ) -> RecommendationCandidate:
+        return RecommendationService._candidate(run_id, None, product, supplier, rank=rank)
 
     @staticmethod
     def _snapshot_value(value: object) -> object:

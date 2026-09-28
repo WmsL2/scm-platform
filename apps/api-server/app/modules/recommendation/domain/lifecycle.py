@@ -21,6 +21,8 @@ _TRANSITIONS: dict[RecommendationRunStatus, set[RecommendationRunStatus]] = {
     },
     RecommendationRunStatus.RETRIEVING: {
         RecommendationRunStatus.RANKING,
+        # V4 full hard-filter recall persists candidates without an AI ranking stage.
+        RecommendationRunStatus.CANDIDATES_READY,
         RecommendationRunStatus.NO_CANDIDATES,
         RecommendationRunStatus.FAILED,
         RecommendationRunStatus.CANCELLED,

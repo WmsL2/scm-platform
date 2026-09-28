@@ -11,8 +11,6 @@ from app.jobs.recommendation_agent import execute_recommendation_agent
 from app.modules.recommendation.application.agent_runner import RecommendationAgentCancelled
 from app.modules.recommendation.application.agent_schemas import (
     AgentRecommendationResult,
-    CategoryChoice,
-    RankedCandidate,
     RequirementAnalysis,
 )
 from app.modules.recommendation.application.agent_service_adapter import (
@@ -115,33 +113,25 @@ async def test_job_reports_candidate_ranking_schema_failure_without_raw_response
 
 
 @pytest.mark.asyncio
-async def test_job_port_never_persists_more_than_thirty_ranked_candidates() -> None:
+async def test_job_port_persists_the_complete_hard_filter_result() -> None:
     class CapturingService:
         def __init__(self) -> None:
-            self.payload: Any = None
+            self.run_id: object | None = None
 
-        async def record_category_choices(self, _: object, __: object) -> None:
-            pass
-
-        async def persist_ranked_candidates(self, _: object, payload: Any) -> None:
-            self.payload = payload
+        async def persist_all_eligible_candidates(self, run_id: object) -> int:
+            self.run_id = run_id
+            return 3_423
 
     service = CapturingService()
     result = AgentRecommendationResult(
         analysis=RequirementAnalysis(summary="测试", keywords=["测试"]),
-        category_choices=[
-            CategoryChoice(
-                category_key='["一级",null,null]', reason="测试", search_keywords=["测试"]
-            )
-        ],
-        candidates=[
-            RankedCandidate(product_id=uuid4(), score=90, reason="测试") for _ in range(31)
-        ],
+        category_choices=[],
+        candidates=[],
         provider="fake",
         model="fake",
         prompt_version="test",
         tool_call_count=0,
     )
-    await RecommendationServiceJobPort(service).complete(uuid4(), result)  # type: ignore[arg-type]
-    assert service.payload is not None
-    assert len(service.payload.candidates) == 30
+    run_id = uuid4()
+    await RecommendationServiceJobPort(service).complete(run_id, result)  # type: ignore[arg-type]
+    assert service.run_id == run_id

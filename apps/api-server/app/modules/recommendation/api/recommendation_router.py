@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.contracts import ApiResponse, success
+from app.common.contracts import ApiResponse, PageParams, success
 from app.core.database import FunctionSessionDep, get_db_session
 from app.jobs.recommendation_agent import execute_recommendation_agent_inline
 from app.modules.auth.dependencies import require_permission, require_permission_before_response
@@ -19,8 +19,9 @@ from app.modules.recommendation.application.export_service import Recommendation
 from app.modules.recommendation.application.service import RecommendationService
 from app.modules.recommendation.schemas import (
     BatchConfirmationRequest,
+    BatchConfirmationResult,
     ConfirmationUpdateRequest,
-    RecommendationCandidateResponse,
+    RecommendationCandidatePageResponse,
     RecommendationConfirmationResponse,
     RecommendationRunResponse,
 )
@@ -70,14 +71,17 @@ async def get_run(
 
 
 @router.get(
-    "/runs/{run_id}/candidates", response_model=ApiResponse[list[RecommendationCandidateResponse]]
+    "/runs/{run_id}/candidates", response_model=ApiResponse[RecommendationCandidatePageResponse]
 )
 async def list_candidates(
     run_id: uuid.UUID,
+    page_params: Annotated[PageParams, Depends()],
     _: Annotated[CurrentUser, Depends(require_permission("recommendation:detail"))],
     session: SessionDep,
-) -> ApiResponse[list[RecommendationCandidateResponse]]:
-    return success(await RecommendationService(session).list_candidates(run_id))
+) -> ApiResponse[RecommendationCandidatePageResponse]:
+    result = await RecommendationService(session).list_candidates(run_id, page_params)
+    assert isinstance(result, RecommendationCandidatePageResponse)
+    return success(result)
 
 
 @router.patch(
@@ -113,14 +117,14 @@ async def remove_candidate_confirmation(
 
 @router.post(
     "/runs/{run_id}/confirmations",
-    response_model=ApiResponse[list[RecommendationConfirmationResponse]],
+    response_model=ApiResponse[BatchConfirmationResult],
 )
 async def confirm_candidates(
     run_id: uuid.UUID,
     payload: BatchConfirmationRequest,
     current: Annotated[CurrentUser, Depends(require_permission("recommendation:review"))],
     session: SessionDep,
-) -> ApiResponse[list[RecommendationConfirmationResponse]]:
+) -> ApiResponse[BatchConfirmationResult]:
     return success(
         await RecommendationService(session).confirm_candidates(run_id, payload, current.user_id)
     )

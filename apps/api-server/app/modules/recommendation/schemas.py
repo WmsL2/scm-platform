@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.common.contracts import PageResult
 from app.modules.recommendation.template.schemas import RecommendationRunStatus
 
 
@@ -202,6 +203,17 @@ class RecommendationCandidateResponse(BaseModel):
     created_at: datetime
 
 
+class RecommendationCandidatePageResponse(PageResult[RecommendationCandidateResponse]):
+    """A page of candidate snapshots plus selection-safe aggregate counts."""
+
+    unconfirmed_total: int = Field(ge=0)
+    confirmed_total: int = Field(ge=0)
+
+
+class BatchConfirmationResult(BaseModel):
+    confirmed_count: int = Field(ge=0)
+
+
 class ConfirmationUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -221,10 +233,19 @@ class ConfirmationUpdateRequest(BaseModel):
 class BatchConfirmationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    candidate_ids: list[UUID] = Field(min_length=1, max_length=30)
+    candidate_ids: list[UUID] = Field(default_factory=list, max_length=500)
+    select_all: bool = False
+    excluded_candidate_ids: list[UUID] = Field(default_factory=list, max_length=500)
 
     @model_validator(mode="after")
     def require_unique_candidates(self) -> "BatchConfirmationRequest":
         if len(self.candidate_ids) != len(set(self.candidate_ids)):
             raise ValueError("candidate_ids must be unique")
+        if len(self.excluded_candidate_ids) != len(set(self.excluded_candidate_ids)):
+            raise ValueError("excluded_candidate_ids must be unique")
+        if self.select_all:
+            if self.candidate_ids:
+                raise ValueError("candidate_ids must be empty when select_all is true")
+        elif not self.candidate_ids:
+            raise ValueError("candidate_ids is required when select_all is false")
         return self

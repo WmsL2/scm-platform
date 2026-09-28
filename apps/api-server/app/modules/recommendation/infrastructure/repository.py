@@ -234,6 +234,18 @@ class RecommendationRepository:
         )
         return [(row[0], row[1]) for row in rows]
 
+    async def all_eligible_products(
+        self, requirement: ParsedRequirement
+    ) -> list[tuple[Product, Supplier]]:
+        """Return the complete Type-4 hard-condition result set in a stable order."""
+        rows = await self.session.execute(
+            select(Product, Supplier)
+            .join(Supplier, Product.source_supplier_id == Supplier.id)
+            .where(*self._eligibility_filters(requirement))
+            .order_by(Product.positive_rating.desc(), Product.id)
+        )
+        return [(row[0], row[1]) for row in rows]
+
     async def candidates(
         self, run_id: uuid.UUID
     ) -> list[tuple[RecommendationCandidate, RecommendationConfirmation | None]]:
@@ -247,6 +259,38 @@ class RecommendationRepository:
             .order_by(RecommendationCandidate.rank)
         )
         return [(row[0], row[1]) for row in rows]
+
+    async def candidate_page(
+        self, run_id: uuid.UUID, *, page: int, page_size: int
+    ) -> tuple[list[tuple[RecommendationCandidate, RecommendationConfirmation | None]], int, int]:
+        base = select(RecommendationCandidate).where(RecommendationCandidate.run_id == run_id)
+        total = int(
+            await self.session.scalar(select(func.count()).select_from(base.subquery())) or 0
+        )
+        confirmed_total = int(
+            await self.session.scalar(
+                select(func.count())
+                .select_from(RecommendationCandidate)
+                .join(
+                    RecommendationConfirmation,
+                    RecommendationConfirmation.candidate_id == RecommendationCandidate.id,
+                )
+                .where(RecommendationCandidate.run_id == run_id)
+            )
+            or 0
+        )
+        rows = await self.session.execute(
+            select(RecommendationCandidate, RecommendationConfirmation)
+            .outerjoin(
+                RecommendationConfirmation,
+                RecommendationConfirmation.candidate_id == RecommendationCandidate.id,
+            )
+            .where(RecommendationCandidate.run_id == run_id)
+            .order_by(RecommendationCandidate.rank)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        return [(row[0], row[1]) for row in rows], total, confirmed_total
 
     async def project_has_candidates(self, project_id: uuid.UUID) -> bool:
         candidate_id = await self.session.scalar(
@@ -297,6 +341,27 @@ class RecommendationRepository:
             .order_by(RecommendationCandidate.rank)
             .with_for_update()
         )
+        return [(row[0], row[1]) for row in rows]
+
+    async def unconfirmed_candidates_for_update(
+        self, run_id: uuid.UUID, excluded_candidate_ids: Sequence[uuid.UUID] = ()
+    ) -> list[tuple[RecommendationCandidate, RecommendationConfirmation | None]]:
+        statement = (
+            select(RecommendationCandidate, RecommendationConfirmation)
+            .outerjoin(
+                RecommendationConfirmation,
+                RecommendationConfirmation.candidate_id == RecommendationCandidate.id,
+            )
+            .where(
+                RecommendationCandidate.run_id == run_id,
+                RecommendationConfirmation.id.is_(None),
+            )
+            .order_by(RecommendationCandidate.rank)
+            .with_for_update()
+        )
+        if excluded_candidate_ids:
+            statement = statement.where(~RecommendationCandidate.id.in_(excluded_candidate_ids))
+        rows = await self.session.execute(statement)
         return [(row[0], row[1]) for row in rows]
 
     async def confirmed_candidates_for_export(

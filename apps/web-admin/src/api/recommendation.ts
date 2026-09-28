@@ -53,20 +53,39 @@ interface CoreConfirmation {
   updated_at: string
 }
 
-function adaptRun(run: CoreRun, candidates: CoreCandidate[] = []): RecommendationRun {
+interface CoreCandidatePage {
+  items: CoreCandidate[]
+  total: number
+  page: number
+  page_size: number
+  unconfirmed_total: number
+  confirmed_total: number
+}
+
+function adaptCandidates(candidates: CoreCandidate[]): RecommendationCandidate[] {
+  return candidates.map((candidate): RecommendationCandidate => ({
+    ...candidate,
+    confirmation: candidate.confirmation,
+  }))
+}
+
+function adaptRun(run: CoreRun, candidatePage?: CoreCandidatePage): RecommendationRun {
   return {
     ...run,
     category_choices: [],
-    candidates: candidates.map((candidate): RecommendationCandidate => ({
-      ...candidate,
-      confirmation: candidate.confirmation,
-    })),
+    candidates: adaptCandidates(candidatePage?.items ?? []),
+    candidate_page: candidatePage && {
+      ...candidatePage,
+      items: adaptCandidates(candidatePage.items),
+    },
   }
 }
 
-async function loadRun(runId: string): Promise<RecommendationRun> {
+async function loadRun(runId: string, page = 1, pageSize = 50): Promise<RecommendationRun> {
   const run = await http.get<CoreRun>(`${base}/runs/${runId}`)
-  const candidates = await http.get<CoreCandidate[]>(`${base}/runs/${runId}/candidates`)
+  const candidates = await http.get<CoreCandidatePage>(
+    `${base}/runs/${runId}/candidates?page=${page}&page_size=${pageSize}`,
+  )
   return adaptRun(run, candidates)
 }
 
@@ -75,8 +94,8 @@ export const recommendationApi = {
     const runs = await http.get<CoreRun[]>(`${base}/${projectId}/runs`)
     return runs.map((run) => adaptRun(run))
   },
-  async run(runId: string): Promise<RecommendationRun> {
-    return loadRun(runId)
+  async run(runId: string, page = 1, pageSize = 50): Promise<RecommendationRun> {
+    return loadRun(runId, page, pageSize)
   },
   async detail(projectId: string): Promise<RecommendationRun | null> {
     const runs = await http.get<CoreRun[]>(`${base}/${projectId}/runs`)
@@ -95,8 +114,16 @@ export const recommendationApi = {
   removeConfirmation(candidateId: string): Promise<boolean> {
     return http.delete(`${base}/candidates/${candidateId}/confirmation`)
   },
-  confirmMany(runId: string, candidateIds: string[]): Promise<CoreConfirmation[]> {
-    return http.post(`${base}/runs/${runId}/confirmations`, { candidate_ids: candidateIds })
+  confirmMany(
+    runId: string,
+    selection: string[] | { candidateIds?: string[]; selectAll?: boolean; excludedCandidateIds?: string[] },
+  ): Promise<{ confirmed_count: number }> {
+    const normalized = Array.isArray(selection) ? { candidateIds: selection } : selection
+    return http.post(`${base}/runs/${runId}/confirmations`, {
+      candidate_ids: normalized.candidateIds ?? [],
+      select_all: normalized.selectAll ?? false,
+      excluded_candidate_ids: normalized.excludedCandidateIds ?? [],
+    })
   },
   completeSelection(projectId: string, runId: string): Promise<{ id: string; status: string; submitted_file_id: string | null }> {
     return http.post(`${base}/${projectId}/runs/${runId}/commands/complete-selection`)
