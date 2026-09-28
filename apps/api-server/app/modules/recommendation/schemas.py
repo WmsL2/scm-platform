@@ -16,45 +16,33 @@ class FactoryDirectStatus(StrEnum):
     NO = "NO"
 
 
-class ManualCheckStatus(StrEnum):
-    PENDING = "PENDING"
-    PASS = "PASS"
-    FAIL = "FAIL"
-
-
-class ManualCheckType(StrEnum):
-    DROP_SHIPPING = "DROP_SHIPPING"
-    INVENTORY_AVAILABLE = "INVENTORY_AVAILABLE"
-    DELIVERY_DEADLINE = "DELIVERY_DEADLINE"
-    LOGISTICS_CARRIER = "LOGISTICS_CARRIER"
-    CUSTOM_PACKAGING = "CUSTOM_PACKAGING"
-    INVOICE_REQUIREMENT = "INVOICE_REQUIREMENT"
-    WARRANTY_REQUIREMENT = "WARRANTY_REQUIREMENT"
-    REGION_RESTRICTION = "REGION_RESTRICTION"
-    OTHER = "OTHER"
-
-
-class ManualCheck(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    code: ManualCheckType
-    label: str = Field(min_length=1, max_length=128)
-    requirement_text: str = Field(min_length=1, max_length=1000)
-    required: bool = True
-    status: ManualCheckStatus = ManualCheckStatus.PENDING
-    evidence: str | None = Field(default=None, max_length=4000)
-
-
 class ParsedRequirement(BaseModel):
     """Validated bridge from C's AI parser to B's deterministic query."""
 
     model_config = ConfigDict(extra="forbid")
 
+    requirement_version: str | None = Field(default=None, max_length=16)
+    # 模块4业务口径：点位复用既有正式字段 gross_margin，6% = 0.06。
     gross_margin_min: Decimal | None = Field(
+        default=None, ge=0, le=1, max_digits=9, decimal_places=4
+    )
+    gross_margin_max: Decimal | None = Field(
         default=None, ge=0, le=1, max_digits=9, decimal_places=4
     )
     jd_price_min: Decimal | None = Field(default=None, ge=0, max_digits=65, decimal_places=30)
     jd_price_max: Decimal | None = Field(default=None, ge=0, max_digits=65, decimal_places=30)
+    agreement_price_min: Decimal | None = Field(
+        default=None, ge=0, max_digits=65, decimal_places=30
+    )
+    agreement_price_max: Decimal | None = Field(
+        default=None, ge=0, max_digits=65, decimal_places=30
+    )
+    discount_rate_min: Decimal | None = Field(
+        default=None, ge=0, le=1, max_digits=9, decimal_places=4
+    )
+    discount_rate_max: Decimal | None = Field(
+        default=None, ge=0, le=1, max_digits=9, decimal_places=4
+    )
     # V2 separates deterministic constraints from ranking signals.  The three legacy
     # fields remain readable so historical Run JSON can still be rendered.
     category_keywords: list[str] = Field(default_factory=list, max_length=20)
@@ -72,7 +60,8 @@ class ParsedRequirement(BaseModel):
     demand_mode: str | None = Field(default=None, max_length=64)
     quantity: int | None = Field(default=None, ge=1)
     fulfillment_mode: str | None = Field(default=None, max_length=64)
-    manual_checks: list[ManualCheck] = Field(default_factory=list, max_length=20)
+    # Kept read-compatible for historical JSON; it is not evaluated by any flow.
+    manual_checks: list[dict[str, object]] = Field(default_factory=list, max_length=20)
 
     @field_validator(
         "category_keywords", "brand_keywords", "scenario_keywords",
@@ -88,12 +77,14 @@ class ParsedRequirement(BaseModel):
 
     @model_validator(mode="after")
     def validate_price_range(self) -> "ParsedRequirement":
-        if (
-            self.jd_price_min is not None
-            and self.jd_price_max is not None
-            and self.jd_price_min > self.jd_price_max
+        for lower, upper, label in (
+            (self.jd_price_min, self.jd_price_max, "jd_price"),
+            (self.agreement_price_min, self.agreement_price_max, "agreement_price"),
+            (self.discount_rate_min, self.discount_rate_max, "discount_rate"),
+            (self.gross_margin_min, self.gross_margin_max, "gross_margin"),
         ):
-            raise ValueError("jd_price_min must not exceed jd_price_max")
+            if lower is not None and upper is not None and lower > upper:
+                raise ValueError(f"{label}_min must not exceed {label}_max")
         return self
 
 
@@ -224,34 +215,6 @@ class ConfirmationUpdateRequest(BaseModel):
     @field_validator("delivery_status", "inventory_status", "fulfillment_cycle", "evidence")
     @classmethod
     def strip_optional_text(cls, value: str | None) -> str | None:
-        return value.strip() if value and value.strip() else None
-
-
-class ManualCheckUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    checks: list["ManualCheckReviewUpdate"] = Field(min_length=1, max_length=20)
-
-    @model_validator(mode="after")
-    def require_unique_codes(self) -> "ManualCheckUpdateRequest":
-        codes = [check.code for check in self.checks]
-        if len(codes) != len(set(codes)):
-            raise ValueError("manual check codes must be unique")
-        return self
-
-
-class ManualCheckReviewUpdate(BaseModel):
-    """The review API cannot alter the server-created check contract."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    code: ManualCheckType
-    status: ManualCheckStatus
-    evidence: str | None = Field(default=None, max_length=4000)
-
-    @field_validator("evidence")
-    @classmethod
-    def strip_evidence(cls, value: str | None) -> str | None:
         return value.strip() if value and value.strip() else None
 
 

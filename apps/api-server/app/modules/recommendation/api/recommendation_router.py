@@ -20,7 +20,6 @@ from app.modules.recommendation.application.service import RecommendationService
 from app.modules.recommendation.schemas import (
     BatchConfirmationRequest,
     ConfirmationUpdateRequest,
-    ManualCheckUpdateRequest,
     RecommendationCandidateResponse,
     RecommendationConfirmationResponse,
     RecommendationRunResponse,
@@ -96,19 +95,6 @@ async def confirm_candidate(
             candidate_id, payload, current.user_id
         )
     )
-
-
-@router.patch(
-    "/candidates/{candidate_id}/manual-checks",
-    response_model=ApiResponse[RecommendationCandidateResponse],
-)
-async def update_manual_checks(
-    candidate_id: uuid.UUID,
-    payload: ManualCheckUpdateRequest,
-    _: Annotated[CurrentUser, Depends(require_permission("recommendation:review"))],
-    session: SessionDep,
-) -> ApiResponse[RecommendationCandidateResponse]:
-    return success(await RecommendationService(session).update_manual_checks(candidate_id, payload))
 
 
 @router.post(

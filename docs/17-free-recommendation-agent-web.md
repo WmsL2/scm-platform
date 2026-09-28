@@ -8,9 +8,9 @@
 4. 创建后确认工作表、表头行、数据起始行和模板字段映射。左侧展示上传模板的真实列名且不可修改，右侧从商品主数据字段中搜索选择要写入的数据。
 5. 启动 Agent，查看需求理解、类目方向、候选排序和推荐理由。
 6. 运营人员确认候选的活动价、履约说明和依据。
-7. 全部满足服务端确认条件后导出推荐结果。
+7. 确认候选后导出推荐结果。
 
-自由推品允许类目、品牌、价格区间、预算和数量留空；系统会从满足硬性毛利与状态规则的正式商品中探索方向。节日、活动、人群和“特价”等属于场景词，不会错误地当成商品类目过滤。“一件代发”等明确履约信息会进入结构化需求。
+自由推品允许类目、品牌、价格区间、预算和数量留空。唯一业务硬条件是明确类目与明确数字价格条件；节日、活动、人群、品牌、特价和履约物流均为参考信息，不会阻止确认或导出。
 
 当状态为“需要补充信息”时，工作台展示 Agent 本次实际读取的需求快照和问题。运营可在页面填写补充说明并重新生成；系统更新项目备注并创建新的 Run，旧 Run 的需求快照和结果继续保留。
 
@@ -64,19 +64,17 @@ A 已冻结的项目创建与模板映射接口直接使用。B 已提供的 Run
 
 确认结果导出由 `20260923_0040` 提供：Run 必须处于 `CONFIRMED` 或 `EXPORTED`，且至少存在一条人工确认候选。导出仅写入已确认候选，保留当前已确认推荐模板的格式、公式和字段映射；每次生成独立 `RECOMMENDATION_EXPORT` 附件及导出审计记录。人工确认可填写“是否厂直”三态（待确认／是／否），系统和 AI 不推断该值。导出和下载均要求 `recommendation:export`；下载文件名按 UTF-8 标准编码，支持中文名称。
 
-## 5. Requirement V2：硬条件、软偏好与人工核验
+## 5. Requirement V3：类目与价格硬条件
 
-解析结果按边界保存到 Run JSON，缺少类目、品牌、预算、价格或数量不会自动进入 `NEEDS_INPUT`，也没有隐藏的 6% 毛利率默认值。
+解析结果按边界保存到 Run JSON；缺少类目、品牌、预算、价格或数量不会自动进入 `NEEDS_INPUT`。
 
-- Hard constraints：`gross_margin_min`、京东价范围、`explicit_category_keywords`、`required_brands`、排除品牌和排除类目。明确类目才会进入 SQL 过滤；`required_brands` 才会过滤非该品牌商品。
-- Soft preferences：`category_intents`、`scenarios`、`search_keywords`、`preferred_brands`、`promotion_preference`。意图类目和场景用于类目发现及排序，偏好品牌不排除其他品牌；`SPECIAL_PRICE` 只依据真实折扣、协议价和京东价排序。
-- Manual verification：`manual_checks` 是候选级 JSON 核验清单。配送一件代发、现货、交付时限等没有主数据事实时必须为 `PENDING`，不能由模型或 `shipping_courier` 自动通过。
+- Hard constraints：`explicit_category_keywords` 与 `excluded_category_keywords`；`agreement_price_*`、明确说明“京东价”时的 `jd_price_*`、明确数字的 `discount_rate_*`，以及 `gross_margin_*`。未指明价格口径时，“200 元以内”写入协议价范围；折扣率 8 折写为 `0.8`。
+- 点位映射：模块4业务口径中，“点位”复用正式商品的 `gross_margin`（毛利率）字段，6% 写为 `gross_margin_min=0.06`。
+- Reference information：品牌（即使写“必须”）、场景、节日、人群、特价、物流、一件代发、库存、厂家直发、销量、评分和卖点只影响受控召回/排序及理由，不是 SQL 硬过滤，也不触发补充需求。
 
-候选池先按类目和硬条件查询，再以关键词命中、偏好品牌、真实折扣、销量及稳定 ID 的确定性 bucket 合并；关键词无命中时仍保留同类目且满足硬条件的 fallback。最终排序仍由受控 Agent 完成，最多输入/输出 30 个候选。
+候选池先按类目和数值硬条件查询，再以关键词命中、品牌偏好、真实折扣、销量及稳定 ID 的确定性 bucket 合并；关键词无命中时仍保留同类目且满足硬条件的 fallback。最终排序由受控 Agent 完成，最多输入/输出 30 个候选。
 
-运营人员通过 `PATCH /api/v1/recommendation-projects/candidates/{candidate_id}/manual-checks` 只能更新已存在核验项的状态和依据（`PENDING`、`PASS`、`FAIL`），不能创建任意 check。单条和批量人工确认都会在服务端拒绝仍为 `PENDING` 或 `FAIL` 的必填核验项；历史 `manual_flags=null` 候选保持兼容。
-
-候选已经产生正式 Confirmation 后，必填核验只能保持 `PASS` 或补充依据，不能降级为 `PENDING`／`FAIL`；系统返回 409 并保留既有确认。导出也会在锁定确认候选后再次校验全部必填核验项，避免历史 JSON 异常或后续写入造成无效确认被导出。
+不再创建或更新人工核验项，`PATCH /manual-checks` 已移除。历史 `manual_flags` 和旧 Run JSON 仍可读取，但不会影响单条确认、批量确认或导出。
 
 ## 6. 模板派生字段
 

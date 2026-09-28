@@ -5,7 +5,7 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-09-24
 
-> 2026-09-24：自由推品 Requirement V2、受控软召回、候选人工核验和物流派生导出字段已实现（无 Migration）。明确类目/必选品牌/毛利和价格为确定性硬约束；意图、场景、关键词、偏好品牌和特价为软信号。一件代发等不可由商品主数据证明的条件必须人工 PASS 后才能单条或批量确认。
+> 2026-09-24：自由推品 Requirement V3 已覆盖旧人工核验设计（无 Migration）。明确类目（含排除）以及协议价、明确京东价、折扣率、点位范围是确定性硬约束；点位复用 `gross_margin`。品牌、场景、履约物流和商品属性均为软参考；历史人工核验 JSON 不再阻止确认或导出。
 
 > 2026-09-23：自由推品确认结果导出已在分支 `feat/free-recommendation-export` 实现，Migration `20260923_0040` 新增导出审计记录和人工 `factory_direct` 三态字段；复用 `recommendation:export`，导出保留上传模板格式并仅包含已确认候选。后端迁移和模块测试、前端类型检查/Vitest/生产构建已执行；真实浏览器导出验收仍需授权账号和实际确认 Run。
 

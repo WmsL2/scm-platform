@@ -338,10 +338,20 @@ class RecommendationRepository:
         ]
         if requirement.gross_margin_min is not None:
             filters.append(Product.gross_margin >= requirement.gross_margin_min)
+        if requirement.gross_margin_max is not None:
+            filters.append(Product.gross_margin <= requirement.gross_margin_max)
+        if requirement.agreement_price_min is not None:
+            filters.append(Product.agreement_price >= requirement.agreement_price_min)
+        if requirement.agreement_price_max is not None:
+            filters.append(Product.agreement_price <= requirement.agreement_price_max)
         if requirement.jd_price_min is not None:
             filters.append(Product.jd_price >= requirement.jd_price_min)
         if requirement.jd_price_max is not None:
             filters.append(Product.jd_price <= requirement.jd_price_max)
+        if requirement.discount_rate_min is not None:
+            filters.append(Product.discount_rate >= requirement.discount_rate_min)
+        if requirement.discount_rate_max is not None:
+            filters.append(Product.discount_rate <= requirement.discount_rate_max)
         explicit_categories = (
             requirement.explicit_category_keywords or requirement.category_keywords
         )
@@ -357,16 +367,6 @@ class RecommendationRepository:
                         for keyword in explicit_categories
                     ]
                 )
-            )
-        required_brands = requirement.required_brands or requirement.brand_keywords
-        if required_brands:
-            filters.append(
-                or_(*[Product.brand.contains(keyword) for keyword in required_brands])
-            )
-        if requirement.excluded_brands:
-            filters.extend(
-                or_(Product.brand.is_(None), ~Product.brand.contains(keyword))
-                for keyword in requirement.excluded_brands
             )
         if requirement.excluded_category_keywords:
             for keyword in requirement.excluded_category_keywords:

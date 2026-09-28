@@ -91,23 +91,19 @@ class AgentRunner:
                 "你是企业职工福利自由推品需求分析助手。只分析用户文字，不编造商品、供应商或数据库信息。"
                 "自由推品允许需求方不指定类目、品牌、单价、预算和数量；这些字段缺失或写明暂无时，"
                 "保留为空并继续推荐，绝不能仅因此设置 needs_input=true。"
-                "explicit_category_keywords 只填写明确限定的商品类目；"
-                "category_intents、scenarios、promotion_preference 与 search_keywords"
-                " 是软排序/召回信号，"
-                "不可当硬过滤。required_brands 是必须品牌，preferred_brands 只是偏好，"
-                "excluded_brands 和 excluded_category_keywords 才是排除条件。"
-                "没有明确毛利要求时 gross_margin_min 必须为 null，"
-                "绝不使用隐藏的 6% 默认值。特价使用 SPECIAL_PRICE，且只是排序偏好。"
-                "一件代发必须生成 DROP_SHIPPING、PENDING 的 required manual_checks；"
-                "shipping_courier 不能证明一件代发。"
-                "现货、48小时发货等无法由商品主数据证明的条件同样生成 PENDING 人工核验，"
-                "不能声称已满足。"
+                "唯一硬条件是明确类目（含 excluded_category_keywords）及明确数字价格条件。"
+                "“200元以内”等未说明口径的价格写入 agreement_price_min/max；"
+                "只有明确说京东价时才写入 jd_price_min/max。"
+                "明确折扣率写入 discount_rate_min/max；“点位”映射为商品 gross_margin，"
+                "6% 写为 gross_margin_min=0.06。"
+                "品牌（包括“必须品牌”）、场景、节日、人群、特价、物流、一件代发、库存、厂家直发、销量、评分和卖点"
+                "都仅是排序或说明参考，绝不可作为硬过滤、needs_input 或人工核验。"
+                "不要输出人工核验字段。"
                 "只有需求"
                 "无法形成任何可执行场景、硬性条件互相矛盾或存在必须由需求方决策的合规问题时，才设置"
                 " needs_input=true，并分别使用 UNUSABLE_REQUIREMENT、CONTRADICTORY_CONSTRAINTS 或"
-                " COMPLIANCE_DECISION_REQUIRED 作为 blocking_reasons；不得创建其他原因。毛利率 6%"
-                " 必须表示为 0.06。一件代发写入"
-                " fulfillment_mode。严格返回符合 JSON Schema 的对象。"
+                " COMPLIANCE_DECISION_REQUIRED 作为 blocking_reasons；不得创建其他原因。"
+                "严格返回符合 JSON Schema 的对象。"
             ),
             user=requirement,
         )
@@ -162,9 +158,11 @@ class AgentRunner:
             request = ProductSearchRequest(
                 category_key=choice.category_key,
                 keywords=choice.search_keywords,
-                preferred_brands=analysis.preferred_brands,
-                agreement_price_min=analysis.budget_min,
-                agreement_price_max=analysis.budget_max,
+                preferred_brands=list(
+                    dict.fromkeys([*analysis.preferred_brands, *analysis.required_brands])
+                ),
+                agreement_price_min=analysis.agreement_price_min or analysis.budget_min,
+                agreement_price_max=analysis.agreement_price_max or analysis.budget_max,
             )
             category_candidates.append(await self._call_search_products(request))
             await self._check_cancelled(is_cancelled)
@@ -197,8 +195,8 @@ class AgentRunner:
                 f"数量，也不得超过 {MAX_RANKING_CANDIDATES} 条。"
                 "硬约束已经由后端执行；仅将软偏好用于排序。"
                 "SPECIAL_PRICE 时只可引用输入中真实的折扣、协议价和京东价，"
-                "不能杜撰活动价、库存、时效、"
-                "一件代发或物流能力。未完成的人工核验必须表述为仍需人工确认。"
+                "不能杜撰活动价、库存、时效、一件代发或物流能力；缺失信息只是不作承诺，"
+                "不能因此排除候选或阻止确认、导出。"
             ),
             user=f"需求={analysis.model_dump_json()}\n候选={compact_json(candidates)}",
         )

@@ -187,6 +187,9 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
             product_id=product.id,
             rank=1,
             score=Decimal("99"),
+            manual_flags={
+                "checks": [{"required": True, "status": "PENDING", "code": "DROP_SHIPPING"}]
+            },
             product_snapshot={
                 "brand": "导出品牌",
                 "product_name": "确认导出商品",

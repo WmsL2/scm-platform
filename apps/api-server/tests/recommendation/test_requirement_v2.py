@@ -2,89 +2,42 @@ from decimal import Decimal
 
 import pytest
 
-from app.common.contracts import AppError
-from app.modules.recommendation.application.service import RecommendationService
-from app.modules.recommendation.infrastructure.models import RecommendationCandidate
-from app.modules.recommendation.schemas import (
-    ManualCheck,
-    ManualCheckStatus,
-    ManualCheckType,
-    ManualCheckUpdateRequest,
-    ParsedRequirement,
-)
+from app.modules.recommendation.schemas import ParsedRequirement
 
 
-def test_requirement_v2_has_no_hidden_margin_and_separates_constraints() -> None:
+def test_requirement_v3_keeps_only_category_and_explicit_numeric_price_constraints() -> None:
     requirement = ParsedRequirement(
+        requirement_version="v3",
+        explicit_category_keywords=["食品饮料"],
+        agreement_price_max=Decimal("200"),
+        discount_rate_max=Decimal("0.8"),
         gross_margin_min=Decimal("0.06"),
-        explicit_category_keywords=[],
-        category_intents=["中秋", "国庆"],
-        preferred_brands=["华为"],
-        promotion_preference="SPECIAL_PRICE",
-        demand_mode="REDEMPTION",
+        required_brands=["某品牌"],
+        scenarios=["中秋"],
         fulfillment_mode="DROP_SHIPPING",
-        manual_checks=[
-            ManualCheck(
-                code=ManualCheckType.DROP_SHIPPING,
-                label="是否支持一件代发",
-                requirement_text="一件代发",
-            )
-        ],
     )
+    assert requirement.agreement_price_max == Decimal("200")
+    assert requirement.discount_rate_max == Decimal("0.8")
     assert requirement.gross_margin_min == Decimal("0.06")
-    assert requirement.required_brands == []
-    assert requirement.category_intents == ["中秋", "国庆"]
-    assert requirement.manual_checks[0].status is ManualCheckStatus.PENDING
+    assert requirement.required_brands == ["某品牌"]
     assert ParsedRequirement().gross_margin_min is None
 
 
 @pytest.mark.parametrize(
-    ("status", "error_code"),
+    "values",
     [
-        ("PENDING", "RECOMMENDATION_MANUAL_CHECK_PENDING"),
-        ("FAIL", "RECOMMENDATION_MANUAL_CHECK_FAILED"),
+        {"agreement_price_min": "201", "agreement_price_max": "200"},
+        {"discount_rate_min": "0.9", "discount_rate_max": "0.8"},
+        {"gross_margin_min": "0.07", "gross_margin_max": "0.06"},
     ],
 )
-def test_required_manual_checks_block_confirmation(status: str, error_code: str) -> None:
-    candidate = RecommendationCandidate(
-        manual_flags={
-            "checks": [
-                {
-                    "code": "DROP_SHIPPING",
-                    "label": "是否支持一件代发",
-                    "requirement_text": "一件代发",
-                    "required": True,
-                    "status": status,
-                    "evidence": None,
-                }
-            ]
-        }
+def test_requirement_rejects_inverted_hard_price_ranges(values: dict[str, str]) -> None:
+    with pytest.raises(ValueError):
+        ParsedRequirement(**values)
+
+
+def test_historical_manual_json_remains_read_compatible_and_is_not_a_contract() -> None:
+    requirement = ParsedRequirement.model_validate(
+        {"manual_checks": [{"code": "DROP_SHIPPING", "status": "PENDING"}]}
     )
-    with pytest.raises(AppError) as exc_info:
-        RecommendationService._ensure_manual_checks_pass(candidate)
-    assert exc_info.value.code == error_code
-
-
-def test_passed_or_legacy_manual_checks_do_not_block_confirmation() -> None:
-    passed = RecommendationCandidate(
-        manual_flags={"checks": [{"required": True, "status": "PASS"}]}
-    )
-    RecommendationService._ensure_manual_checks_pass(passed)
-    RecommendationService._ensure_manual_checks_pass(RecommendationCandidate(manual_flags=None))
-
-
-def test_manual_check_review_payload_cannot_change_server_contract() -> None:
-    update = ManualCheckUpdateRequest(
-        checks=[{"code": "DROP_SHIPPING", "status": "PASS", "evidence": "供应商确认"}]
-    )
-    assert update.checks[0].status is ManualCheckStatus.PASS
-    with pytest.raises(Exception):
-        ManualCheckUpdateRequest(
-            checks=[
-                {
-                    "code": "DROP_SHIPPING",
-                    "status": "PASS",
-                    "required": False,
-                }
-            ]
-        )
+    assert requirement.manual_checks[0]["status"] == "PENDING"

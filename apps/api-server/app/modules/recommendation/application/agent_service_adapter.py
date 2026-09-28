@@ -60,21 +60,28 @@ class RecommendationServiceTools(RecommendationTools):
         self.prompt_version = prompt_version
 
     async def prepare(self, analysis: RequirementAnalysis) -> None:
+        soft_brands = list(dict.fromkeys([*analysis.preferred_brands, *analysis.required_brands]))
         await self.service.begin_analysis(self.run_id)
         await self.service.save_parsed_requirement(
             self.run_id,
             ParsedRequirement(
+                requirement_version="v3",
                 gross_margin_min=analysis.gross_margin_min,
-                jd_price_min=analysis.budget_min,
-                jd_price_max=analysis.budget_max,
+                gross_margin_max=analysis.gross_margin_max,
+                agreement_price_min=analysis.agreement_price_min or analysis.budget_min,
+                agreement_price_max=analysis.agreement_price_max or analysis.budget_max,
+                jd_price_min=analysis.jd_price_min,
+                jd_price_max=analysis.jd_price_max,
+                discount_rate_min=analysis.discount_rate_min,
+                discount_rate_max=analysis.discount_rate_max,
                 category_keywords=analysis.category_keywords,
-                brand_keywords=analysis.required_brands,
+                brand_keywords=soft_brands,
                 scenario_keywords=analysis.scenarios,
                 explicit_category_keywords=analysis.explicit_category_keywords,
                 category_intents=analysis.category_intents,
                 excluded_category_keywords=analysis.excluded_category_keywords,
                 required_brands=analysis.required_brands,
-                preferred_brands=analysis.preferred_brands,
+                preferred_brands=soft_brands,
                 excluded_brands=analysis.excluded_brands,
                 search_keywords=analysis.search_keywords or analysis.keywords,
                 scenarios=analysis.scenarios,
@@ -82,7 +89,6 @@ class RecommendationServiceTools(RecommendationTools):
                 demand_mode=analysis.demand_mode,
                 quantity=analysis.quantity,
                 fulfillment_mode=analysis.fulfillment_mode,
-                manual_checks=analysis.manual_checks,
             ),
             provider=self.provider,
             model=self.model,

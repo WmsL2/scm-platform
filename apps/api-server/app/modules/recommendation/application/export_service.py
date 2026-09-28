@@ -18,7 +18,6 @@ from app.infrastructure.adapters import ObjectStorage, get_object_storage
 from app.modules.bid.domain.lifecycle import BidFileType
 from app.modules.bid.infrastructure.models import BidProjectEvent, BidProjectFile
 from app.modules.bid.schemas import BidProjectFileResponse
-from app.modules.recommendation.application.service import RecommendationService
 from app.modules.recommendation.domain.lifecycle import ensure_transition
 from app.modules.recommendation.infrastructure.models import (
     RecommendationCandidate,
@@ -95,10 +94,6 @@ class RecommendationExportService:
                         "至少确认一条推荐候选后才能导出",
                         409,
                     )
-                for candidate, _ in rows:
-                    # Confirmation-time validation is insufficient: a JSON row may
-                    # be changed later, so export is the final safety boundary.
-                    RecommendationService._ensure_manual_checks_pass(candidate)
                 content = self._build_workbook(
                     await self.storage.read(template_file.storage_key),
                     mapping.sheet_name,

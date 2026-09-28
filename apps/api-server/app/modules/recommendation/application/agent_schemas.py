@@ -4,8 +4,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.modules.recommendation.schemas import ManualCheck
-
 MAX_RANKING_CANDIDATES = 30
 
 
@@ -26,6 +24,13 @@ class RequirementAnalysis(BaseModel):
     budget_min: Decimal | None = Field(default=None, ge=0)
     budget_max: Decimal | None = Field(default=None, ge=0)
     gross_margin_min: Decimal | None = Field(default=None, ge=0, le=1)
+    gross_margin_max: Decimal | None = Field(default=None, ge=0, le=1)
+    agreement_price_min: Decimal | None = Field(default=None, ge=0)
+    agreement_price_max: Decimal | None = Field(default=None, ge=0)
+    jd_price_min: Decimal | None = Field(default=None, ge=0)
+    jd_price_max: Decimal | None = Field(default=None, ge=0)
+    discount_rate_min: Decimal | None = Field(default=None, ge=0, le=1)
+    discount_rate_max: Decimal | None = Field(default=None, ge=0, le=1)
     constraints: list[str] = Field(default_factory=list, max_length=20)
     fulfillment_mode: str | None = Field(default=None, max_length=64)
     explicit_category_keywords: list[str] = Field(default_factory=list, max_length=20)
@@ -37,16 +42,21 @@ class RequirementAnalysis(BaseModel):
     promotion_preference: str | None = Field(default=None, max_length=64)
     demand_mode: str | None = Field(default=None, max_length=64)
     quantity: int | None = Field(default=None, ge=1)
-    manual_checks: list[ManualCheck] = Field(default_factory=list, max_length=20)
     needs_input: bool = False
     blocking_reasons: list[RequirementBlockingReason] = Field(default_factory=list, max_length=3)
     questions: list[str] = Field(default_factory=list, max_length=5)
 
     @model_validator(mode="after")
     def validate_budget(self) -> "RequirementAnalysis":
-        if self.budget_min is not None and self.budget_max is not None:
-            if self.budget_min > self.budget_max:
-                raise ValueError("budget_min cannot exceed budget_max")
+        for lower, upper, label in (
+            (self.budget_min, self.budget_max, "budget"),
+            (self.agreement_price_min, self.agreement_price_max, "agreement_price"),
+            (self.jd_price_min, self.jd_price_max, "jd_price"),
+            (self.discount_rate_min, self.discount_rate_max, "discount_rate"),
+            (self.gross_margin_min, self.gross_margin_max, "gross_margin"),
+        ):
+            if lower is not None and upper is not None and lower > upper:
+                raise ValueError(f"{label}_min cannot exceed {label}_max")
         if self.needs_input and not self.questions:
             raise ValueError("questions are required when needs_input is true")
         if self.needs_input and not self.blocking_reasons:
