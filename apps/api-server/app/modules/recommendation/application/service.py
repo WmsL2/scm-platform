@@ -375,7 +375,10 @@ class RecommendationService:
                 run_id, page=page_params.page, page_size=page_params.page_size
             )
             return RecommendationCandidatePageResponse(
-                items=[self._candidate_response(candidate, confirmation) for candidate, confirmation in rows],
+                items=[
+                    self._candidate_response(candidate, confirmation)
+                    for candidate, confirmation in rows
+                ],
                 total=total,
                 page=page_params.page,
                 page_size=page_params.page_size,
