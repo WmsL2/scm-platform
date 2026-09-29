@@ -11,6 +11,10 @@ Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Su
 
 > 2026-09-28：自由推品 Requirement V5 已在 `codex/feat/free-recommendation-brand-category` 实现：新 Run 保留 V4 数值硬条件全量召回，并且仅将客户以强制语气明确指定的品牌和类目作为筛选条件；Agent 为明确类目输出近义类目词以覆盖商品三级类目名称不完全一致的情形。场景、用途、数量、库存、物流和有效期仍忽略。无 Migration；后端 Ruff/Mypy/6 项推荐测试及前端类型检查/4 项工作台测试已通过，真实 DeepSeek 与浏览器验收待执行（ADR-0042）。
 
+> 2026-09-28：自由推品推荐模板映射已在 `codex/feat/recommendation-template-column-mapping` 调整为列号 V2：重复表头可按第 N 列分别映射，商品字段允许重复选择并写入多个模板列；旧版唯一表头映射仍兼容读取和导出。无 Migration、无新增权限；推荐模块后端 56 项测试、Ruff/Mypy、前端类型检查、工作台 Vitest 与生产构建均通过（ADR-0043）。
+
+> 2026-09-29：自由推品 Requirement V6 已在 `codex/feat/recommendation-template-column-mapping` 将“家电 250、厨具 135、日用 115”这类明确类目分配文本，以及“需要水杯、保温杯、随行杯”这类直接商品类目表达识别为类目硬筛选：仅类目名称进入语义匹配，所有符合硬条件及类目的商品都入池；数字不限制候选数量，也不是库存或下单数量。无 Migration、无新增权限；后端推荐模块 55 项测试、Ruff、Mypy 及前端类型检查、工作台 Vitest 6 项和生产构建均已通过（ADR-0044）；真实 DeepSeek 新 Run 与浏览器验收待执行。
+
 > 2026-09-28：类型4自由推品项目工作流第一版完成：项目状态按 `IMPORTED → MATCHING → SELECTING → READY → EXPORTED → SUBMITTED → WON / LOST` 推进，前三阶段由创建、Agent 执行与候选生成自动识别，后续由完成选品、导出、提交和人工登记结果推进。工作台改为 Agent 候选与人工选择左右双栏，支持增删、完成选品、返回调整、仅导出已选商品及中标/未中标登记；列表和详情统一状态颜色。无 Migration。
 
 > 2026-09-28：自由推品 V4 已在 `codex/fix/free-recommendation-hard-constraints` 实现（无 Migration）：新 Run 仅按协议价、明确京东价、折扣率、点位等数值硬条件全量召回；不再按场景/类目/数量/价格有效期筛选、不再选 1–5 个类目、不再限 30 条或生成逐条理由。候选 API 改为分页，Web 支持本页全选与全部待确认候选的服务端范围确认；评分显示商品主数据 `positive_rating`。后端推荐测试、前端类型检查和相关 Vitest 已通过；真实浏览器和真实 DeepSeek 新 Run 验收仍待执行。

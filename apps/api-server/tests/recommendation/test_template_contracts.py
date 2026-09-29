@@ -28,12 +28,14 @@ def test_template_analysis_only_maps_frozen_headers() -> None:
     assert analysis.header_row == 1
     assert analysis.data_start_row == 2
     assert analysis.mapping_json == {
-        "category_level1_name": "一级类目",
-        "brand": "品牌",
-        "profit": "毛利",
-        "factory_direct": "是否厂直",
+        "version": 2,
+        "columns": [
+            {"column_index": 1, "field_key": "category_level1_name"},
+            {"column_index": 2, "field_key": "brand"},
+            {"column_index": 3, "field_key": "profit"},
+            {"column_index": 4, "field_key": "factory_direct"},
+        ],
     }
-    assert "gross_margin" not in analysis.mapping_json
 
 
 def test_template_aliases_keep_profit_distinct_from_gross_margin() -> None:
@@ -43,18 +45,27 @@ def test_template_aliases_keep_profit_distinct_from_gross_margin() -> None:
         )
     )
     assert analysis.mapping_json == {
-        "product_name": "名称",
-        "agreement_price": "大客户协议价",
-        "profit": "毛利",
-        "gross_margin": "毛利率",
-        "purchasing_agent": "采销",
-        "supports_jd_or_sf": "是否支持京东或者顺丰物流",
+        "version": 2,
+        "columns": [
+            {"column_index": 1, "field_key": "product_name"},
+            {"column_index": 2, "field_key": "agreement_price"},
+            {"column_index": 3, "field_key": "profit"},
+            {"column_index": 4, "field_key": "gross_margin"},
+            {"column_index": 5, "field_key": "purchasing_agent"},
+            {"column_index": 6, "field_key": "supports_jd_or_sf"},
+        ],
     }
 
 
-def test_exact_header_wins_over_alias_without_silent_duplicate_target() -> None:
+def test_template_analysis_maps_each_column_even_when_a_field_repeats() -> None:
     analysis = analyze_template(_workbook_bytes(["名称", "商品名称"]))
-    assert analysis.mapping_json == {"product_name": "商品名称"}
+    assert analysis.mapping_json == {
+        "version": 2,
+        "columns": [
+            {"column_index": 1, "field_key": "product_name"},
+            {"column_index": 2, "field_key": "product_name"},
+        ],
+    }
 
 
 def test_mapping_contract_rejects_unknown_database_fields() -> None:
@@ -76,6 +87,28 @@ def test_mapping_contract_accepts_product_master_fields() -> None:
     )
 
     assert payload.mapping_json["company_name"] == "所属公司"
+
+
+def test_mapping_contract_accepts_duplicate_headers_and_repeated_source_field() -> None:
+    payload = RecommendationTemplateMappingUpdateRequest(
+        sheet_name="Sheet",
+        header_row=1,
+        data_start_row=2,
+        mapping_json={
+            "version": 2,
+            "columns": [
+                {"column_index": 8, "field_key": "purchasing_agent"},
+                {"column_index": 9, "field_key": "supplier_name"},
+                {"column_index": 16, "field_key": "purchasing_agent"},
+            ],
+        },
+    )
+
+    assert payload.mapping_json["columns"] == [
+        {"column_index": 8, "field_key": "purchasing_agent"},
+        {"column_index": 9, "field_key": "supplier_name"},
+        {"column_index": 16, "field_key": "purchasing_agent"},
+    ]
 
 
 def test_mapping_contract_rejects_empty_mapping_before_confirmation() -> None:
@@ -137,4 +170,23 @@ def test_mapping_contract_requires_existing_sheet_rows_and_headers() -> None:
         )
     validate_mapping_contract(
         content, sheet_name="Sheet", header_row=1, data_start_row=2, mapping_json={"brand": "品牌"}
+    )
+
+
+def test_column_mapping_contract_allows_duplicate_headers_by_physical_column() -> None:
+    content = _workbook_bytes(["采购", "供应商", "采购"])
+
+    validate_mapping_contract(
+        content,
+        sheet_name="Sheet",
+        header_row=1,
+        data_start_row=2,
+        mapping_json={
+            "version": 2,
+            "columns": [
+                {"column_index": 1, "field_key": "purchasing_agent"},
+                {"column_index": 2, "field_key": "supplier_name"},
+                {"column_index": 3, "field_key": "purchasing_agent"},
+            ],
+        },
     )

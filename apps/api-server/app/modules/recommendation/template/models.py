@@ -31,7 +31,7 @@ class RecommendationTemplateMapping(Base):
     sheet_name: Mapped[str] = mapped_column(String(128), nullable=False)
     header_row: Mapped[int] = mapped_column(Integer, nullable=False)
     data_start_row: Mapped[int] = mapped_column(Integer, nullable=False)
-    mapping_json: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
+    mapping_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
     confirmed_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

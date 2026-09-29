@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -41,18 +42,52 @@ class RecommendationRunStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+class RecommendationTemplateColumnMapping(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    column_index: int = Field(ge=1)
+    field_key: str = Field(min_length=1)
+
+    @field_validator("field_key")
+    @classmethod
+    def validate_field_key(cls, value: str) -> str:
+        if value not in RECOMMENDATION_MAPPING_FIELD_KEYS:
+            raise ValueError("RECOMMENDATION_TEMPLATE_MAPPING_INVALID")
+        return value
+
+
+class RecommendationTemplateColumnMappingDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[2]
+    columns: list[RecommendationTemplateColumnMapping] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_unique_columns(self) -> "RecommendationTemplateColumnMappingDocument":
+        indexes = [column.column_index for column in self.columns]
+        if len(indexes) != len(set(indexes)):
+            raise ValueError("RECOMMENDATION_TEMPLATE_MAPPING_INVALID")
+        return self
+
+
 class RecommendationTemplateMappingUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     sheet_name: str = Field(min_length=1, max_length=128)
     header_row: int = Field(ge=1)
     data_start_row: int = Field(ge=1)
-    mapping_json: dict[str, str] = Field(min_length=1)
+    mapping_json: dict[str, object] = Field(min_length=1)
 
     @field_validator("mapping_json")
     @classmethod
-    def validate_mapping(cls, value: dict[str, str]) -> dict[str, str]:
+    def validate_mapping(cls, value: dict[str, object]) -> dict[str, object]:
+        if value.get("version") == 2:
+            return RecommendationTemplateColumnMappingDocument.model_validate(value).model_dump(
+                mode="json"
+            )
         if any(
-            key not in RECOMMENDATION_MAPPING_FIELD_KEYS or not header.strip()
+            key not in RECOMMENDATION_MAPPING_FIELD_KEYS
+            or not isinstance(header, str)
+            or not header.strip()
             for key, header in value.items()
         ):
             raise ValueError("RECOMMENDATION_TEMPLATE_MAPPING_INVALID")
@@ -70,7 +105,7 @@ class RecommendationTemplateMappingResponse(BaseModel):
     sheet_name: str
     header_row: int
     data_start_row: int
-    mapping_json: dict[str, str]
+    mapping_json: dict[str, object]
     confirmed_by: UUID | None
     confirmed_at: datetime | None
 

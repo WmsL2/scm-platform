@@ -293,6 +293,24 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
             semantic_run.id, PageParams(page=1, page_size=50)
         )
         assert semantic_page.items[0].product_id == eligible_second.id  # type: ignore[union-attr]
+
+        # V6 treats an explicit “category + quantity” allocation phrase as a
+        # category requirement, but does not use its numbers as candidate limits.
+        allocation_category_run = await service.create_run(project.id, actor_id)
+        await service.save_parsed_requirement(
+            allocation_category_run.id,
+            ParsedRequirement(
+                requirement_version="v6",
+                explicit_category_keywords=["家电", "厨具", "日用"],
+                category_intents=["坚果"],
+                discount_rate_max=Decimal("0.8"),
+                gross_margin_min=Decimal("0.06"),
+            ),
+            provider="deepseek",
+            model="deepseek-chat",
+            prompt_version="free-v6",
+        )
+        assert await service.persist_all_eligible_candidates(allocation_category_run.id) == 2
         assert (await session.get(RecommendationCandidate, saved[0].id)) is not None
         await session.rollback()
 

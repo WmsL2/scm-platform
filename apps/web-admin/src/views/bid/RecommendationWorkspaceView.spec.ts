@@ -51,8 +51,8 @@ describe("RecommendationWorkspaceView", () => {
   it("renders core price fields and explains the hard-filter boundary", async () => {
     const wrapper = await mountWorkspace()
     expect(wrapper.text()).toContain("筛选：协议价")
-    expect(wrapper.text()).toContain("客户明确指定的品牌、类目筛选")
-    expect(wrapper.text()).toContain("场景、用途、数量、有效期不参与筛选")
+    expect(wrapper.text()).toContain("明确品牌、类目筛选")
+    expect(wrapper.text()).toContain("场景、用途、数量、库存、物流、有效期不参与筛选")
     expect(wrapper.text()).toContain("筛选：指定品牌")
     expect(wrapper.text()).toContain("筛选：指定类目")
     expect(wrapper.text()).toContain("折扣率")
@@ -80,5 +80,19 @@ describe("RecommendationWorkspaceView", () => {
     expect(source).not.toContain("updateManualChecks")
     expect(source).not.toContain("manualChecksPassed")
     expect(source).toContain("confirmMany")
+  })
+
+  it("allows duplicate template headers and repeated product source fields", () => {
+    expect(source).toContain('version: 2')
+    expect(source).toContain('column_index: column.column_index')
+    expect(source).not.toContain("mappingFieldUsed")
+    expect(source).not.toContain(':disabled="column.duplicate"')
+    expect(source).toContain("重复表头，按第")
+  })
+
+  it("uses an allocation-style category phrase as a category filter, not a quantity plan", () => {
+    expect(source).toContain("specifiedCategoryText")
+    expect(source).not.toContain("推品配额计划")
+    expect(source).not.toContain("开放池")
   })
 })
