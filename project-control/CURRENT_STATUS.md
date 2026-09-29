@@ -3,7 +3,9 @@
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
-日期：2026-09-28
+日期：2026-09-29
+
+> 2026-09-29：工作区标签拖拽已调整为浏览器式标签栏交互：完整标签预览的纵向位置固定在标签栏，横向坐标受标签栏左右边界约束；鼠标移出标签栏后仍可继续按横向位置换位，原标签位仅保留浅色虚线占位，避免拖到页面内容区出现孤立蓝框。无 Migration、API 或权限变化；前端类型检查、全量 Vitest（165 项）及生产构建已通过。
 
 > 2026-09-28：类型 5 PPT 方案首版已在 `feat/ppt-solution-kimi-workflow` 实现：Kimi 对甲方需求做语义选品，人工确认商品并可组合价格档位套装，有客户 PPTX 模板则优先使用，无模板则使用系统默认商务版式，最终生成可编辑 PPTX。Revision `20260928_0041` 新增套装和 PPT 生成任务表；真实 Kimi Hosted Agent 凭据、商品图片资源上传及正式后台队列仍待联调。
 

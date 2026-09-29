@@ -2,7 +2,7 @@
 
 状态：FOUNDATION_COMPLETED / BUSINESS_SEQUENCE_IMPLEMENTED
 Owner：Sprint 0 / Sprint 0.5 / 人员 A
-Last Updated：2026-09-24（工作区标签拖拽排序）
+Last Updated：2026-09-29（工作区标签栏内浏览器式拖拽）
 
 ## Database
 - [x] Alembic Async 基线 Revision（无业务表）
@@ -19,7 +19,7 @@ Last Updated：2026-09-24（工作区标签拖拽排序）
 ## Frontend
 - [x] Vue 管理后台壳层、路由和 404
 - [x] 登录页、认证状态、路由守卫、403、工作区 Tab 和统一 HTTP 错误处理（实现分支：`feat/web-admin-auth-shell`）
-- [x] 工作区 Tab 基于 SortableJS 支持横向拖拽排序；fallback 浮层避免浏览器原生禁止标志，顺序保存在当前浏览器，刷新、关闭后重新打开或重新登录仍按用户偏好排列
+- [x] 工作区 Tab 使用 Pointer Event 支持浏览器式横向拖拽排序；完整标签预览始终锁定在标签栏高度，鼠标移出标签栏后仍可按横向位置换位，顺序保存在当前浏览器，刷新、关闭后重新打开或重新登录仍按用户偏好排列
 
 ## Permissions
 - [x] Auth/RBAC 权限依赖已通过 PR #6 合入；前端 Route Meta 只负责交互控制，后端权限依赖仍是安全边界
