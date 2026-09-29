@@ -17,8 +17,8 @@ const candidate = {
   id: "candidate-1", product_id: "product-1", rank: 1, score: "90", reason: "适合活动场景",
   // A historical pending flag must be ignored by the new UI flow.
   manual_flags: { checks: [{ code: "DROP_SHIPPING", required: true, status: "PENDING" }] },
-  product_snapshot: { product_name: "测试商品", brand: "品牌" }, supplier_snapshot: {},
-  price_snapshot: { agreement_price: "99", discount_rate: "0.75", gross_margin: "0.06" }, factory_direct: null, confirmation: null,
+  product_snapshot: { product_name: "测试商品", sku: "TEST-SKU-01", brand: "品牌", category_level3_name: "保温杯" }, supplier_snapshot: {},
+  price_snapshot: { jd_price: "120", agreement_price: "99", discount_rate: "0.75", gross_margin: "0.06" }, factory_direct: null, confirmation: null,
 }
 
 function configure() {
@@ -45,7 +45,10 @@ async function mountWorkspace() {
   return wrapper
 }
 
-afterEach(() => vi.clearAllMocks())
+afterEach(() => {
+  vi.clearAllMocks()
+  localStorage.clear()
+})
 
 describe("RecommendationWorkspaceView", () => {
   it("renders core price fields and explains the hard-filter boundary", async () => {
@@ -57,6 +60,10 @@ describe("RecommendationWorkspaceView", () => {
     expect(wrapper.text()).toContain("筛选：指定类目")
     expect(wrapper.text()).toContain("折扣率")
     expect(wrapper.text()).toContain("毛利率")
+    expect(wrapper.text()).toContain("SKU")
+    expect(wrapper.text()).toContain("三级类目")
+    expect(wrapper.text()).toContain("京东价")
+    expect(wrapper.text()).toContain("¥ 99.00")
     expect(wrapper.text()).not.toContain("人工核验")
   })
 
@@ -94,5 +101,13 @@ describe("RecommendationWorkspaceView", () => {
     expect(source).toContain("specifiedCategoryText")
     expect(source).not.toContain("推品配额计划")
     expect(source).not.toContain("开放池")
+  })
+
+  it("uses product-master style fixed columns and a local display-column selector", () => {
+    expect(source).toContain("商品图片、SKU、商品名称固定为前 3 列")
+    expect(source).toContain("自定义显示列")
+    expect(source).toContain("scm.recommendation-candidates.visible-columns.v1")
+    expect(source).toContain("candidateImageUrl")
+    expect(source).toContain("moneyValue")
   })
 })
