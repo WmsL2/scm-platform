@@ -90,6 +90,14 @@ class CategoryChoiceList(BaseModel):
     choices: list[CategoryChoice] = Field(min_length=1, max_length=5)
 
 
+class CategoryCatalogMatch(BaseModel):
+    """The model may only return keys issued in the category catalogue snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    category_keys: list[str] = Field(default_factory=list, max_length=5000)
+
+
 class ProductSearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

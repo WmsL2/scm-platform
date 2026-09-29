@@ -9,7 +9,7 @@ import pytest
 from app.modules.recommendation.application.agent_schemas import RequirementAnalysis
 from app.modules.recommendation.application.agent_service_adapter import RecommendationServiceTools
 from app.modules.recommendation.application.service import RecommendationService
-from app.modules.recommendation.schemas import ParsedRequirement
+from app.modules.recommendation.schemas import CategoryCatalogSnapshot, ParsedRequirement
 
 
 class _ServiceStub:
@@ -23,6 +23,9 @@ class _ServiceStub:
         self, _: object, requirement: ParsedRequirement, **__: str
     ) -> None:
         self.requirement = requirement
+
+    async def create_category_catalog_snapshot(self, _: object) -> CategoryCatalogSnapshot:
+        return CategoryCatalogSnapshot(generated_at="2026-09-29T00:00:00Z", items=[])
 
 
 @pytest.mark.asyncio
@@ -53,8 +56,8 @@ async def test_default_budget_maps_to_agreement_price_and_explicit_jd_stays_jd()
     assert stub.requirement.jd_price_max == Decimal("300")
     assert stub.requirement.gross_margin_min == Decimal("0.06")
     assert stub.requirement.discount_rate_max == Decimal("0.8")
-    assert stub.requirement.requirement_version == "v6"
+    assert stub.requirement.requirement_version == "v8"
     assert stub.requirement.required_brands == ["测试品牌"]
     assert stub.requirement.explicit_category_keywords == ["家电", "厨具", "日用"]
-    assert stub.requirement.category_intents == ["家电", "生活电器", "厨具", "厨房用品", "日用"]
+    assert stub.requirement.category_intents == []
     assert stub.requirement.total_quota is None

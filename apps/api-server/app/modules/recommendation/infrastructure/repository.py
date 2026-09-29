@@ -15,6 +15,7 @@ from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.recommendation.infrastructure.models import (
     RecommendationCandidate,
+    RecommendationCategoryChoice,
     RecommendationConfirmation,
     RecommendationExport,
     RecommendationRun,
@@ -129,7 +130,11 @@ class RecommendationRepository:
         )
 
     async def category_pool(
-        self, requirement: ParsedRequirement, keywords: Sequence[str] = ()
+        self,
+        requirement: ParsedRequirement,
+        keywords: Sequence[str] = (),
+        *,
+        include_category_terms: bool = True,
     ) -> list[tuple[CategoryPath, int]]:
         statement = (
             select(
@@ -140,7 +145,11 @@ class RecommendationRepository:
             )
             .select_from(Product)
             .join(Supplier, Product.source_supplier_id == Supplier.id)
-            .where(*self._eligibility_filters(requirement))
+            .where(
+                *self._eligibility_filters(
+                    requirement, include_category_terms=include_category_terms
+                )
+            )
             .where(Product.category_level3_name.is_not(None))
             .group_by(
                 Product.category_level1_name,
@@ -154,7 +163,6 @@ class RecommendationRepository:
                 Product.category_level2_name,
                 Product.category_level3_name,
             )
-            .limit(160)
         )
         rows = (await self.session.execute(statement)).all()
         return [
@@ -255,15 +263,28 @@ class RecommendationRepository:
         return [(row[0], row[1]) for row in rows]
 
     async def all_eligible_products(
-        self, requirement: ParsedRequirement
+        self, requirement: ParsedRequirement, category_paths: Sequence[CategoryPath] = ()
     ) -> list[tuple[Product, Supplier]]:
         """Return the complete Type-4 hard-condition result set in a stable order."""
-        rows = await self.session.execute(
+        statement = (
             select(Product, Supplier)
             .join(Supplier, Product.source_supplier_id == Supplier.id)
             .where(*self._eligibility_filters(requirement))
             .order_by(Product.positive_rating.desc(), Product.id)
         )
+        if category_paths:
+            path_conditions = []
+            for path in category_paths:
+                parts = []
+                if path.level1_name:
+                    parts.append(Product.category_level1_name == path.level1_name)
+                if path.level2_name:
+                    parts.append(Product.category_level2_name == path.level2_name)
+                if path.level3_name:
+                    parts.append(Product.category_level3_name == path.level3_name)
+                path_conditions.append(and_(*parts))
+            statement = statement.where(or_(*path_conditions))
+        rows = await self.session.execute(statement)
         return [(row[0], row[1]) for row in rows]
 
     async def candidates(
@@ -279,6 +300,20 @@ class RecommendationRepository:
             .order_by(RecommendationCandidate.rank)
         )
         return [(row[0], row[1]) for row in rows]
+
+    async def category_choices(self, run_id: uuid.UUID) -> list[RecommendationCategoryChoice]:
+        return list(
+            (
+                await self.session.scalars(
+                    select(RecommendationCategoryChoice)
+                    .where(RecommendationCategoryChoice.run_id == run_id)
+                    .order_by(
+                        RecommendationCategoryChoice.created_at,
+                        RecommendationCategoryChoice.id,
+                    )
+                )
+            ).all()
+        )
 
     async def candidate_page(
         self, run_id: uuid.UUID, *, page: int, page_size: int
@@ -423,7 +458,9 @@ class RecommendationRepository:
         )
 
     @staticmethod
-    def _eligibility_filters(requirement: ParsedRequirement) -> list[ColumnElement[bool]]:
+    def _eligibility_filters(
+        requirement: ParsedRequirement, *, include_category_terms: bool = True
+    ) -> list[ColumnElement[bool]]:
         filters: list[ColumnElement[bool]] = [
             Product.status == ProductStatus.ACTIVE,
             Supplier.archive_status == ArchiveStatus.ARCHIVED,
@@ -446,7 +483,10 @@ class RecommendationRepository:
             filters.append(Product.discount_rate >= requirement.discount_rate_min)
         if requirement.discount_rate_max is not None:
             filters.append(Product.discount_rate <= requirement.discount_rate_max)
-        if requirement.requirement_version in {"v5", "v6"}:
+        if requirement.requirement_version in {"v7", "v8"}:
+            # V7/V8 use only server-issued category nodes supplied separately.
+            category_terms: Sequence[str] = ()
+        elif requirement.requirement_version in {"v5", "v6"}:
             category_terms = requirement.category_intents or requirement.explicit_category_keywords
             # Keep the short-lived V6 quota document readable: its category terms
             # are now ordinary hard category filters and its numbers are ignored.
@@ -458,7 +498,7 @@ class RecommendationRepository:
                 ]
         else:
             category_terms = requirement.explicit_category_keywords or requirement.category_keywords
-        if category_terms:
+        if include_category_terms and category_terms:
             filters.append(
                 or_(
                     *[

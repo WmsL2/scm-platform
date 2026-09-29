@@ -16,6 +16,7 @@ interface CoreRun {
   status: RecommendationRunStatus
   raw_requirement_snapshot: string
   parsed_requirement: ParsedRequirement | null
+  category_catalog_snapshot?: RecommendationRun["category_catalog_snapshot"]
   provider: string | null
   model: string | null
   prompt_version: string | null

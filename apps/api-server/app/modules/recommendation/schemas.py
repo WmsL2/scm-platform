@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -120,6 +121,7 @@ class RecommendationRunResponse(BaseModel):
     status: RecommendationRunStatus
     raw_requirement_snapshot: str
     parsed_requirement: ParsedRequirement | None
+    category_catalog_snapshot: CategoryCatalogSnapshot | None = None
     provider: str | None
     model: str | None
     prompt_version: str | None
@@ -145,6 +147,20 @@ class CategoryPath(BaseModel):
 
 class CategoryPoolItem(CategoryPath):
     candidate_count: int = Field(ge=0)
+
+
+class CategoryCatalogItem(CategoryPoolItem):
+    """One server-issued category key that an Agent may select for this Run."""
+
+    category_key: str = Field(min_length=1, max_length=32)
+    level: Literal["LEVEL1", "LEVEL2", "LEVEL3"] = "LEVEL3"
+
+
+class CategoryCatalogSnapshot(BaseModel):
+    """Immutable database-backed category catalogue supplied to the Agent."""
+
+    generated_at: datetime
+    items: list[CategoryCatalogItem] = Field(default_factory=list)
 
 
 class CategoryChoiceInput(CategoryPath):

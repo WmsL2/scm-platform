@@ -50,6 +50,9 @@ class RecommendationRun(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     raw_requirement_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
     parsed_requirement: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    category_catalog_snapshot: Mapped[dict[str, object] | None] = mapped_column(
+        JSON, nullable=True
+    )
     provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     prompt_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
