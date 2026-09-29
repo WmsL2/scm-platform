@@ -3,7 +3,9 @@
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
-日期：2026-09-28
+日期：2026-09-29
+
+> 2026-09-29：工作区标签拖拽已调整为浏览器式标签栏交互：完整标签预览的纵向位置固定在标签栏，横向坐标受标签栏左右边界约束；鼠标移出标签栏后仍可继续按横向位置换位，原标签位仅保留浅色虚线占位，避免拖到页面内容区出现孤立蓝框。无 Migration、API 或权限变化；前端类型检查、全量 Vitest（165 项）及生产构建已通过。
 
 > 2026-09-29：自由推品 Requirement V8 已在 `codex/feat/recommendation-category-catalog-snapshot` 实现：需求解析仅保留客户明确类目原词，后端按正式可推荐商品、供应商状态及非类目硬条件生成并冻结一级、二级、三级类目树 JSON 快照，AI 只能返回其中存在的 key；选一级展开所有下级、选二级展开所有三级路径、选三级精确筛选。未知 key 被拒绝，明确类目无匹配不回退全库。Revision `20260929_0042` 新增 Run 快照 JSON 列。后端推荐核心/Agent/适配测试以及 Ruff、Mypy 已通过；前端类型检查、生产构建、真实 DeepSeek 新 Run 与浏览器验收待执行（ADR-0045）。
 
