@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Protocol, TypeVar
+from typing import Protocol, TypeVar, cast
 
 from pydantic import BaseModel
 
@@ -10,8 +10,10 @@ from app.integrations.deepseek.client import (
 )
 from app.modules.recommendation.application.agent_schemas import (
     AgentRecommendationResult,
+    CategoryCatalogMatch,
     RequirementAnalysis,
 )
+from app.modules.recommendation.schemas import CategoryCatalogSnapshot
 
 ProgressReporter = Callable[[str, int, str], Awaitable[None]]
 CancellationChecker = Callable[[], Awaitable[bool]]
@@ -39,7 +41,13 @@ class StructuredProvider(Protocol):
 
 
 class RecommendationTools(Protocol):
-    async def prepare(self, analysis: RequirementAnalysis) -> None: ...
+    async def prepare(self, analysis: RequirementAnalysis) -> object: ...
+
+
+class CategoryCatalogTools(RecommendationTools, Protocol):
+    async def prepare(self, analysis: RequirementAnalysis) -> CategoryCatalogSnapshot: ...
+
+    async def record_catalog_category_matches(self, category_keys: list[str]) -> None: ...
 
 
 class RecommendationAgentCancelled(RuntimeError):
@@ -82,12 +90,11 @@ class AgentRunner:
                 "客户使用“必须、仅限、指定、只要”等强制语气；客户直接以“需要、要、采购、推品、需求”等"
                 "表达提出具体商品类型；客户在“类目 + 数量”分配中明确列出类目。"
                 "例如“需要水杯、保温杯、随行杯”必须提取这些类目，而“适合出游、送礼、员工福利”不是类目。"
-                "同时将每个类目的原词和同义、近义商品类目词填入"
-                " category_intents（包含原词，最多 8 个），"
-                "例如水杯可补充杯具、水具、保温杯、随行杯，用于匹配商品三级类目名称不同但语义相近的情况。"
+                "category_intents 必须返回空数组；不得猜测或生成同义、近义类目词。"
+                "类目与真实商品库类目的语义匹配会在后续受控类目清单中单独完成。"
                 "若需求以“家电250个、厨具135个、日用115个”这类方式明确给出“类目 + 数量”分配，"
                 "即使没有“必须、仅限”，其中每个类目也属于明确类目要求：必须写入"
-                " explicit_category_keywords，并将原词和同义近义词写入 category_intents。"
+                " explicit_category_keywords，category_intents 仍必须为空数组。"
                 "数字只是业务背景，不是库存、采购下单数量或候选数量上限；不得生成总名额、配额、开放池或"
                 "任何数量筛选。"
                 "场景、用途、主题、节日、物流、库存、资质、数量、价格有效期、厂直、销量、评分和卖点"
@@ -118,7 +125,32 @@ class AgentRunner:
                 tool_call_count=self._tool_calls,
             )
 
-        await self.tools.prepare(analysis)
+        catalog_tools = cast(CategoryCatalogTools, self.tools)
+        category_catalog = await catalog_tools.prepare(analysis)
+        if analysis.explicit_category_keywords:
+            await self._report(report_progress, "MATCHING_CATEGORIES", 45, "正在匹配商品库真实类目")
+            category_match = await self._complete(
+                CategoryCatalogMatch,
+                system=(
+                    "你是受控商品类目匹配器。你只能从用户消息中的 category_catalog.items 返回"
+                    " category_key，绝不能输出任何清单之外的 key 或自行发明类目名称。"
+                    "清单同时包含 LEVEL1、LEVEL2、LEVEL3 节点。客户提出宽泛一级类目时，"
+                    "优先选择对应 LEVEL1；提出二级类目时优先选择对应 LEVEL2；"
+                    "只有客户明确到具体三级类目时才选择 LEVEL3。选中父级后服务端会自动展开"
+                    "其下全部真实三级路径，因此不得只挑其中少数叶子路径。"
+                    "只选择与客户明确类目原词完全一致、同义或明确上下级对应的真实节点；"
+                    "场景、送礼、用途、人群、节日等宽泛关联不算类目匹配。"
+                    "客户明确提出类目但清单中没有语义相关项时，返回空 category_keys。"
+                    "必须尽可能选全有直接关系的路径，不能因 candidate_count 大小擅自省略。"
+                    "严格返回符合 JSON Schema 的对象。"
+                ),
+                user=(
+                    f"客户需求：{requirement}\n\n"
+                    "category_catalog（服务器从当前可推荐商品生成的唯一可选清单）：\n"
+                    f"{category_catalog.model_dump_json()}"
+                ),
+            )
+            await catalog_tools.record_catalog_category_matches(category_match.category_keys)
         await self._check_cancelled(is_cancelled)
         await self._report(report_progress, "RETRIEVING", 60, "正在按硬条件检索全部可用商品")
         await self._report(report_progress, "CANDIDATES_READY", 100, "候选商品硬条件筛选完成")

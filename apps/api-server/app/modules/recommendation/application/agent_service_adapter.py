@@ -1,16 +1,16 @@
 from uuid import UUID
 
-from app.modules.recommendation.application.agent_runner import RecommendationTools
+from app.modules.recommendation.application.agent_runner import CategoryCatalogTools
 from app.modules.recommendation.application.agent_schemas import (
     AgentRecommendationResult,
     RequirementAnalysis,
 )
 from app.modules.recommendation.application.service import RecommendationService
-from app.modules.recommendation.schemas import ParsedRequirement
+from app.modules.recommendation.schemas import CategoryCatalogSnapshot, ParsedRequirement
 from app.modules.recommendation.template.schemas import RecommendationRunStatus
 
 
-class RecommendationServiceTools(RecommendationTools):
+class RecommendationServiceTools(CategoryCatalogTools):
     """C Agent tools implemented only through B's public application service."""
 
     def __init__(
@@ -28,12 +28,12 @@ class RecommendationServiceTools(RecommendationTools):
         self.model = model
         self.prompt_version = prompt_version
 
-    async def prepare(self, analysis: RequirementAnalysis) -> None:
+    async def prepare(self, analysis: RequirementAnalysis) -> CategoryCatalogSnapshot:
         await self.service.begin_analysis(self.run_id)
         await self.service.save_parsed_requirement(
             self.run_id,
             ParsedRequirement(
-                requirement_version="v6",
+                requirement_version="v8",
                 gross_margin_min=analysis.gross_margin_min,
                 gross_margin_max=analysis.gross_margin_max,
                 agreement_price_min=analysis.agreement_price_min or analysis.budget_min,
@@ -45,14 +45,17 @@ class RecommendationServiceTools(RecommendationTools):
                 # Only explicitly mandatory brand/category requirements are filters.
                 required_brands=analysis.required_brands,
                 explicit_category_keywords=analysis.explicit_category_keywords,
-                category_intents=(
-                    analysis.category_intents if analysis.explicit_category_keywords else []
-                ),
+                # V7 never lets model-generated synonyms reach the SQL query.
+                category_intents=[],
             ),
             provider=self.provider,
             model=self.model,
             prompt_version=self.prompt_version,
         )
+        return await self.service.create_category_catalog_snapshot(self.run_id)
+
+    async def record_catalog_category_matches(self, category_keys: list[str]) -> None:
+        await self.service.record_catalog_category_matches(self.run_id, category_keys)
 
 
 class RecommendationServiceJobPort:

@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-09-28
 
+> 2026-09-29：自由推品 Requirement V8 已在 `codex/feat/recommendation-category-catalog-snapshot` 实现：需求解析仅保留客户明确类目原词，后端按正式可推荐商品、供应商状态及非类目硬条件生成并冻结一级、二级、三级类目树 JSON 快照，AI 只能返回其中存在的 key；选一级展开所有下级、选二级展开所有三级路径、选三级精确筛选。未知 key 被拒绝，明确类目无匹配不回退全库。Revision `20260929_0042` 新增 Run 快照 JSON 列。后端推荐核心/Agent/适配测试以及 Ruff、Mypy 已通过；前端类型检查、生产构建、真实 DeepSeek 新 Run 与浏览器验收待执行（ADR-0045）。
+
 > 2026-09-28：类型 5 PPT 方案首版已在 `feat/ppt-solution-kimi-workflow` 实现：Kimi 对甲方需求做语义选品，人工确认商品并可组合价格档位套装，有客户 PPTX 模板则优先使用，无模板则使用系统默认商务版式，最终生成可编辑 PPTX。Revision `20260928_0041` 新增套装和 PPT 生成任务表；真实 Kimi Hosted Agent 凭据、商品图片资源上传及正式后台队列仍待联调。
 
 > 2026-09-28：修复商品详情编辑的百分比浮点精度问题。京东价毛利、扣点复核、毛利率、好评率、折扣率和价格虚高比例改用十进制字符串移位，数据库 `0.1970` 精确显示为 `19.70%` 并按 `0.1970` 回传，避免完整编辑请求因 JavaScript 浮点长尾触发 422。无 Migration、API 或权限变化。

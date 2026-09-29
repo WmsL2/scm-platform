@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.common.contracts import PageParams
+from app.common.contracts import AppError, PageParams
 from app.core.database import SessionLocal
 from app.modules.bid.domain.lifecycle import (
     BidFileType,
@@ -311,6 +311,41 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
             prompt_version="free-v6",
         )
         assert await service.persist_all_eligible_candidates(allocation_category_run.id) == 2
+
+        # V8 freezes all currently eligible category-tree nodes without applying
+        # model-generated words.  Selecting a server-issued LEVEL1 key expands every
+        # eligible descendant path deterministically.
+        catalog_run = await service.create_run(project.id, actor_id)
+        await service.save_parsed_requirement(
+            catalog_run.id,
+            ParsedRequirement(
+                requirement_version="v8",
+                explicit_category_keywords=["出行用品"],
+                discount_rate_max=Decimal("0.8"),
+                gross_margin_min=Decimal("0.06"),
+            ),
+            provider="deepseek",
+            model="deepseek-chat",
+                prompt_version="free-v8",
+        )
+        snapshot = await service.create_category_catalog_snapshot(catalog_run.id)
+        assert (await service.get_run(catalog_run.id)).category_catalog_snapshot == snapshot
+        selected_item = next(
+            item
+            for item in snapshot.items
+            if item.level1_name == "食品饮料"
+            and item.level == "LEVEL1"
+        )
+        assert selected_item.candidate_count >= 2
+        await service.record_catalog_category_matches(
+            catalog_run.id, [selected_item.category_key]
+        )
+        assert (
+            await service.persist_all_eligible_candidates(catalog_run.id)
+            == selected_item.candidate_count
+        )
+        with pytest.raises(AppError, match="真实类目清单之外"):
+            await service.record_catalog_category_matches(catalog_run.id, ["invented-key"])
         assert (await session.get(RecommendationCandidate, saved[0].id)) is not None
         await session.rollback()
 

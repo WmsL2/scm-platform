@@ -598,6 +598,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
         <el-descriptions-item label="筛选：折扣率 / 毛利率">{{ run.parsed_requirement.discount_rate_min ?? '不限' }} ～ {{ run.parsed_requirement.discount_rate_max ?? '不限' }} / {{ ratioValue(run.parsed_requirement.gross_margin_min, '不限') }} ～ {{ ratioValue(run.parsed_requirement.gross_margin_max, '不限') }}</el-descriptions-item>
         <el-descriptions-item label="筛选：指定品牌">{{ run.parsed_requirement.required_brands?.join('、') || '不限' }}</el-descriptions-item>
         <el-descriptions-item label="筛选：指定类目">{{ specifiedCategoryText() }}</el-descriptions-item>
+        <el-descriptions-item v-if="run.category_catalog_snapshot" label="真实类目清单">本次已冻结 {{ run.category_catalog_snapshot.items.length }} 条商品库三级类目路径</el-descriptions-item>
       </el-descriptions>
       <el-descriptions v-else title="本次 Agent 实际读取的需求" :column="1" border>
         <el-descriptions-item label="需求快照">{{ run.raw_requirement_snapshot }}</el-descriptions-item>
