@@ -9,7 +9,11 @@ from app.modules.recommendation.application.agent_runner import (
     AgentRunner,
     RecommendationAgentCancelled,
 )
-from app.modules.recommendation.application.agent_schemas import RequirementAnalysis
+from app.modules.recommendation.application.agent_schemas import (
+    CategoryCatalogMatch,
+    RequirementAnalysis,
+)
+from app.modules.recommendation.schemas import CategoryCatalogSnapshot
 
 
 class FakeProvider:
@@ -32,9 +36,25 @@ class FakeProvider:
 class FakeTools:
     def __init__(self) -> None:
         self.prepared: RequirementAnalysis | None = None
+        self.catalog_matches: list[str] | None = None
 
-    async def prepare(self, analysis: RequirementAnalysis) -> None:
+    async def prepare(self, analysis: RequirementAnalysis) -> CategoryCatalogSnapshot:
         self.prepared = analysis
+        return CategoryCatalogSnapshot(
+            generated_at="2026-09-29T00:00:00Z",
+            items=[
+                {
+                    "category_key": "c1",
+                    "level1_name": "家居日用",
+                    "level2_name": "水具酒具",
+                    "level3_name": "保温杯",
+                    "candidate_count": 4,
+                }
+            ],
+        )
+
+    async def record_catalog_category_matches(self, category_keys: list[str]) -> None:
+        self.catalog_matches = category_keys
 
 
 @pytest.mark.asyncio
@@ -49,7 +69,7 @@ async def test_agent_parses_numeric_and_explicit_brand_category_constraints() ->
         quantity=1,
         discount_rate_max="0.9",
     )
-    provider = FakeProvider([analysis])
+    provider = FakeProvider([analysis, CategoryCatalogMatch(category_keys=["c1"])])
     tools = FakeTools()
 
     result = await AgentRunner(provider, tools).run(
@@ -60,11 +80,13 @@ async def test_agent_parses_numeric_and_explicit_brand_category_constraints() ->
     assert result.category_choices == []
     assert result.tool_call_count == 0
     assert tools.prepared is analysis
+    assert tools.catalog_matches == ["c1"]
     assert "required_brands" in provider.system_prompts[0]
-    assert "category_intents" in provider.system_prompts[0]
+    assert "category_intents 必须返回空数组" in provider.system_prompts[0]
     assert "需要水杯、保温杯、随行杯" in provider.system_prompts[0]
     assert "类目 + 数量" in provider.system_prompts[0]
     assert "discount_rate_max=0.9" in provider.system_prompts[0]
+    assert "category_catalog.items" in provider.system_prompts[1]
 
 
 @pytest.mark.asyncio

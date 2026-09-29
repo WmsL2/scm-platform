@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Literal, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +32,8 @@ from app.modules.recommendation.schemas import (
     BatchConfirmationRequest,
     BatchConfirmationResult,
     CandidateRankInput,
+    CategoryCatalogItem,
+    CategoryCatalogSnapshot,
     CategoryChoiceInput,
     CategoryPath,
     CategoryPoolItem,
@@ -192,6 +195,96 @@ class RecommendationService:
             )
         ]
 
+    async def create_category_catalog_snapshot(
+        self, run_id: uuid.UUID
+    ) -> CategoryCatalogSnapshot:
+        """Freeze actual selectable category-tree nodes before the model maps request terms."""
+        async with transaction_scope(self.session):
+            run = await self._run_or_404_for_update(run_id)
+            requirement = self._parsed_requirement(run)
+            paths = await self.repository.category_pool(
+                requirement,
+                include_category_terms=False,
+            )
+            category_nodes: dict[tuple[str | None, str | None, str | None, str], int] = {}
+            for path, count in paths:
+                for raw_level, node_path in (
+                    ("LEVEL1", (path.level1_name, None, None)),
+                    ("LEVEL2", (path.level1_name, path.level2_name, None)),
+                    ("LEVEL3", (path.level1_name, path.level2_name, path.level3_name)),
+                ):
+                    if not any(node_path):
+                        continue
+                    level = cast(Literal["LEVEL1", "LEVEL2", "LEVEL3"], raw_level)
+                    key = (*node_path, level)
+                    category_nodes[key] = category_nodes.get(key, 0) + count
+            level_order = {"LEVEL1": 1, "LEVEL2": 2, "LEVEL3": 3}
+            ordered_nodes = sorted(
+                category_nodes.items(),
+                key=lambda item: (
+                    level_order[item[0][3]],
+                    item[0][0] or "",
+                    item[0][1] or "",
+                    item[0][2] or "",
+                ),
+            )
+            snapshot = CategoryCatalogSnapshot(
+                generated_at=datetime.now(UTC),
+                items=[
+                    CategoryCatalogItem(
+                        category_key=f"c{index}",
+                        level1_name=node[0],
+                        level2_name=node[1],
+                        level3_name=node[2],
+                        level=cast(Literal["LEVEL1", "LEVEL2", "LEVEL3"], node[3]),
+                        candidate_count=count,
+                    )
+                    for index, (node, count) in enumerate(ordered_nodes, start=1)
+                ],
+            )
+            run.category_catalog_snapshot = snapshot.model_dump(mode="json")
+        return snapshot
+
+    async def record_catalog_category_matches(
+        self, run_id: uuid.UUID, category_keys: list[str]
+    ) -> None:
+        """Persist only category paths selected from this Run's immutable server catalogue."""
+        async with transaction_scope(self.session):
+            run = await self._run_or_404_for_update(run_id)
+            snapshot = self._category_catalog_snapshot(run)
+            items_by_key = {item.category_key: item for item in snapshot.items}
+            normalized_keys = list(
+                dict.fromkeys(key.strip() for key in category_keys if key.strip())
+            )
+            unknown_keys = [key for key in normalized_keys if key not in items_by_key]
+            if unknown_keys:
+                raise AppError(
+                    "RECOMMENDATION_CATEGORY_CATALOG_KEY_INVALID",
+                    "Agent 返回了本次真实类目清单之外的类目",
+                    422,
+                )
+            existing = await self.repository.category_choices(run_id)
+            if existing:
+                raise AppError(
+                    "RECOMMENDATION_CATEGORY_CHOICES_ALREADY_RECORDED",
+                    "本次推品的类目匹配结果已经冻结",
+                    409,
+                )
+            self.session.add_all(
+                [
+                    RecommendationCategoryChoice(
+                        run_id=run.id,
+                        level1_name=item.level1_name,
+                        level2_name=item.level2_name,
+                        level3_name=item.level3_name,
+                        source="AI_CATALOG_MATCH",
+                        candidate_count=item.candidate_count,
+                    )
+                    for key in normalized_keys
+                    for item in [items_by_key[key]]
+                ]
+            )
+
     async def record_category_choices(
         self, run_id: uuid.UUID, choices: list[CategoryChoiceInput]
     ) -> None:
@@ -303,7 +396,27 @@ class RecommendationService:
                 raise AppError(
                     "RECOMMENDATION_CANDIDATES_ALREADY_PERSISTED", "候选商品已保存，不能覆盖", 409
                 )
-            rows = await self.repository.all_eligible_products(self._parsed_requirement(run))
+            requirement = self._parsed_requirement(run)
+            category_paths: list[CategoryPath] = []
+            if (
+                requirement.requirement_version in {"v7", "v8"}
+                and requirement.explicit_category_keywords
+            ):
+                category_paths = [
+                    CategoryPath(
+                        level1_name=choice.level1_name,
+                        level2_name=choice.level2_name,
+                        level3_name=choice.level3_name,
+                    )
+                    for choice in await self.repository.category_choices(run.id)
+                ]
+                if not category_paths:
+                    self._transition(run, RecommendationRunStatus.NO_CANDIDATES)
+                    await self._restore_project_after_terminal_run(
+                        run, "RECOMMENDATION_NO_MATCHED_CATEGORY"
+                    )
+                    return 0
+            rows = await self.repository.all_eligible_products(requirement, category_paths)
             if not rows:
                 self._transition(run, RecommendationRunStatus.NO_CANDIDATES)
                 await self._restore_project_after_terminal_run(run, "RECOMMENDATION_NO_CANDIDATES")
@@ -701,6 +814,16 @@ class RecommendationService:
         return ParsedRequirement.model_validate(run.parsed_requirement)
 
     @staticmethod
+    def _category_catalog_snapshot(run: RecommendationRun) -> CategoryCatalogSnapshot:
+        if run.category_catalog_snapshot is None:
+            raise AppError(
+                "RECOMMENDATION_CATEGORY_CATALOG_NOT_FOUND",
+                "本次推品尚未生成真实类目清单",
+                409,
+            )
+        return CategoryCatalogSnapshot.model_validate(run.category_catalog_snapshot)
+
+    @staticmethod
     def _run_response(run: RecommendationRun) -> RecommendationRunResponse:
         return RecommendationRunResponse(
             id=run.id,
@@ -710,6 +833,11 @@ class RecommendationService:
             parsed_requirement=(
                 ParsedRequirement.model_validate(run.parsed_requirement)
                 if run.parsed_requirement is not None
+                else None
+            ),
+            category_catalog_snapshot=(
+                CategoryCatalogSnapshot.model_validate(run.category_catalog_snapshot)
+                if run.category_catalog_snapshot is not None
                 else None
             ),
             provider=run.provider,
