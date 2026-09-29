@@ -41,3 +41,14 @@ def test_historical_manual_json_remains_read_compatible_and_is_not_a_contract() 
         {"manual_checks": [{"code": "DROP_SHIPPING", "status": "PENDING"}]}
     )
     assert requirement.manual_checks[0]["status"] == "PENDING"
+
+
+def test_requirement_accepts_allocation_style_explicit_categories_without_quantity_limits() -> None:
+    requirement = ParsedRequirement(
+        requirement_version="v6",
+        explicit_category_keywords=["家电", "厨具", "日用"],
+        category_intents=["家电", "生活电器", "厨具", "厨房用品", "日用"],
+    )
+
+    assert requirement.explicit_category_keywords == ["家电", "厨具", "日用"]
+    assert requirement.total_quota is None

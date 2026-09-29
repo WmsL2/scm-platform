@@ -31,6 +31,7 @@ from app.modules.recommendation.infrastructure.models import (
     RecommendationExport,
 )
 from app.modules.recommendation.infrastructure.repository import RecommendationRepository
+from app.modules.recommendation.template.analyzer import resolve_mapping_columns
 from app.modules.recommendation.template.schemas import RecommendationRunStatus
 
 _DECIMAL_FIELDS = {
@@ -193,7 +194,7 @@ class RecommendationExportService:
         sheet_name: str,
         header_row: int,
         data_start_row: int,
-        mapping_json: dict[str, str],
+        mapping_json: dict[str, object],
         rows: list[tuple[RecommendationCandidate, RecommendationConfirmation]],
     ) -> bytes:
         workbook = load_workbook(BytesIO(source), data_only=False)
@@ -203,37 +204,25 @@ class RecommendationExportService:
                     "RECOMMENDATION_EXPORT_TEMPLATE_CHANGED", "推荐模板工作表已变更", 409
                 )
             sheet = workbook[sheet_name]
-            header_columns = {
-                cls._text(cell.value): cell.column
-                for cell in sheet[header_row]
-                if cls._text(cell.value)
-            }
-            columns: dict[str, int] = {}
-            for field, header in mapping_json.items():
-                column = header_columns.get(header)
-                if column is None:
-                    raise AppError(
-                        "RECOMMENDATION_EXPORT_TEMPLATE_CHANGED",
-                        f"推荐模板缺少已确认的字段列：{header}",
-                        409,
-                    )
-                if column in columns.values():
-                    raise AppError(
-                        "RECOMMENDATION_EXPORT_MAPPING_DUPLICATE",
-                        "同一模板列不能映射多个导出字段",
-                        409,
-                    )
-                columns[field] = column
+            headers = [cls._text(cell.value) or "" for cell in sheet[header_row]]
+            try:
+                columns = resolve_mapping_columns(headers, mapping_json)
+            except AppError as exc:
+                raise AppError(
+                    "RECOMMENDATION_EXPORT_TEMPLATE_CHANGED", "推荐模板映射已失效", 409
+                ) from exc
             if not columns:
                 raise AppError(
                     "RECOMMENDATION_EXPORT_MAPPING_EMPTY", "推荐模板未配置任何导出字段", 409
                 )
-            cls._clear_template_data_region(sheet, data_start_row, columns.values())
+            cls._clear_template_data_region(
+                sheet, data_start_row, (column for _, column in columns)
+            )
             for offset, (candidate, confirmation) in enumerate(rows):
                 target_row = data_start_row + offset
                 if target_row > data_start_row:
                     cls._copy_template_row(sheet, data_start_row, target_row)
-                for field, column in columns.items():
+                for field, column in columns:
                     sheet.cell(target_row, column).value = cast(
                         Any, cls._value(field, candidate, confirmation)
                     )

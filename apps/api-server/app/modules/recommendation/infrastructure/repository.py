@@ -446,8 +446,16 @@ class RecommendationRepository:
             filters.append(Product.discount_rate >= requirement.discount_rate_min)
         if requirement.discount_rate_max is not None:
             filters.append(Product.discount_rate <= requirement.discount_rate_max)
-        if requirement.requirement_version == "v5":
+        if requirement.requirement_version in {"v5", "v6"}:
             category_terms = requirement.category_intents or requirement.explicit_category_keywords
+            # Keep the short-lived V6 quota document readable: its category terms
+            # are now ordinary hard category filters and its numbers are ignored.
+            if not category_terms and requirement.category_quotas:
+                category_terms = [
+                    term
+                    for quota in requirement.category_quotas
+                    for term in (quota.category_intents or quota.category_keywords)
+                ]
         else:
             category_terms = requirement.explicit_category_keywords or requirement.category_keywords
         if category_terms:
@@ -463,7 +471,7 @@ class RecommendationRepository:
                     ]
                 )
             )
-        if requirement.requirement_version == "v5" and requirement.required_brands:
+        if requirement.requirement_version in {"v5", "v6"} and requirement.required_brands:
             filters.append(
                 and_(
                     Product.brand.is_not(None),

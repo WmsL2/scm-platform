@@ -17,6 +17,24 @@ class FactoryDirectStatus(StrEnum):
     NO = "NO"
 
 
+class CategoryQuota(BaseModel):
+    """A requested candidate allocation for one semantic product category."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    category_keywords: list[str] = Field(min_length=1, max_length=8)
+    category_intents: list[str] = Field(min_length=1, max_length=8)
+    quota: int = Field(ge=1, le=5000)
+
+    @field_validator("category_keywords", "category_intents")
+    @classmethod
+    def normalize_category_terms(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values if value and value.strip()]
+        if not normalized or any(len(value) > 64 for value in normalized):
+            raise ValueError("category quota terms are invalid")
+        return list(dict.fromkeys(normalized))
+
+
 class ParsedRequirement(BaseModel):
     """Validated bridge from C's AI parser to B's deterministic query."""
 
@@ -60,6 +78,8 @@ class ParsedRequirement(BaseModel):
     promotion_preference: str | None = Field(default=None, max_length=64)
     demand_mode: str | None = Field(default=None, max_length=64)
     quantity: int | None = Field(default=None, ge=1)
+    total_quota: int | None = Field(default=None, ge=1, le=5000)
+    category_quotas: list[CategoryQuota] = Field(default_factory=list, max_length=20)
     fulfillment_mode: str | None = Field(default=None, max_length=64)
     # Kept read-compatible for historical JSON; it is not evaluated by any flow.
     manual_checks: list[dict[str, object]] = Field(default_factory=list, max_length=20)
@@ -86,6 +106,11 @@ class ParsedRequirement(BaseModel):
         ):
             if lower is not None and upper is not None and lower > upper:
                 raise ValueError(f"{label}_min must not exceed {label}_max")
+        if (
+            self.total_quota is not None
+            and sum(item.quota for item in self.category_quotas) > self.total_quota
+        ):
+            raise ValueError("category quotas cannot exceed total_quota")
         return self
 
 

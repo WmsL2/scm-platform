@@ -14,6 +14,8 @@ import {
   type RecommendationCandidate,
   type RecommendationRun,
   type RecommendationTemplateFile,
+  type RecommendationTemplateColumnMappingDocument,
+  type RecommendationTemplateMappingJson,
   type RecommendationTemplateMapping,
   type RecommendationTemplateStructure,
 } from "../../types/recommendation"
@@ -119,20 +121,24 @@ function normalizedHeader(value: string): string {
 
 function rebuildMappingSelections(): void {
   if (!mapping.value || !templateStructure.value) return
-  const selected = new Set<string>()
   const next: Record<number, string> = {}
+  const savedColumns = isColumnMappingDocument(mapping.value.mapping_json)
+    ? new Map(
+      mapping.value.mapping_json.columns.map((column) => [column.column_index, column.field_key]),
+    )
+    : null
   for (const column of templateStructure.value.columns) {
-    if (column.duplicate) continue
-    const saved = Object.entries(mapping.value.mapping_json).find(
-      ([field, header]) => header === column.header && !selected.has(field),
-    )?.[0]
+    const saved = savedColumns?.get(column.column_index) ?? (!savedColumns
+      ? Object.entries(mapping.value.mapping_json).find(
+        ([, header]) => header === column.header,
+      )?.[0]
+      : undefined)
     const exact = TEMPLATE_MAPPING_FIELDS.find(
-      (field) => normalizedHeader(field.label) === normalizedHeader(column.header) && !selected.has(field.key),
+      (field) => normalizedHeader(field.label) === normalizedHeader(column.header),
     )?.key
     const field = saved ?? exact
     if (field) {
       next[column.column_index] = field
-      selected.add(field)
     }
   }
   mappingSelections.value = next
@@ -172,20 +178,21 @@ async function changeHeaderRow(value: number | undefined): Promise<void> {
   await loadTemplateStructure()
 }
 
-function mappingFieldUsed(field: string, columnIndex: number): boolean {
-  return Object.entries(mappingSelections.value).some(
-    ([index, selected]) => Number(index) !== columnIndex && selected === field,
-  )
+function isColumnMappingDocument(
+  mappingJson: RecommendationTemplateMappingJson,
+): mappingJson is RecommendationTemplateColumnMappingDocument {
+  return "version" in mappingJson && mappingJson.version === 2 && Array.isArray(mappingJson.columns)
 }
 
-function selectedMappingJson(): Record<string, string> {
-  if (!templateStructure.value) return {}
-  return Object.fromEntries(
-    templateStructure.value.columns.flatMap((column) => {
+function selectedMappingJson(): RecommendationTemplateColumnMappingDocument {
+  if (!templateStructure.value) return { version: 2, columns: [] }
+  return {
+    version: 2,
+    columns: templateStructure.value.columns.flatMap((column) => {
       const field = mappingSelections.value[column.column_index]
-      return field && !column.duplicate ? [[field, column.header]] : []
+      return field ? [{ column_index: column.column_index, field_key: field }] : []
     }),
-  )
+  }
 }
 
 async function saveMapping() {
@@ -466,6 +473,16 @@ function ratioValue(value: unknown, fallback = "-"): string {
   return Number.isFinite(ratio) ? `${(ratio * 100).toFixed(2)}%` : String(value)
 }
 
+function specifiedCategoryText(): string {
+  const requirement = run.value?.parsed_requirement
+  if (!requirement) return "不限"
+  const explicit = requirement.explicit_category_keywords ?? []
+  if (explicit.length) return explicit.join("、")
+  // Compatibility for a run created by the short-lived category-quota version.
+  return [...new Set((requirement.category_quotas ?? []).flatMap((item) => item.category_keywords))]
+    .join("、") || "不限"
+}
+
 function grossMarginValue(candidate: RecommendationCandidate): string {
   return ratioValue(candidate.price_snapshot.gross_margin)
 }
@@ -502,9 +519,9 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
       <div v-loading="structureLoading" class="mapping-table">
         <div class="mapping-table-head"><span>上传模板列（不可修改）</span><span>商品主数据字段（可搜索选择）</span></div>
         <div v-for="column in templateStructure?.columns ?? []" :key="column.column_index" class="mapping-row">
-          <div class="template-column"><span class="column-index">{{ column.column_index }}</span><span>{{ column.header }}</span><el-tag v-if="column.duplicate" type="danger" size="small">表头重复，不能映射</el-tag></div>
-          <el-select v-model="mappingSelections[column.column_index]" filterable clearable :disabled="column.duplicate" placeholder="搜索并选择商品主数据字段">
-            <el-option v-for="field in TEMPLATE_MAPPING_FIELDS" :key="field.key" :label="field.label" :value="field.key" :disabled="mappingFieldUsed(field.key, column.column_index)" />
+          <div class="template-column"><span class="column-index">{{ column.column_index }}</span><span>{{ column.header }}</span><el-tag v-if="column.duplicate" type="warning" size="small">重复表头，按第 {{ column.column_index }} 列映射</el-tag></div>
+          <el-select v-model="mappingSelections[column.column_index]" filterable clearable placeholder="搜索并选择商品主数据字段">
+            <el-option v-for="field in TEMPLATE_MAPPING_FIELDS" :key="field.key" :label="field.label" :value="field.key" />
           </el-select>
         </div>
         <el-empty v-if="!structureLoading && !(templateStructure?.columns.length)" description="当前表头行没有可映射列" :image-size="70" />
@@ -518,12 +535,12 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
       <p class="muted">{{ run.progress_message ?? run.error ?? `模型：${run.provider ?? '-'} / ${run.model ?? '-'}` }}</p>
       <el-descriptions v-if="run.parsed_requirement" title="需求理解" :column="2" border>
         <el-descriptions-item label="本次读取的需求" :span="2">{{ run.raw_requirement_snapshot }}</el-descriptions-item>
-        <el-descriptions-item label="筛选方式">按数值硬条件，以及客户明确指定的品牌、类目筛选；场景、用途、数量、有效期不参与筛选</el-descriptions-item>
+        <el-descriptions-item label="筛选方式">按数值硬条件，以及明确品牌、类目筛选；场景、用途、数量、库存、物流、有效期不参与筛选</el-descriptions-item>
         <el-descriptions-item label="筛选：协议价">{{ run.parsed_requirement.agreement_price_min ?? '不限' }} ～ {{ run.parsed_requirement.agreement_price_max ?? '不限' }}</el-descriptions-item>
         <el-descriptions-item label="筛选：京东价">{{ run.parsed_requirement.jd_price_min ?? '不限' }} ～ {{ run.parsed_requirement.jd_price_max ?? '不限' }}</el-descriptions-item>
         <el-descriptions-item label="筛选：折扣率 / 毛利率">{{ run.parsed_requirement.discount_rate_min ?? '不限' }} ～ {{ run.parsed_requirement.discount_rate_max ?? '不限' }} / {{ ratioValue(run.parsed_requirement.gross_margin_min, '不限') }} ～ {{ ratioValue(run.parsed_requirement.gross_margin_max, '不限') }}</el-descriptions-item>
         <el-descriptions-item label="筛选：指定品牌">{{ run.parsed_requirement.required_brands?.join('、') || '不限' }}</el-descriptions-item>
-        <el-descriptions-item label="筛选：指定类目">{{ run.parsed_requirement.explicit_category_keywords?.join('、') || '不限' }}</el-descriptions-item>
+        <el-descriptions-item label="筛选：指定类目">{{ specifiedCategoryText() }}</el-descriptions-item>
       </el-descriptions>
       <el-descriptions v-else title="本次 Agent 实际读取的需求" :column="1" border>
         <el-descriptions-item label="需求快照">{{ run.raw_requirement_snapshot }}</el-descriptions-item>

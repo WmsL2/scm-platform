@@ -42,8 +42,8 @@ async def test_agent_parses_numeric_and_explicit_brand_category_constraints() ->
     analysis = RequirementAnalysis(
         summary="中秋出行推品",
         keywords=["中秋"],
-        explicit_category_keywords=["旅行用品"],
-        category_intents=["旅行用品", "箱包"],
+        explicit_category_keywords=["家电", "厨具", "日用"],
+        category_intents=["家电", "生活电器", "厨具", "厨房用品", "日用"],
         required_brands=["指定品牌"],
         scenarios=["中秋十一出行"],
         quantity=1,
@@ -62,6 +62,8 @@ async def test_agent_parses_numeric_and_explicit_brand_category_constraints() ->
     assert tools.prepared is analysis
     assert "required_brands" in provider.system_prompts[0]
     assert "category_intents" in provider.system_prompts[0]
+    assert "需要水杯、保温杯、随行杯" in provider.system_prompts[0]
+    assert "类目 + 数量" in provider.system_prompts[0]
     assert "discount_rate_max=0.9" in provider.system_prompts[0]
 
 

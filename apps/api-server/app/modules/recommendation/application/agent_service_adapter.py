@@ -33,7 +33,7 @@ class RecommendationServiceTools(RecommendationTools):
         await self.service.save_parsed_requirement(
             self.run_id,
             ParsedRequirement(
-                requirement_version="v5",
+                requirement_version="v6",
                 gross_margin_min=analysis.gross_margin_min,
                 gross_margin_max=analysis.gross_margin_max,
                 agreement_price_min=analysis.agreement_price_min or analysis.budget_min,

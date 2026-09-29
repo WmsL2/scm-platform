@@ -32,7 +32,7 @@ class TemplateAnalysis:
     sheet_name: str
     header_row: int
     data_start_row: int
-    mapping_json: dict[str, str]
+    mapping_json: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -63,20 +63,21 @@ def analyze_template(file_bytes: bytes) -> TemplateAnalysis:
                 headers = [
                     str(cell.value).strip() if cell.value is not None else "" for cell in row
                 ]
-                # Exact product-master headers win over aliases.  A second template
-                # column targeting the same field is intentionally left unmapped;
-                # the explicit mapping UI preserves its duplicate-field gate.
-                mapping: dict[str, str] = {}
-                for header in headers:
-                    target = _EXACT_AUTO_MAPPING.get(header)
-                    if target is not None:
-                        mapping[target] = header
-                for header in headers:
-                    target = _SAFE_ALIASES.get(header)
-                    if target is not None and target not in mapping:
-                        mapping[target] = header
-                if mapping:
-                    return TemplateAnalysis(sheet.title, row_number, row_number + 1, mapping)
+                # Mapping is column-oriented: duplicate template columns and repeated
+                # product fields are both valid export requirements.
+                columns = [
+                    {"column_index": index, "field_key": _EXACT_AUTO_MAPPING.get(header)
+                    or _SAFE_ALIASES.get(header)}
+                    for index, header in enumerate(headers, start=1)
+                    if _EXACT_AUTO_MAPPING.get(header) or _SAFE_ALIASES.get(header)
+                ]
+                if columns:
+                    return TemplateAnalysis(
+                        sheet.title,
+                        row_number,
+                        row_number + 1,
+                        {"version": 2, "columns": columns},
+                    )
         sheet = workbook.worksheets[0]
         return TemplateAnalysis(sheet.title, 1, 2, {})
     finally:
@@ -128,7 +129,7 @@ def validate_mapping_contract(
     sheet_name: str,
     header_row: int,
     data_start_row: int,
-    mapping_json: dict[str, str],
+    mapping_json: dict[str, object],
 ) -> None:
     """Validate an explicit mapping against the exact stored workbook."""
     if data_start_row <= header_row:
@@ -150,12 +151,64 @@ def validate_mapping_contract(
         headers = [
             str(cell.value).strip() if cell.value is not None else "" for cell in sheet[header_row]
         ]
-        for source_header in mapping_json.values():
-            if headers.count(source_header) != 1:
-                raise AppError(
-                    "RECOMMENDATION_TEMPLATE_MAPPING_INVALID",
-                    "映射源表头不存在或不唯一",
-                    422,
-                )
+        resolve_mapping_columns(headers, mapping_json)
     finally:
         workbook.close()
+
+
+def resolve_mapping_columns(
+    headers: list[str], mapping_json: dict[str, object]
+) -> list[tuple[str, int]]:
+    """Resolve stored mapping JSON to physical Excel columns.
+
+    V2 identifies a destination by its one-based column index, so duplicate
+    headers are unambiguous and one product source field may feed many columns.
+    The legacy field-to-header document remains readable for existing mappings.
+    """
+    if mapping_json.get("version") == 2:
+        raw_columns = mapping_json.get("columns")
+        if not isinstance(raw_columns, list) or not raw_columns:
+            raise AppError(
+                "RECOMMENDATION_TEMPLATE_MAPPING_INVALID", "模板列映射不能为空", 422
+            )
+        resolved: list[tuple[str, int]] = []
+        seen_indexes: set[int] = set()
+        for entry in raw_columns:
+            if not isinstance(entry, dict):
+                raise AppError(
+                    "RECOMMENDATION_TEMPLATE_MAPPING_INVALID", "模板列映射格式无效", 422
+                )
+            field = entry.get("field_key")
+            column_index = entry.get("column_index")
+            if (
+                not isinstance(field, str)
+                or not field.strip()
+                or not isinstance(column_index, int)
+                or isinstance(column_index, bool)
+                or column_index < 1
+                or column_index > len(headers)
+                or not headers[column_index - 1]
+                or column_index in seen_indexes
+            ):
+                raise AppError(
+                    "RECOMMENDATION_TEMPLATE_MAPPING_INVALID", "模板列映射无效或已变更", 422
+                )
+            seen_indexes.add(column_index)
+            resolved.append((field, column_index))
+        return resolved
+
+    resolved = []
+    for field, source_header in mapping_json.items():
+        if not isinstance(field, str) or not isinstance(source_header, str):
+            raise AppError(
+                "RECOMMENDATION_TEMPLATE_MAPPING_INVALID", "模板映射格式无效", 422
+            )
+        matches = [
+            index for index, header in enumerate(headers, start=1) if header == source_header
+        ]
+        if len(matches) != 1:
+            raise AppError(
+                "RECOMMENDATION_TEMPLATE_MAPPING_INVALID", "映射源表头不存在或不唯一", 422
+            )
+        resolved.append((field, matches[0]))
+    return resolved

@@ -4,6 +4,8 @@ import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 from io import BytesIO
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from openpyxl import Workbook, load_workbook
@@ -96,6 +98,50 @@ def _template() -> bytes:
     workbook.save(output)
     workbook.close()
     return output.getvalue()
+
+
+def test_export_column_mapping_writes_repeated_field_to_duplicate_headers() -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "推荐清单"
+    sheet.append(["采购", "采购", "供应商"])
+    output = BytesIO()
+    workbook.save(output)
+    workbook.close()
+
+    candidate = cast(
+        Any,
+        SimpleNamespace(
+            product_snapshot={"purchasing_agent": "采购员A"},
+            supplier_snapshot={"supplier_name": "供应商A"},
+            price_snapshot={},
+        ),
+    )
+    confirmation = cast(Any, SimpleNamespace())
+    exported = RecommendationExportService._build_workbook(
+        output.getvalue(),
+        "推荐清单",
+        1,
+        2,
+        {
+            "version": 2,
+            "columns": [
+                {"column_index": 1, "field_key": "purchasing_agent"},
+                {"column_index": 2, "field_key": "purchasing_agent"},
+                {"column_index": 3, "field_key": "supplier_name"},
+            ],
+        },
+        [(candidate, confirmation)],
+    )
+
+    result = load_workbook(BytesIO(exported), data_only=False)
+    result_sheet = result["推荐清单"]
+    assert [result_sheet.cell(2, index).value for index in range(1, 4)] == [
+        "采购员A",
+        "采购员A",
+        "供应商A",
+    ]
+    result.close()
 
 
 @pytest.mark.asyncio
