@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
+import { Setting } from "@element-plus/icons-vue"
 import { useRoute, useRouter } from "vue-router"
 import { bidApi } from "../../api/bid"
 import { recommendationApi } from "../../api/recommendation"
@@ -19,6 +20,13 @@ import {
   type RecommendationTemplateMapping,
   type RecommendationTemplateStructure,
 } from "../../types/recommendation"
+import {
+  RECOMMENDATION_CANDIDATE_OPTIONAL_COLUMNS,
+  restoreRecommendationCandidateOptionalColumns,
+  updateRecommendationCandidateOptionalColumns,
+  type RecommendationCandidateOptionalColumn,
+  type RecommendationCandidateOptionalColumnKey,
+} from "./recommendationCandidateColumns"
 
 const route = useRoute()
 const router = useRouter()
@@ -36,6 +44,10 @@ const run = ref<RecommendationRun | null>(null)
 const runHistory = ref<RecommendationRun[]>([])
 const candidatePage = ref(1)
 const candidatePageSize = ref(50)
+const candidateColumnStorageKey = "scm.recommendation-candidates.visible-columns.v1"
+const selectedCandidateOptionalColumns = ref<RecommendationCandidateOptionalColumnKey[]>(
+  restoreRecommendationCandidateOptionalColumns(localStorage.getItem(candidateColumnStorageKey)),
+)
 const selectedCandidateIds = ref<Set<string>>(new Set())
 const excludedCandidateIds = ref<Set<string>>(new Set())
 const selectAllCandidates = ref(false)
@@ -77,6 +89,9 @@ const selectedCandidateCount = computed(() => selectAllCandidates.value
 const selectableOnPage = computed(() => (run.value?.candidates ?? []).filter((item) => !item.confirmation))
 const pageAllSelected = computed(() => selectableOnPage.value.length > 0 && selectableOnPage.value.every(isCandidateSelected))
 const pagePartiallySelected = computed(() => selectableOnPage.value.some(isCandidateSelected) && !pageAllSelected.value)
+const visibleCandidateColumns = computed(() => selectedCandidateOptionalColumns.value
+  .map((key) => RECOMMENDATION_CANDIDATE_OPTIONAL_COLUMNS.find((column) => column.key === key))
+  .filter((column): column is RecommendationCandidateOptionalColumn => column !== undefined))
 
 async function load() {
   loading.value = true
@@ -467,6 +482,52 @@ function productValue(candidate: RecommendationCandidate, key: string): string {
   return value === null || value === undefined || value === "" ? "-" : String(value)
 }
 
+function isCandidateColumnSelected(key: RecommendationCandidateOptionalColumnKey): boolean {
+  return selectedCandidateOptionalColumns.value.includes(key)
+}
+
+function updateCandidateColumnSelection(key: RecommendationCandidateOptionalColumnKey, checked: unknown): void {
+  selectedCandidateOptionalColumns.value = updateRecommendationCandidateOptionalColumns(
+    selectedCandidateOptionalColumns.value,
+    key,
+    Boolean(checked),
+  )
+  localStorage.setItem(candidateColumnStorageKey, JSON.stringify(selectedCandidateOptionalColumns.value))
+}
+
+function candidateColumnRawValue(
+  candidate: RecommendationCandidate,
+  key: RecommendationCandidateOptionalColumnKey,
+): unknown {
+  if (key === "supplier_name") return candidate.supplier_snapshot.supplier_name
+  return candidate.product_snapshot[key] ?? candidate.price_snapshot[key]
+}
+
+function moneyValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "-"
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? `¥ ${numeric.toFixed(2)}` : String(value)
+}
+
+function candidateColumnValue(
+  candidate: RecommendationCandidate,
+  column: RecommendationCandidateOptionalColumn,
+): string {
+  const value = candidateColumnRawValue(candidate, column.key)
+  if (value === null || value === undefined || value === "") return "-"
+  if (column.format === "money") return moneyValue(value)
+  if (column.format === "percent") return ratioValue(value)
+  return String(value)
+}
+
+function candidateImageUrl(candidate: RecommendationCandidate): string | undefined {
+  const reference = candidate.product_snapshot.image_reference
+  if (typeof reference !== "string" || !reference) return undefined
+  if (/^https?:\/\//i.test(reference)) return reference
+  const baseUrl = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")
+  return `${baseUrl}/${reference.replace(/^\//, "")}`
+}
+
 function ratioValue(value: unknown, fallback = "-"): string {
   if (value === null || value === undefined || value === "") return fallback
   const ratio = Number(value)
@@ -481,10 +542,6 @@ function specifiedCategoryText(): string {
   // Compatibility for a run created by the short-lived category-quota version.
   return [...new Set((requirement.category_quotas ?? []).flatMap((item) => item.category_keywords))]
     .join("、") || "不限"
-}
-
-function grossMarginValue(candidate: RecommendationCandidate): string {
-  return ratioValue(candidate.price_snapshot.gross_margin)
 }
 
 function syncPolling() {
@@ -553,17 +610,16 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
     </el-card>
 
     <el-card v-if="candidateTotal">
-      <template #header><div class="card-header"><div><strong>候选商品与人工确认</strong><span class="muted">仅按硬条件筛选，评分取商品主数据；最终结果由人工确认。</span></div><div class="selection-actions"><el-button :disabled="!selectionEditable" @click="setCurrentPageSelected(true)">全选本页</el-button><el-button :disabled="!selectionEditable" @click="selectAllUnconfirmedCandidates">全选全部待确认商品</el-button><el-button :disabled="!selectionEditable" @click="resetCandidateSelection">清空选择</el-button><el-button v-if="auth.hasPermission('recommendation:review')" type="primary" :disabled="!selectionEditable || selectedCandidateCount === 0" :loading="acting" @click="confirmSelectedCandidates">批量确认选中（{{ selectedCandidateCount }}）</el-button></div></div></template>
+      <template #header><div class="card-header"><div><strong>候选商品与人工确认</strong><span class="muted">仅按硬条件筛选，评分取商品主数据；最终结果由人工确认。</span></div><div class="selection-actions"><el-button :disabled="!selectionEditable" @click="setCurrentPageSelected(true)">全选本页</el-button><el-button :disabled="!selectionEditable" @click="selectAllUnconfirmedCandidates">全选全部待确认商品</el-button><el-button :disabled="!selectionEditable" @click="resetCandidateSelection">清空选择</el-button><el-popover placement="bottom-end" :width="340" trigger="click"><template #reference><el-button :icon="Setting">自定义显示列</el-button></template><p class="column-picker-hint">商品图片、SKU、商品名称固定为前 3 列；其余列按勾选先后依次显示。</p><div class="column-picker"><el-checkbox v-for="option in RECOMMENDATION_CANDIDATE_OPTIONAL_COLUMNS" :key="option.key" :model-value="isCandidateColumnSelected(option.key)" @change="(checked: unknown) => updateCandidateColumnSelection(option.key, checked)">{{ option.label }}</el-checkbox></div></el-popover><el-button v-if="auth.hasPermission('recommendation:review')" type="primary" :disabled="!selectionEditable || selectedCandidateCount === 0" :loading="acting" @click="confirmSelectedCandidates">批量确认选中（{{ selectedCandidateCount }}）</el-button></div></div></template>
       <el-table :data="run?.candidates ?? []">
         <el-table-column width="52"><template #header><el-checkbox :model-value="pageAllSelected" :indeterminate="pagePartiallySelected" :disabled="!selectionEditable || selectableOnPage.length === 0" @change="(value: string | number | boolean) => setCurrentPageSelected(Boolean(value))" /></template><template #default="{ row }"><el-checkbox :model-value="isCandidateSelected(row)" :disabled="!selectionEditable || Boolean(row.confirmation)" @change="(value: string | number | boolean) => setCandidateSelected(row, Boolean(value))" /></template></el-table-column>
-        <el-table-column prop="rank" label="序号" width="70" />
-        <el-table-column label="商品" min-width="220"><template #default="{ row }"><strong>{{ productValue(row, 'product_name') }}</strong><div class="muted">{{ productValue(row, 'brand') }} / {{ productValue(row, 'model') }}</div></template></el-table-column>
-        <el-table-column label="协议价"><template #default="{ row }">¥ {{ productValue(row, 'agreement_price') }}</template></el-table-column>
-        <el-table-column label="折扣率"><template #default="{ row }">{{ productValue(row, 'discount_rate') }}</template></el-table-column>
-        <el-table-column label="毛利率"><template #default="{ row }">{{ grossMarginValue(row) }}</template></el-table-column>
-        <el-table-column label="评分" width="90"><template #default="{ row }">{{ productValue(row, 'positive_rating') }}</template></el-table-column>
-        <el-table-column label="确认状态" width="120"><template #default="{ row }"><el-tag :type="row.confirmation ? 'success' : 'info'">{{ row.confirmation ? '已确认' : '待确认' }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="110"><template #default="{ row }"><el-button v-if="auth.hasPermission('recommendation:review')" link type="primary" @click="openConfirmation(row)">{{ selectionEditable ? '确认选品' : '查看选品' }}</el-button></template></el-table-column>
+        <el-table-column prop="rank" label="序号" width="70" fixed="left" />
+        <el-table-column label="商品图片" width="108" fixed="left"><template #default="{ row }"><el-image v-if="candidateImageUrl(row)" class="candidate-image" :src="candidateImageUrl(row)" fit="contain" :preview-src-list="[candidateImageUrl(row)!]" preview-teleported /><div v-else class="image-placeholder">暂无图片</div></template></el-table-column>
+        <el-table-column label="SKU" min-width="130" fixed="left"><template #default="{ row }">{{ productValue(row, 'sku') }}</template></el-table-column>
+        <el-table-column label="商品名称" min-width="220" show-overflow-tooltip fixed="left"><template #default="{ row }">{{ productValue(row, 'product_name') }}</template></el-table-column>
+        <el-table-column v-for="column in visibleCandidateColumns" :key="column.key" :label="column.label" :min-width="column.minWidth" show-overflow-tooltip><template #default="{ row }">{{ candidateColumnValue(row, column) }}</template></el-table-column>
+        <el-table-column label="确认状态" width="120" fixed="right"><template #default="{ row }"><el-tag :type="row.confirmation ? 'success' : 'info'">{{ row.confirmation ? '已确认' : '待确认' }}</el-tag></template></el-table-column>
+        <el-table-column label="操作" width="110" fixed="right"><template #default="{ row }"><el-button v-if="auth.hasPermission('recommendation:review')" link type="primary" @click="openConfirmation(row)">{{ selectionEditable ? '确认选品' : '查看选品' }}</el-button></template></el-table-column>
       </el-table>
       <el-pagination v-model:current-page="candidatePage" v-model:page-size="candidatePageSize" :page-sizes="[50, 100, 200]" :total="candidateTotal" layout="total, sizes, prev, pager, next" @current-change="changeCandidatePage" @size-change="changeCandidatePageSize" />
     </el-card>
@@ -579,6 +635,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
 
 <style scoped>
 .workspace { display: grid; gap: 18px; }.workspace header { display: flex; justify-content: space-between; gap: 20px; padding: 24px 28px; border-radius: 14px; background: linear-gradient(135deg, #edf5ff, #f2f8f5); }.workspace h1 { margin: 4px 0; }.workspace header p { margin: 0; color: #2670ca; font-weight: 700; }.actions, .card-header, .run-actions, .mapping-meta, .card-actions, .selection-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }.card-header { justify-content: space-between; }.mapping-tip { margin-bottom: 16px; }.mapping-meta { margin-bottom: 16px; }.mapping-meta .el-select { width: 280px; }.mapping-table { overflow: hidden; border: 1px solid #e4e7ed; border-radius: 8px; }.mapping-table-head, .mapping-row { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(280px, 1fr); gap: 16px; align-items: center; padding: 10px 14px; }.mapping-table-head { background: #f5f7fa; color: #606266; font-weight: 600; }.mapping-row + .mapping-row { border-top: 1px solid #ebeef5; }.template-column { display: flex; align-items: center; gap: 10px; min-width: 0; }.column-index { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: 0 0 auto; border-radius: 50%; background: #ecf5ff; color: #409eff; font-size: 12px; }.card-actions { justify-content: flex-end; margin-top: 16px; }.muted { color: #909399; font-size: 13px; }.el-progress + .muted { margin-bottom: 18px; }.el-pagination { justify-content: flex-end; margin-top: 16px; }
+.column-picker { display: grid; grid-template-columns: 1fr 1fr; }.column-picker-hint { margin: 0 0 10px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }.candidate-image { width: 72px; height: 72px; }.image-placeholder { display: grid; place-items: center; width: 72px; height: 72px; color: #909399; background: #f5f7fa; border-radius: 4px; font-size: 12px; }
 .supplement-box { display: grid; gap: 12px; margin-top: 18px; justify-items: start; }.supplement-box .el-textarea { width: 100%; }
 @media (max-width: 767px) { .workspace header { flex-direction: column; }.mapping-table-head { display: none; }.mapping-row { grid-template-columns: 1fr; gap: 8px; } }
 </style>
