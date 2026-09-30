@@ -1,9 +1,14 @@
 import { http } from "../shared/http/runtime"
-import type { PptGenerationTask, PptPackage, PptPackageItemInput } from "../types/pptSolution"
+import type { PptGenerationTask, PptPackage, PptPackageItemInput, PptRecommendationConfig, PptRecommendationMode, PptPriceBand, PptSolutionPlan } from "../types/pptSolution"
 
 const base = "/api/v1/ppt-solution-projects"
 
 export const pptSolutionApi = {
+  config(projectId: string): Promise<PptRecommendationConfig | null> { return http.get(`${base}/${projectId}/recommendation-config`) },
+  saveConfig(projectId: string, body: { recommendation_mode: PptRecommendationMode; price_bands: PptPriceBand[]; candidate_count_per_band: number; plan_count_per_band: number; fulfillment_deadline: string | null }): Promise<PptRecommendationConfig> { return http.put(`${base}/${projectId}/recommendation-config`, body) },
+  plans(runId: string): Promise<PptSolutionPlan[]> {
+    return http.get(`${base}/runs/${runId}/plans`)
+  },
   packages(runId: string): Promise<PptPackage[]> {
     return http.get(`${base}/runs/${runId}/packages`)
   },

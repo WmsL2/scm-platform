@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
@@ -212,6 +212,61 @@ class PptSolutionPackage(Base):
         DateTime,
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
+    )
+
+
+class PptRecommendationConfig(Base):
+    __tablename__ = "scm_ppt_recommendation_config"
+    __table_args__ = (
+        UniqueConstraint("project_id", name="uq_scm_ppt_recommendation_config_project"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_bid_project.id", ondelete="RESTRICT"), nullable=False
+    )
+    recommendation_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    price_bands: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False)
+    candidate_count_per_band: Mapped[int] = mapped_column(Integer, nullable=False)
+    plan_count_per_band: Mapped[int] = mapped_column(Integer, nullable=False)
+    fulfillment_deadline: Mapped[date | None] = mapped_column(nullable=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), nullable=False)
+    updated_by: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
+    )
+
+
+class PptSolutionPlan(Base):
+    __tablename__ = "scm_ppt_solution_plan"
+    __table_args__ = (
+        CheckConstraint(
+            "plan_type IN ('SINGLE', 'COMBINATION')",
+            name="ck_scm_ppt_solution_plan_type",
+        ),
+        UniqueConstraint(
+            "run_id", "price_band_index", "plan_no", name="uq_scm_ppt_solution_plan_run_band_no"
+        ),
+        Index("ix_scm_ppt_solution_plan_run_id", "run_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_recommendation_run.id", ondelete="RESTRICT"), nullable=False
+    )
+    price_band_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    plan_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    plan_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    candidate_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
 
 

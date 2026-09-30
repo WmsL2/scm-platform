@@ -5,19 +5,14 @@ from uuid import UUID
 from app.modules.recommendation.application.agent_schemas import (
     AgentRecommendationResult,
     CategoryOption,
-    ProductCandidate,
-    ProductSearchRequest,
     RequirementAnalysis,
 )
-from app.modules.recommendation.application.ppt_selection_runner import PptRecommendationTools
-from app.modules.recommendation.application.service import RecommendationService
-from app.modules.recommendation.schemas import (
-    CandidateRankInput,
-    CategoryChoiceInput,
-    CategoryPath,
-    ParsedRequirement,
-    PersistCandidatesRequest,
+from app.modules.recommendation.application.ppt_selection_runner import (
+    PptRecommendationTools,
 )
+from app.modules.recommendation.application.ppt_service import PptSolutionService
+from app.modules.recommendation.application.service import RecommendationService
+from app.modules.recommendation.schemas import CategoryChoiceInput, CategoryPath, ParsedRequirement
 from app.modules.recommendation.template.schemas import RecommendationRunStatus
 
 
@@ -53,6 +48,7 @@ class PptSelectionServiceTools(PptRecommendationTools):
         self.prompt_version = prompt_version
 
     async def prepare(self, analysis: RequirementAnalysis) -> None:
+        await self.service.ppt_recommendation_config_for_run(self.run_id)
         brands = list(dict.fromkeys([*analysis.preferred_brands, *analysis.required_brands]))
         await self.service.begin_analysis(self.run_id)
         await self.service.save_parsed_requirement(
@@ -87,9 +83,7 @@ class PptSelectionServiceTools(PptRecommendationTools):
             prompt_version=self.prompt_version,
         )
 
-    async def list_categories(
-        self, keywords: Sequence[str], *, limit: int
-    ) -> list[CategoryOption]:
+    async def list_categories(self, keywords: Sequence[str], *, limit: int) -> list[CategoryOption]:
         del keywords
         return [
             CategoryOption(
@@ -102,35 +96,6 @@ class PptSelectionServiceTools(PptRecommendationTools):
             for item in (await self.service.category_pool(self.run_id))[:limit]
         ]
 
-    async def search_products(self, request: ProductSearchRequest) -> list[ProductCandidate]:
-        rows = await self.service.search_products(
-            self.run_id,
-            [_decode(request.category_key)],
-            keywords=request.keywords,
-            preferred_brands=request.preferred_brands,
-        )
-        return [
-            ProductCandidate(
-                product_id=row.product_id,
-                product_name=row.product_name,
-                brand=row.brand,
-                model=None,
-                category_path=row.category_path,
-                agreement_price=row.agreement_price,
-                jd_price=row.jd_price,
-                gross_margin=row.gross_margin,
-                discount_rate=row.discount_rate,
-                sales_volume=row.sales_volume,
-                positive_rating=row.positive_rating,
-                selling_points=(row.selling_points or "")[:1000] or None,
-                shipping_courier=row.shipping_courier,
-                highlights=[value for value in (row.sku, row.shipping_courier) if value],
-            )
-            for row in rows[: request.limit]
-            if row.product_name
-        ]
-
-
 class PptSelectionJobPort:
     def __init__(self, service: RecommendationService) -> None:
         self.service = service
@@ -141,16 +106,14 @@ class PptSelectionJobPort:
     async def is_cancelled(self, run_id: UUID) -> bool:
         return (await self.service.get_run(run_id)).status == RecommendationRunStatus.CANCELLED
 
-    async def record_progress(
-        self, run_id: UUID, status: str, percent: int, message: str
-    ) -> None:
+    async def record_progress(self, run_id: UUID, status: str, percent: int, message: str) -> None:
         del run_id, status, percent, message
 
     async def complete(self, run_id: UUID, result: AgentRecommendationResult) -> None:
         if result.analysis.needs_input:
             await self.service.mark_needs_input(run_id, "；".join(result.analysis.questions))
             return
-        if not result.candidates:
+        if not result.category_choices:
             await self.service.mark_no_candidates(run_id)
             return
         await self.service.record_category_choices(
@@ -164,20 +127,8 @@ class PptSelectionJobPort:
                 for choice in result.category_choices
             ],
         )
-        await self.service.persist_ranked_candidates(
-            run_id,
-            PersistCandidatesRequest(
-                candidates=[
-                    CandidateRankInput(
-                        product_id=item.product_id,
-                        rank=index,
-                        score=item.score,
-                        reason=item.reason,
-                    )
-                    for index, item in enumerate(result.candidates[:30], start=1)
-                ]
-            ),
-        )
+        await self.service.persist_ppt_eligible_candidates(run_id)
+        await PptSolutionService(self.service.session).create_generated_plans(run_id)
 
     async def fail(self, run_id: UUID, safe_error: str) -> None:
         await self.service.mark_failed(run_id, safe_error)
