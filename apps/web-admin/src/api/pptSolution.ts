@@ -16,9 +16,9 @@ export const pptSolutionApi = {
   generations(projectId: string): Promise<PptGenerationTask[]> {
     return http.get(`${base}/${projectId}/generations`)
   },
-  generate(projectId: string, runId: string, useDefaultTemplate: boolean): Promise<PptGenerationTask> {
+  generate(projectId: string, runId: string): Promise<PptGenerationTask> {
     return http.post(`${base}/${projectId}/runs/${runId}/generations`, {
-      use_default_template: useDefaultTemplate,
+      use_default_template: true,
     }, { timeoutMs: 1_800_000 })
   },
   download(taskId: string, fileId: string): Promise<Blob> {

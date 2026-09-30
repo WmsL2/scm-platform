@@ -3,13 +3,13 @@
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
-日期：2026-09-29
+日期：2026-09-30
 
 > 2026-09-29：工作区标签拖拽已调整为浏览器式标签栏交互：完整标签预览的纵向位置固定在标签栏，横向坐标受标签栏左右边界约束；鼠标移出标签栏后仍可继续按横向位置换位，原标签位仅保留浅色虚线占位，避免拖到页面内容区出现孤立蓝框。无 Migration、API 或权限变化；前端类型检查、全量 Vitest（165 项）及生产构建已通过。
 
 > 2026-09-29：自由推品 Requirement V8 已在 `codex/feat/recommendation-category-catalog-snapshot` 实现：需求解析仅保留客户明确类目原词，后端按正式可推荐商品、供应商状态及非类目硬条件生成并冻结一级、二级、三级类目树 JSON 快照，AI 只能返回其中存在的 key；选一级展开所有下级、选二级展开所有三级路径、选三级精确筛选。未知 key 被拒绝，明确类目无匹配不回退全库。Revision `20260929_0042` 新增 Run 快照 JSON 列。后端推荐核心/Agent/适配测试以及 Ruff、Mypy 已通过；前端类型检查、生产构建、真实 DeepSeek 新 Run 与浏览器验收待执行（ADR-0045）。
 
-> 2026-09-28：类型 5 PPT 方案首版已在 `feat/ppt-solution-kimi-workflow` 实现：Kimi 对甲方需求做语义选品，人工确认商品并可组合价格档位套装，有客户 PPTX 模板则优先使用，无模板则使用系统默认商务版式，最终生成可编辑 PPTX。Revision `20260928_0041` 新增套装和 PPT 生成任务表；真实 Kimi Hosted Agent 凭据、商品图片资源上传及正式后台队列仍待联调。
+> 2026-09-30：类型 5 PPT 方案已在 `feat/type5-deepseek-python-ppt` 改为 DeepSeek + 本地 Python 渲染。类型 5 的受控语义选品与类型 4 共用 DeepSeek 配置；人工确认单品与套装后，`python-pptx` 按固定商品页生成原生可编辑 PPTX：顶部商品名称、左侧参数、中央分隔线、右侧商品图。正式商品的本地图片会自动插入，套装最多显示四张。类型 5 固定使用系统默认版式，不上传或读取客户 PPT 模板。移除 Kimi 运行依赖；无 Migration、权限变化。推荐模块 54 项测试、Ruff、Mypy、前端类型检查、类型 5 Vitest 与生产构建已通过；真实浏览器全流程视觉验收待执行（ADR-0046）。
 
 > 2026-09-28：修复商品详情编辑的百分比浮点精度问题。京东价毛利、扣点复核、毛利率、好评率、折扣率和价格虚高比例改用十进制字符串移位，数据库 `0.1970` 精确显示为 `19.70%` 并按 `0.1970` 回传，避免完整编辑请求因 JavaScript 浮点长尾触发 422。无 Migration、API 或权限变化。
 

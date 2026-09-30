@@ -259,7 +259,30 @@ async def test_ppt_requires_requirement_before_sequence_or_storage(
     assert storage.saved == {}
 
 
-def test_ppt_template_must_be_real_pptx_package() -> None:
+@pytest.mark.asyncio
+async def test_ppt_rejects_customer_template_before_sequence_or_storage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = FakeStorage()
+
+    async def unexpected_issue(_: object, __: str) -> str:
+        raise AssertionError("PPT template rejection must happen before project creation")
+
+    monkeypatch.setattr(service_module.BusinessSequenceService, "issue_code", unexpected_issue)
+    service = BidProjectService(FakeSession(), storage)  # type: ignore[arg-type]
     with pytest.raises(AppError) as exc_info:
-        BidProjectService._validate_ppt_template("template.pptx", b"not-a-pptx")
-    assert exc_info.value.code == "PPT_TEMPLATE_INVALID"
+        await service.create(
+            project_name="PPT",
+            buyer_name="客户",
+            start_at=None,
+            deadline_at=None,
+            remark="Use the fixed system default PPT template for this proposal.",
+            filename=None,
+            file_bytes=None,
+            recommendation_template_filename="customer-template.pptx",
+            recommendation_template_bytes=b"pptx-content",
+            project_type=BidProjectType.PPT_SOLUTION,
+            actor_id=uuid.uuid4(),
+        )
+    assert exc_info.value.code == "PPT_TEMPLATE_NOT_ALLOWED"
+    assert storage.saved == {}

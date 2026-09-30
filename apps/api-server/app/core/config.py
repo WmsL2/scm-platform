@@ -36,17 +36,6 @@ class Settings(BaseSettings):
     deepseek_timeout_seconds: int = 60
     deepseek_max_tokens: int = 4096
     deepseek_prompt_version: str = "free-recommendation-v1"
-    kimi_api_key: SecretStr | None = None
-    kimi_base_url: str = "https://api.moonshot.cn"
-    kimi_model: str = "kimi-k2.5"
-    kimi_timeout_seconds: int = 120
-    kimi_max_tokens: int = 8192
-    kimi_prompt_version: str = "ppt-solution-v1"
-    kimi_hosted_api_version: str = "2026-09-01-beta"
-    kimi_ppt_agent_id: str | None = None
-    kimi_environment_id: str | None = None
-    kimi_ppt_timeout_seconds: int = 1800
-    kimi_ppt_poll_seconds: int = 5
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -65,9 +54,6 @@ class Settings(BaseSettings):
         "initial_admin_username",
         "initial_admin_password",
         "deepseek_api_key",
-        "kimi_api_key",
-        "kimi_ppt_agent_id",
-        "kimi_environment_id",
         mode="before",
     )
     @classmethod
@@ -85,10 +71,6 @@ class Settings(BaseSettings):
         "product_import_max_image_mb",
         "deepseek_timeout_seconds",
         "deepseek_max_tokens",
-        "kimi_timeout_seconds",
-        "kimi_max_tokens",
-        "kimi_ppt_timeout_seconds",
-        "kimi_ppt_poll_seconds",
     )
     @classmethod
     def positive_auth_duration(cls, value: int) -> int:

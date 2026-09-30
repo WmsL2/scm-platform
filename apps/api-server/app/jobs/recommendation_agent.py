@@ -10,12 +10,6 @@ from app.integrations.deepseek.client import (
     DeepSeekProviderError,
     DeepSeekStructuredOutputError,
 )
-from app.integrations.kimi.client import (
-    KimiClient,
-    KimiConfigurationError,
-    KimiProviderError,
-    KimiStructuredOutputError,
-)
 from app.modules.bid.domain.lifecycle import BidProjectType
 from app.modules.recommendation.application.agent_runner import (
     AgentRunner,
@@ -86,9 +80,9 @@ async def execute_recommendation_agent(
         await job_port.complete(run_id, result)
     except RecommendationAgentCancelled:
         await job_port.cancelled(run_id)
-    except (DeepSeekConfigurationError, KimiConfigurationError) as exc:
+    except DeepSeekConfigurationError as exc:
         await job_port.fail(run_id, str(exc))
-    except (DeepSeekStructuredOutputError, KimiStructuredOutputError) as exc:
+    except DeepSeekStructuredOutputError as exc:
         logger.warning(
             "recommendation structured output failed run_id=%s "
             "stage=%s attempt=%s error_kind=%s validation=%s",
@@ -104,7 +98,7 @@ async def execute_recommendation_agent(
                 exc.response_model_name, "推荐结果格式异常，已自动重试仍失败，请重新生成推荐"
             ),
         )
-    except (DeepSeekProviderError, KimiProviderError) as exc:
+    except DeepSeekProviderError as exc:
         logger.warning(
             "recommendation provider failed run_id=%s error_class=%s",
             run_id,
@@ -128,17 +122,17 @@ async def execute_recommendation_agent_inline(run_id: UUID, session: AsyncSessio
 
     service = RecommendationService(session)
     if await service.project_type_for_run(run_id) == BidProjectType.PPT_SOLUTION:
-        kimi = KimiClient()
+        provider = DeepSeekClient()
         ppt_tools = PptSelectionServiceTools(
             run_id,
             service,
-            provider=kimi.provider,
-            model=kimi.model,
-            prompt_version=kimi.prompt_version,
+            provider=provider.provider,
+            model=provider.model,
+            prompt_version=provider.prompt_version,
         )
         await execute_recommendation_agent(
             run_id,
-            runner=PptSelectionAgentRunner(kimi, ppt_tools),
+            runner=PptSelectionAgentRunner(provider, ppt_tools),
             job_port=PptSelectionJobPort(service),
         )
         return

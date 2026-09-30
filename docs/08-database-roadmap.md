@@ -109,7 +109,7 @@ Supplier：
 
 - `scm_ppt_solution_package`：人工确认的套装头、价格档位和总价；
 - `scm_ppt_solution_package_item`：套装内的候选商品、数量、冻结单价及行金额；
-- `scm_ppt_generation_task`：Kimi PPT 生成状态、模板、输出文件和 Provider 审计信息；
+- `scm_ppt_generation_task`：本地 Python PPT 生成状态、模板、输出文件和 Provider 审计信息；
 - `scm_bid_project_file.file_type` 增加 `PPT_TEMPLATE`、`PPT_EXPORT`。
 
 对应 Revision：`20260928_0041`。商品推荐仍复用 Recommendation Run/Candidate/Confirmation，AI 不直接写正式商品库。

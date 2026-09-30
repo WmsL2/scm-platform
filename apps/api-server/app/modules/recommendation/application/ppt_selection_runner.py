@@ -38,7 +38,7 @@ class PptRecommendationTools(RecommendationTools, Protocol):
 
 
 class PptSelectionAgentRunner(AgentRunner):
-    """Type-5 semantic selection; Kimi may rank only controlled Product Master rows."""
+    """Type-5 semantic selection over controlled Product Master rows only."""
 
     MAX_TOOL_CALLS = 8
 
@@ -58,7 +58,7 @@ class PptSelectionAgentRunner(AgentRunner):
             raise RecommendationAgentContractError("PPT 方案需求说明不能少于 20 个字符")
         self._tool_calls = 0
         await self._check_cancelled(is_cancelled)
-        await self._report(report_progress, "ANALYZING", 10, "Kimi 正在理解甲方需求")
+        await self._report(report_progress, "ANALYZING", 10, "AI 正在理解甲方需求")
         analysis = await self._complete(
             RequirementAnalysis,
             system=(
@@ -91,7 +91,7 @@ class PptSelectionAgentRunner(AgentRunner):
         )
         allowed_keys = {item.key for item in categories}
         if any(choice.category_key not in allowed_keys for choice in choices.choices):
-            raise RecommendationAgentContractError("Kimi 返回了商品主数据中不存在的类目")
+            raise RecommendationAgentContractError("AI 返回了商品主数据中不存在的类目")
 
         groups: list[list[ProductCandidate]] = []
         for index, choice in enumerate(choices.choices, start=1):
@@ -123,7 +123,7 @@ class PptSelectionAgentRunner(AgentRunner):
         if not candidates:
             return self._result(analysis, choices.choices, [])
 
-        await self._report(report_progress, "RANKING", 75, "Kimi 正在生成推荐排序")
+        await self._report(report_progress, "RANKING", 75, "AI 正在生成推荐排序")
         ranking = await self._complete(
             CandidateRanking,
             system=(
@@ -139,7 +139,7 @@ class PptSelectionAgentRunner(AgentRunner):
         if len(set(ranked_ids)) != len(ranked_ids) or any(
             product_id not in allowed_ids for product_id in ranked_ids
         ):
-            raise RecommendationAgentContractError("Kimi 返回了无效或重复的候选商品 ID")
+            raise RecommendationAgentContractError("AI 返回了无效或重复的候选商品 ID")
         ordered = sorted(ranking.candidates, key=lambda item: item.score, reverse=True)
         await self._report(report_progress, "CANDIDATES_READY", 100, "AI 推荐候选已生成")
         return self._result(analysis, choices.choices, ordered)
