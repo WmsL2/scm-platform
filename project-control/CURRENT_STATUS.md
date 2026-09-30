@@ -9,7 +9,7 @@ Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Su
 
 > 2026-09-29：自由推品 Requirement V8 已在 `codex/feat/recommendation-category-catalog-snapshot` 实现：需求解析仅保留客户明确类目原词，后端按正式可推荐商品、供应商状态及非类目硬条件生成并冻结一级、二级、三级类目树 JSON 快照，AI 只能返回其中存在的 key；选一级展开所有下级、选二级展开所有三级路径、选三级精确筛选。未知 key 被拒绝，明确类目无匹配不回退全库。Revision `20260929_0042` 新增 Run 快照 JSON 列。后端推荐核心/Agent/适配测试以及 Ruff、Mypy 已通过；前端类型检查、生产构建、真实 DeepSeek 新 Run 与浏览器验收待执行（ADR-0045）。
 
-> 2026-09-30：类型 5 PPT 方案已在 `feat/type5-deepseek-python-ppt` 改为 DeepSeek + 本地 Python 渲染。类型 5 的受控语义选品与类型 4 共用 DeepSeek 配置；人工确认单品与套装后，`python-pptx` 按固定商品页生成原生可编辑 PPTX：顶部商品名称、左侧参数、中央分隔线、右侧商品图。正式商品的本地图片会自动插入，套装最多显示四张。类型 5 固定使用系统默认版式，不上传或读取客户 PPT 模板。移除 Kimi 运行依赖；无 Migration、权限变化。推荐模块 54 项测试、Ruff、Mypy、前端类型检查、类型 5 Vitest 与生产构建已通过；真实浏览器全流程视觉验收待执行（ADR-0046）。
+> 2026-09-30：类型 5 PPT 方案已在 `feat/type5-deepseek-python-ppt` 改为 DeepSeek + 本地 Python 渲染。类型 5 与类型 4 共用 DeepSeek 配置，但类型 5 的 DeepSeek 仅做需求理解和受控类目选择，不做商品排序；人工确认单品与套装后，`python-pptx` 按固定商品页生成原生可编辑 PPTX：顶部商品名称、左侧参数、中央分隔线、右侧商品图。正式商品的本地图片会自动插入，套装最多显示四张。类型 5 固定使用系统默认版式，不上传或读取客户 PPT 模板。移除 Kimi 运行依赖；无 Migration、权限变化。推荐模块 54 项测试、Ruff、Mypy、前端类型检查、类型 5 Vitest 与生产构建已通过；真实浏览器全流程视觉验收待执行（ADR-0046）。
 
 > 2026-09-30：类型 5 使用独立的方案卡和具体商品详情，不重复展示类型 4 的全量候选表；每张方案可直接确认其中商品，手工组套仍在同页。无新增权限。
 
