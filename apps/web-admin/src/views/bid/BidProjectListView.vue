@@ -88,9 +88,8 @@ function chooseBusinessFile(upload: { raw: File }) {
 }
 
 function chooseRecommendationTemplate(upload: { raw: File }) {
-  const suffix = form.project_type === "PPT_SOLUTION" ? ".pptx" : ".xlsx"
-  if (!upload.raw.name.toLowerCase().endsWith(suffix)) {
-    ElMessage.error(`请选择 ${suffix} 文件`)
+  if (!upload.raw.name.toLowerCase().endsWith(".xlsx")) {
+    ElMessage.error("请选择 .xlsx 文件")
     return
   }
   if (upload.raw.size > 25 * 1024 * 1024) {
@@ -143,7 +142,7 @@ async function create() {
       buyer_name: form.buyer_name.trim(),
       remark: form.remark.trim(),
       file: businessFile.value,
-      recommendation_template: recommendationTemplate.value,
+      recommendation_template: form.project_type === "FREE_RECOMMENDATION" ? recommendationTemplate.value : undefined,
     }))
     const isFree = result.project_type === "FREE_RECOMMENDATION"
     const isPpt = result.project_type === "PPT_SOLUTION"
@@ -230,8 +229,8 @@ onMounted(() => {
         <el-form-item v-if="form.project_type === 'FILTER_RECOMMENDATION'" label="客户需求 Excel *" class="full">
           <div class="upload-control"><el-upload ref="businessUpload" :auto-upload="false" :limit="1" :show-file-list="false" accept=".xlsx" :on-change="chooseBusinessFile"><el-button>选择 .xlsx 文件</el-button></el-upload><div v-if="businessFile" class="selected-file"><span>{{ businessFile.name }}</span><el-button link type="danger" @click="clearBusinessFile">移除</el-button></div></div>
         </el-form-item>
-        <el-form-item v-if="form.project_type === 'FREE_RECOMMENDATION' || form.project_type === 'PPT_SOLUTION'" :label="form.project_type === 'FREE_RECOMMENDATION' ? '自由推品结果模板 *' : '客户 PPT 模板（可选，不上传则使用系统默认模板）'" class="full">
-          <div class="upload-control"><el-upload ref="recommendationUpload" :auto-upload="false" :limit="1" :show-file-list="false" :accept="form.project_type === 'PPT_SOLUTION' ? '.pptx' : '.xlsx'" :on-change="chooseRecommendationTemplate"><el-button>选择 {{ form.project_type === 'PPT_SOLUTION' ? '.pptx' : '.xlsx' }} 模板</el-button></el-upload><div v-if="recommendationTemplate" class="selected-file"><span>{{ recommendationTemplate.name }}</span><el-button link type="danger" @click="clearRecommendationTemplate">移除</el-button></div></div>
+        <el-form-item v-if="form.project_type === 'FREE_RECOMMENDATION'" label="自由推品结果模板 *" class="full">
+          <div class="upload-control"><el-upload ref="recommendationUpload" :auto-upload="false" :limit="1" :show-file-list="false" accept=".xlsx" :on-change="chooseRecommendationTemplate"><el-button>选择 .xlsx 模板</el-button></el-upload><div v-if="recommendationTemplate" class="selected-file"><span>{{ recommendationTemplate.name }}</span><el-button link type="danger" @click="clearRecommendationTemplate">移除</el-button></div></div>
         </el-form-item>
         <el-form-item :label="form.project_type === 'FREE_RECOMMENDATION' || form.project_type === 'PPT_SOLUTION' ? '场景需求说明 *（至少20字）' : '备注'" class="full">
           <el-input v-model="form.remark" type="textarea" :rows="4" maxlength="5000" show-word-limit />

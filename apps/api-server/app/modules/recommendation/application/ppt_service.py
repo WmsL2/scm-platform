@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-import json
+import logging
 import tempfile
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -14,13 +15,16 @@ from app.common.contracts import AppError
 from app.core.config import get_settings
 from app.core.transaction import transaction_scope
 from app.infrastructure.adapters import ObjectStorage, get_object_storage
-from app.integrations.kimi.client import KimiClient, KimiConfigurationError, KimiProviderError
 from app.modules.bid.domain.lifecycle import BidFileType, BidProjectStatus, ensure_transition
 from app.modules.bid.infrastructure.models import BidProjectEvent, BidProjectFile
+from app.modules.catalog.application.media import local_media_storage_key
+from app.modules.recommendation.application.ppt_renderer import PptRenderer
 from app.modules.recommendation.infrastructure.models import (
     PptGenerationTask,
     PptSolutionPackage,
     PptSolutionPackageItem,
+    RecommendationCandidate,
+    RecommendationConfirmation,
 )
 from app.modules.recommendation.infrastructure.ppt_repository import PptSolutionRepository
 from app.modules.recommendation.ppt_schemas import (
@@ -32,6 +36,8 @@ from app.modules.recommendation.ppt_schemas import (
 )
 from app.modules.recommendation.template.schemas import RecommendationRunStatus
 
+logger = logging.getLogger(__name__)
+
 
 class PptSolutionService:
     def __init__(
@@ -39,11 +45,11 @@ class PptSolutionService:
         session: AsyncSession,
         *,
         storage: ObjectStorage | None = None,
-        kimi: KimiClient | None = None,
+        renderer: PptRenderer | None = None,
     ) -> None:
         self.session = session
         self.storage = storage or get_object_storage()
-        self.kimi = kimi or KimiClient()
+        self.renderer = renderer or PptRenderer()
         self.repository = PptSolutionRepository(session)
 
     async def create_package(
@@ -177,19 +183,18 @@ class PptSolutionService:
                 raise AppError("PPT_SOLUTION_RUN_NOT_CONFIRMED", "请先确认本次选品", 409)
             if not await self.repository.confirmed_candidates(run_id):
                 raise AppError("PPT_SOLUTION_SELECTION_REQUIRED", "至少选择一个商品", 409)
-            template = (
-                None
-                if use_default_template
-                else await self.repository.latest_template(project_id)
-            )
+            # Type 5 deliberately has one controlled system template. Keep the
+            # request field for wire compatibility, but do not bind project files.
+            del use_default_template
+            template = None
             task = PptGenerationTask(
                 project_id=project_id,
                 run_id=run_id,
                 template_file_id=template.id if template else None,
                 status=PptGenerationStatus.QUEUED.value,
-                provider="kimi-hosted-agent",
-                model=settings.kimi_model,
-                prompt_version=settings.kimi_prompt_version,
+                provider="deepseek-python-pptx",
+                model=settings.deepseek_model,
+                prompt_version="ppt-local-v2",
                 created_by=actor_id,
             )
             self.session.add(task)
@@ -198,9 +203,9 @@ class PptSolutionService:
         return self._task_response(task)
 
     async def execute_generation(self, task_id: uuid.UUID) -> None:
-        task = await self._start_task(task_id)
         saved_key: str | None = None
         try:
+            task = await self._start_task(task_id)
             project = await self.repository.project(task.project_id)
             if project is None:
                 raise AppError("PPT_SOLUTION_PROJECT_NOT_FOUND", "PPT 方案项目不存在", 404)
@@ -244,26 +249,24 @@ class PptSolutionService:
                 ],
                 "packages": [item.model_dump(mode="json") for item in packages],
             }
-            # Provider execution can take minutes. Close the read transaction before
-            # uploading resources and polling Kimi so no database lock/connection is held.
+            product_images = await self._load_product_images(candidates)
+            # Rendering can load a customer template. Close the read transaction before
+            # copying that file and creating the local PPTX so no database lock is held.
             await self.session.commit()
             with tempfile.TemporaryDirectory(prefix="scm-ppt-") as directory:
                 workdir = Path(directory)
-                source_path = workdir / "selected-products.json"
-                source_path.write_text(json.dumps(source, ensure_ascii=False), encoding="utf-8")
                 template_path = None
                 if template is not None:
                     template_path = workdir / "customer-template.pptx"
                     await self.storage.copy_to(template.storage_key, template_path)
-                artifact = await self.kimi.generate_ppt(
-                    title=f"{project.project_name} PPT 方案",
-                    instruction=self._generation_instruction(template is not None),
-                    source_path=source_path,
+                content = self.renderer.render(
+                    source,
                     template_path=template_path,
+                    product_images=product_images,
                 )
             version = await self.repository.next_output_version(project.id)
             saved_key = await self.storage.save(
-                f"bid-projects/{project.id}/ppt-exports/v{version}.pptx", artifact.content
+                f"bid-projects/{project.id}/ppt-exports/v{version}.pptx", content
             )
             async with transaction_scope(self.session):
                 locked_task = await self.repository.generation_for_update(task_id)
@@ -276,16 +279,16 @@ class PptSolutionService:
                     version_no=version,
                     original_filename=f"{project.project_code}-PPT方案-V{version}.pptx",
                     storage_key=saved_key,
-                    file_size=len(artifact.content),
-                    sha256=hashlib.sha256(artifact.content).hexdigest(),
+                    file_size=len(content),
+                    sha256=hashlib.sha256(content).hexdigest(),
                     created_by=locked_task.created_by,
                 )
                 self.session.add(output)
                 await self.session.flush()
                 locked_task.status = PptGenerationStatus.SUCCEEDED.value
                 locked_task.output_file_id = output.id
-                locked_task.provider_session_id = artifact.session_id[:255]
-                locked_task.provider_artifact_id = artifact.artifact_id[:255]
+                locked_task.provider_session_id = None
+                locked_task.provider_artifact_id = "local-python-pptx"
                 locked_task.completed_at = datetime.now(UTC).replace(tzinfo=None)
                 if project.status == BidProjectStatus.READY.value:
                     ensure_transition(project.status, BidProjectStatus.EXPORTED)
@@ -302,14 +305,24 @@ class PptSolutionService:
                             note=f"生成 PPT 方案第 {version} 版",
                         )
                     )
-        except (KimiConfigurationError, KimiProviderError, AppError) as exc:
+            # `next_output_version()` above is a read that starts SQLAlchemy's
+            # implicit transaction. In this standalone worker that means
+            # transaction_scope participates instead of owning the commit; without
+            # an explicit commit the output record is rolled back on session close
+            # while the PPTX file has already been written to local storage.
+            await self.session.commit()
+        except AppError as exc:
             if saved_key:
                 await self.storage.delete(saved_key)
             await self._fail_task(task_id, exc.message if isinstance(exc, AppError) else str(exc))
-        except Exception:
+        except Exception as exc:
+            logger.exception("PPT generation failed: task_id=%s", task_id)
             if saved_key:
                 await self.storage.delete(saved_key)
-            await self._fail_task(task_id, "PPT 生成失败，请稍后重试")
+            await self._fail_task(
+                task_id,
+                f"PPT 生成失败（{type(exc).__name__}），请检查服务端日志。",
+            )
 
     async def list_generations(self, project_id: uuid.UUID) -> list[PptGenerationTaskResponse]:
         return [self._task_response(task) for task in await self.repository.generations(project_id)]
@@ -341,6 +354,13 @@ class PptSolutionService:
             task.status = PptGenerationStatus.FAILED.value
             task.error = error.strip()[:4000]
             task.completed_at = datetime.now(UTC).replace(tzinfo=None)
+        # See execute_generation(): this method is also called by the standalone
+        # worker after a read has opened an implicit transaction.
+        await self.session.commit()
+
+    async def mark_generation_failed(self, task_id: uuid.UUID, error: str) -> None:
+        """Persist a dispatch failure so the UI never waits on a stuck queued task."""
+        await self._fail_task(task_id, error)
 
     @staticmethod
     def _candidate_price(snapshot: dict[str, object], campaign_price: Decimal | None) -> Decimal:
@@ -355,20 +375,25 @@ class PptSolutionService:
             raise AppError("PPT_PACKAGE_PRICE_REQUIRED", "套装商品价格不能小于零", 422)
         return value
 
-    @staticmethod
-    def _generation_instruction(has_template: bool) -> str:
-        template_rule = (
-            "严格参考绑定的 customer-template.pptx 的整体布局、颜色和品牌元素。"
-            if has_template
-            else "未提供甲方模板，请使用系统默认的简洁商务商品方案版式。"
-        )
-        return (
-            "读取 selected-products.json，生成中文、原生可编辑的 .pptx。"
-            f"{template_rule}只使用文件中的真实商品、价格、参数和人工说明，不得补造事实。"
-            "packages 是人工确认的套装，按套装整体展示并列明组成、数量和总价；"
-            "未进入套装的 single_products 按单品方案展示。价格保留两位小数。"
-            "所有元素必须可编辑，不要把整页做成图片，最终文件写入 output 目录。"
-        )
+    async def _load_product_images(
+        self,
+        candidates: Sequence[tuple[RecommendationCandidate, RecommendationConfirmation]],
+    ) -> dict[str, bytes]:
+        """Read locally managed image references without making network requests."""
+        images: dict[str, bytes] = {}
+        for candidate, _confirmation in candidates:
+            product_snapshot = getattr(candidate, "product_snapshot", {})
+            if not isinstance(product_snapshot, dict):
+                continue
+            image_key = local_media_storage_key(product_snapshot.get("image_reference"))
+            product_id = str(product_snapshot.get("id") or getattr(candidate, "product_id", ""))
+            if image_key is None or not product_id:
+                continue
+            try:
+                images[product_id] = await self.storage.read(image_key)
+            except (OSError, ValueError):
+                continue
+        return images
 
     @staticmethod
     def _task_response(task: PptGenerationTask) -> PptGenerationTaskResponse:

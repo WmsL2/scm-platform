@@ -8,7 +8,6 @@ from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
 from typing import Any
-from zipfile import BadZipFile, ZipFile
 
 from openpyxl import load_workbook
 from sqlalchemy import func, select
@@ -111,11 +110,14 @@ class BidProjectService:
                     "PPT 方案需求说明至少需要 20 个有效字符",
                     422,
                 )
-            if recommendation_template_filename is not None:
-                if recommendation_template_bytes is None:
-                    raise AppError("PPT_TEMPLATE_INVALID", "PPT 模板文件无效", 422)
-                self._validate_ppt_template(
-                    recommendation_template_filename, recommendation_template_bytes
+            if (
+                recommendation_template_filename is not None
+                or recommendation_template_bytes is not None
+            ):
+                raise AppError(
+                    "PPT_TEMPLATE_NOT_ALLOWED",
+                    "PPT 方案统一使用系统默认模板，不支持上传项目模板",
+                    422,
                 )
         project_id = uuid.uuid4()
         template: BidTemplate | None = None
@@ -158,12 +160,6 @@ class BidProjectService:
                 assert recommendation_template_bytes is not None
                 template_storage_key = await self.storage.save(
                     f"bid-projects/{project_id}/recommendation-templates/v1.xlsx",
-                    recommendation_template_bytes,
-                )
-                saved_keys.append(template_storage_key)
-            elif recommendation_template_bytes is not None:
-                template_storage_key = await self.storage.save(
-                    f"bid-projects/{project_id}/ppt-templates/v1.pptx",
                     recommendation_template_bytes,
                 )
                 saved_keys.append(template_storage_key)
@@ -229,21 +225,6 @@ class BidProjectService:
                             header_row=analysis.header_row,
                             data_start_row=analysis.data_start_row,
                             mapping_json=analysis.mapping_json,
-                        )
-                    )
-                elif template_storage_key is not None:
-                    assert recommendation_template_bytes is not None
-                    assert recommendation_template_filename is not None
-                    self.session.add(
-                        BidProjectFile(
-                            project_id=project_id,
-                            file_type=BidFileType.PPT_TEMPLATE.value,
-                            version_no=1,
-                            original_filename=Path(recommendation_template_filename).name[:255],
-                            storage_key=template_storage_key,
-                            file_size=len(recommendation_template_bytes),
-                            sha256=hashlib.sha256(recommendation_template_bytes).hexdigest(),
-                            created_by=actor_id,
                         )
                     )
                 for row in parsed_rows:
@@ -917,19 +898,6 @@ class BidProjectService:
             raise AppError("RECOMMENDATION_TEMPLATE_INVALID", "推荐模板必须是非空 .xlsx 文件", 422)
         if len(file_bytes) > MAX_FILE_BYTES:
             raise AppError("RECOMMENDATION_TEMPLATE_INVALID", "推荐模板超过大小限制", 422)
-
-    @staticmethod
-    def _validate_ppt_template(filename: str, file_bytes: bytes) -> None:
-        if Path(filename).suffix.lower() != ".pptx" or not file_bytes:
-            raise AppError("PPT_TEMPLATE_INVALID", "PPT 模板必须是非空 .pptx 文件", 422)
-        if len(file_bytes) > MAX_FILE_BYTES:
-            raise AppError("PPT_TEMPLATE_INVALID", "PPT 模板超过大小限制", 422)
-        try:
-            with ZipFile(BytesIO(file_bytes)) as archive:
-                if "ppt/presentation.xml" not in archive.namelist():
-                    raise AppError("PPT_TEMPLATE_INVALID", "文件不是有效的 PPTX 模板", 422)
-        except BadZipFile:
-            raise AppError("PPT_TEMPLATE_INVALID", "文件不是有效的 PPTX 模板", 422) from None
 
     @staticmethod
     def _fingerprint(sheet_name: str, header_row: int, headers: list[str | None]) -> str:

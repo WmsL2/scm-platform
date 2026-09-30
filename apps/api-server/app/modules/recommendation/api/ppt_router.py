@@ -1,3 +1,4 @@
+import logging
 import uuid
 from io import BytesIO
 from typing import Annotated
@@ -8,7 +9,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import ApiResponse, success
-from app.core.database import FunctionSessionDep, get_db_session
+from app.core.config import get_settings
+from app.core.database import SessionLocal, get_db_session
 from app.infrastructure.adapters import get_task_queue
 from app.modules.auth.dependencies import require_permission, require_permission_before_response
 from app.modules.auth.schemas import CurrentUser
@@ -22,6 +24,7 @@ from app.modules.recommendation.ppt_schemas import (
 
 router = APIRouter(prefix="/ppt-solution-projects", tags=["ppt-solution"])
 SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
+logger = logging.getLogger(__name__)
 
 
 @router.get("/runs/{run_id}/packages", response_model=ApiResponse[list[PptPackageResponse]])
@@ -65,28 +68,39 @@ async def create_generation(
     current: Annotated[
         CurrentUser, Depends(require_permission_before_response("recommendation:export"))
     ],
-    session: FunctionSessionDep,
     background_tasks: BackgroundTasks,
 ) -> ApiResponse[PptGenerationTaskResponse]:
-    service = PptSolutionService(session)
-    task = await service.create_generation(
-        project_id,
-        run_id,
-        current.user_id,
-        use_default_template=payload.use_default_template,
-    )
-    background_tasks.add_task(_dispatch_generation, task.id)
+    # Create with an independent transaction.  In local inline mode, a FastAPI
+    # BackgroundTask can be cancelled after setting the task to RUNNING; that
+    # leaves a permanently stuck task and no PPT download.  Local rendering is
+    # deliberately synchronous here, while a real queue remains asynchronous.
+    async with SessionLocal() as task_session:
+        task = await PptSolutionService(task_session).create_generation(
+            project_id,
+            run_id,
+            current.user_id,
+            use_default_template=payload.use_default_template,
+        )
+    if get_settings().task_mode == "inline":
+        await _dispatch_generation(task.id)
+    else:
+        background_tasks.add_task(_dispatch_generation, task.id)
     return success(task)
 
 
 async def _dispatch_generation(task_id: uuid.UUID) -> None:
-    from app.core.database import SessionLocal
-
     async with SessionLocal() as task_session:
-        await get_task_queue().enqueue(
-            PptSolutionService(task_session).execute_generation,
-            task_id,
-        )
+        service = PptSolutionService(task_session)
+        try:
+            await get_task_queue().enqueue(service.execute_generation, task_id)
+        except Exception as exc:
+            # Do not leave a user-facing task queued forever when a background
+            # dispatcher has been configured incorrectly.
+            logger.exception("PPT generation dispatch failed: task_id=%s", task_id)
+            await service.mark_generation_failed(
+                task_id,
+                f"PPT 后台任务派发失败（{type(exc).__name__}），请检查服务端任务配置。",
+            )
 
 
 @router.get(

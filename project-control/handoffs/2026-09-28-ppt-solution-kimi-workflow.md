@@ -1,4 +1,6 @@
-# 类型 5 PPT 方案交接
+# 类型 5 PPT 方案交接（已由 ADR-0046 取代）
+
+> 2026-09-30：本文件中的 Kimi 配置与 Hosted Agent 步骤已废弃。当前实现改为 DeepSeek 选品 + 本地 Python PPTX 渲染，见 `2026-09-30-type5-deepseek-python-ppt.md` 与 ADR-0046。
 
 ## 当前状态
 
