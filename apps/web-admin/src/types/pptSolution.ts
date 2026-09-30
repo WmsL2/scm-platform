@@ -12,6 +12,16 @@ export interface PptRecommendationConfig {
   updated_at: string
 }
 
+export interface PptPriceBandAvailability {
+  price_band_index: number
+  min_price: string | null
+  max_price: string
+  candidate_count: number
+  required_count: number
+  can_generate: boolean
+  message: string
+}
+
 export interface PptSolutionPlan {
   id: string
   run_id: string

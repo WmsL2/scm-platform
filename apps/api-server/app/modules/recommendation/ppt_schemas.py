@@ -47,6 +47,18 @@ class PptRecommendationConfigResponse(PptRecommendationConfigUpdateRequest):
     updated_at: datetime
 
 
+class PptPriceBandAvailabilityResponse(BaseModel):
+    """Frozen candidate availability for one Type-5 price band."""
+
+    price_band_index: int = Field(ge=1, le=12)
+    min_price: Decimal | None = Field(default=None, ge=0)
+    max_price: Decimal = Field(gt=0)
+    candidate_count: int = Field(ge=0)
+    required_count: int = Field(ge=1)
+    can_generate: bool
+    message: str
+
+
 class PptSolutionPlanItemResponse(BaseModel):
     candidate_id: UUID
     rank: int
@@ -63,8 +75,36 @@ class PptSolutionPlanResponse(BaseModel):
     name: str
     summary: str | None
     candidate_ids: list[UUID]
+    selection_source: str
+    selection_provider: str | None
+    selection_model: str | None
+    selection_prompt_version: str | None
     items: list[PptSolutionPlanItemResponse]
     created_at: datetime
+
+
+class PptPlanProposal(BaseModel):
+    """AI may only assemble server-issued Type-5 candidate IDs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    price_band_index: int = Field(ge=1, le=12)
+    plan_no: int = Field(ge=1, le=20)
+    name: str = Field(min_length=1, max_length=255)
+    summary: str | None = Field(default=None, max_length=2000)
+    candidate_ids: list[UUID] = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def unique_candidates(self) -> "PptPlanProposal":
+        if len(self.candidate_ids) != len(set(self.candidate_ids)):
+            raise ValueError("candidate_ids must be unique")
+        return self
+
+
+class PptPlanProposalList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plans: list[PptPlanProposal] = Field(default_factory=list, max_length=240)
 
 
 class PptPackageItemInput(BaseModel):

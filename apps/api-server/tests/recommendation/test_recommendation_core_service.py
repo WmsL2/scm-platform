@@ -17,6 +17,7 @@ from app.modules.bid.domain.lifecycle import (
 from app.modules.bid.infrastructure.models import BidProject, BidProjectFile
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Product
+from app.modules.recommendation.application.ppt_catalog_service import PptCatalogService
 from app.modules.recommendation.application.service import RecommendationService
 from app.modules.recommendation.infrastructure.models import (
     PptRecommendationConfig,
@@ -342,12 +343,66 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
         )
         with pytest.raises(AppError, match="真实类目清单之外"):
             await service.record_catalog_category_matches(catalog_run.id, ["invented-key"])
+
+        # Type 5 owns a separate implementation, but its V8 candidate set is
+        # intentionally identical before Type-5 price-band plan composition.
+        ppt_project = BidProject(
+            project_code=f"PPT{token[:11]}",
+            project_name="类型5独立V8召回测试",
+            buyer_name="测试客户",
+            status=BidProjectStatus.IMPORTED.value,
+            import_status=BidImportStatus.NOT_REQUIRED.value,
+            project_type=BidProjectType.PPT_SOLUTION.value,
+            remark=project.remark,
+            created_by=actor_id,
+        )
+        session.add(ppt_project)
+        await session.flush()
+        session.add(
+            PptRecommendationConfig(
+                project_id=ppt_project.id,
+                recommendation_mode="SINGLE",
+                price_bands=[{"min_price": "1", "max_price": "9999"}],
+                candidate_count_per_band=1,
+                plan_count_per_band=1,
+                fulfillment_deadline=None,
+                created_by=actor_id,
+                updated_by=actor_id,
+            )
+        )
+        await session.flush()
+        ppt_run = await service.create_run(ppt_project.id, actor_id)
+        ppt_catalog = PptCatalogService(session)
+        await ppt_catalog.begin_analysis(ppt_run.id)
+        await ppt_catalog.save_parsed_requirement(
+            ppt_run.id,
+            ParsedRequirement(
+                requirement_version="ppt-v8",
+                explicit_category_keywords=["出行用品"],
+                discount_rate_max=Decimal("0.8"),
+                gross_margin_min=Decimal("0.06"),
+            ),
+            provider="deepseek",
+            model="deepseek-chat",
+            prompt_version="ppt-v8",
+        )
+        ppt_snapshot = await ppt_catalog.create_category_catalog_snapshot(ppt_run.id)
+        ppt_parent = next(
+            item
+            for item in ppt_snapshot.items
+            if item.level1_name == "食品饮料" and item.level == "LEVEL1"
+        )
+        await ppt_catalog.record_catalog_category_matches(ppt_run.id, [ppt_parent.category_key])
+        assert (
+            await ppt_catalog.persist_eligible_candidates(ppt_run.id)
+            == selected_item.candidate_count
+        )
         assert (await session.get(RecommendationCandidate, saved[0].id)) is not None
         await session.rollback()
 
 
 @pytest.mark.asyncio
-async def test_ppt_solution_run_reads_saved_config_by_project_id() -> None:
+async def test_ppt_solution_run_keeps_customer_requirement_separate_from_saved_config() -> None:
     actor_id = uuid.uuid4()
     token = uuid.uuid4().hex
     project = BidProject(
@@ -380,11 +435,7 @@ async def test_ppt_solution_run_reads_saved_config_by_project_id() -> None:
         run = await RecommendationService(session).create_run(project.id, actor_id)
 
         assert run.status == RecommendationRunStatus.QUEUED.value
-        assert "推品方式：SINGLE" in run.raw_requirement_snapshot
-        assert '"min_price": "100"' in run.raw_requirement_snapshot
-        assert '"max_price": "200"' in run.raw_requirement_snapshot
-        assert "每个方案商品数量：13" in run.raw_requirement_snapshot
-        assert "每档生成方案数：6" in run.raw_requirement_snapshot
+        assert run.raw_requirement_snapshot == project.remark
         service = RecommendationService(session)
         missing_category = f"类型5无匹配类目-{token}"
         await service.save_parsed_requirement(
