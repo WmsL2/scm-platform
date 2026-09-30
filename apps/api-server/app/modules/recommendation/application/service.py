@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Literal, cast
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError, PageParams
@@ -22,6 +24,7 @@ from app.modules.catalog.application.product_export_columns import PRODUCT_EXPOR
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.recommendation.domain.lifecycle import ensure_transition
 from app.modules.recommendation.infrastructure.models import (
+    PptRecommendationConfig,
     RecommendationCandidate,
     RecommendationCategoryChoice,
     RecommendationConfirmation,
@@ -102,6 +105,27 @@ class RecommendationService:
                         "请先确认最新推品模板映射",
                         409,
                     )
+            if project.project_type == BidProjectType.PPT_SOLUTION.value:
+                config = await self.session.scalar(
+                    select(PptRecommendationConfig).where(
+                        PptRecommendationConfig.project_id == project.id
+                    )
+                )
+                if config is None:
+                    raise AppError(
+                        "PPT_RECOMMENDATION_CONFIG_REQUIRED",
+                        "请先填写类型 5 的推品方式、价格档和生成数量",
+                        409,
+                    )
+                requirement = (
+                    f"{requirement}\n\n"
+                    "【系统确认的推品配置，必须遵守】\n"
+                    f"推品方式：{config.recommendation_mode}\n"
+                    f"价格档：{json.dumps(config.price_bands, ensure_ascii=False)}\n"
+                    f"每个方案商品数量：{config.candidate_count_per_band}\n"
+                    f"每档生成方案数：{config.plan_count_per_band}\n"
+                    f"履约截止日：{config.fulfillment_deadline or '未指定'}"
+                )
             if project.status in {
                 BidProjectStatus.READY.value,
                 BidProjectStatus.EXPORTED.value,
@@ -144,6 +168,17 @@ class RecommendationService:
         if project is None:
             raise AppError("RECOMMENDATION_PROJECT_NOT_FOUND", "推品项目不存在", 404)
         return BidProjectType(project.project_type)
+
+    async def ppt_recommendation_config_for_run(self, run_id: uuid.UUID) -> PptRecommendationConfig:
+        run = await self._run_or_404(run_id)
+        config = await self.session.scalar(
+            select(PptRecommendationConfig).where(
+                PptRecommendationConfig.project_id == run.project_id
+            )
+        )
+        if config is None:
+            raise AppError("PPT_RECOMMENDATION_CONFIG_REQUIRED", "类型 5 推品配置不存在", 409)
+        return config
 
     async def get_run(self, run_id: uuid.UUID) -> RecommendationRunResponse:
         run = await self.repository.run_by_id(run_id)
@@ -195,9 +230,7 @@ class RecommendationService:
             )
         ]
 
-    async def create_category_catalog_snapshot(
-        self, run_id: uuid.UUID
-    ) -> CategoryCatalogSnapshot:
+    async def create_category_catalog_snapshot(self, run_id: uuid.UUID) -> CategoryCatalogSnapshot:
         """Freeze actual selectable category-tree nodes before the model maps request terms."""
         async with transaction_scope(self.session):
             run = await self._run_or_404_for_update(run_id)
@@ -440,6 +473,100 @@ class RecommendationService:
             await self.session.flush()
         return len(candidates)
 
+    async def persist_ppt_eligible_candidates(self, run_id: uuid.UUID) -> int:
+        """Freeze the complete Type-5 price-band pool without applying Type-4 limits.
+
+        Type 4 persists its own hard-filter result set.  Type 5 instead keeps every
+        formally eligible product in the configured agreement-price bands, so its
+        per-plan product quantity never acts as a candidate-pool limit.
+        """
+        async with transaction_scope(self.session):
+            run = await self._run_or_404_for_update(run_id)
+            # Type 5 no longer sends a bounded product list to the model for
+            # ranking. Its runner reaches this point directly after controlled
+            # category selection, while the Run is still RETRIEVING. This branch
+            # belongs only to the Type-5 persistence path; Type 4 is unchanged.
+            if run.status == RecommendationRunStatus.RETRIEVING.value:
+                self._transition(run, RecommendationRunStatus.RANKING)
+            elif run.status != RecommendationRunStatus.RANKING.value:
+                raise AppError(
+                    "RECOMMENDATION_RUN_NOT_RANKING", "当前推品任务不能保存候选商品", 409
+                )
+            if await self.repository.candidates(run_id):
+                raise AppError(
+                    "RECOMMENDATION_CANDIDATES_ALREADY_PERSISTED", "候选商品已保存，不能覆盖", 409
+                )
+            config = await self.session.scalar(
+                select(PptRecommendationConfig).where(
+                    PptRecommendationConfig.project_id == run.project_id
+                )
+            )
+            if config is None:
+                raise AppError("PPT_RECOMMENDATION_CONFIG_REQUIRED", "类型 5 推品配置不存在", 409)
+            category_paths = [
+                CategoryPath(
+                    level1_name=choice.level1_name,
+                    level2_name=choice.level2_name,
+                    level3_name=choice.level3_name,
+                )
+                for choice in await self.repository.category_choices(run.id)
+            ]
+            if not category_paths:
+                self._transition(run, RecommendationRunStatus.NO_CANDIDATES)
+                await self._restore_project_after_terminal_run(
+                    run, "PPT_RECOMMENDATION_NO_MATCHED_CATEGORY"
+                )
+                return 0
+            requirement = self._parsed_requirement(run)
+            rows = [
+                (product, supplier)
+                for product, supplier in await self.repository.all_eligible_products(
+                    requirement, category_paths
+                )
+                if self._matches_ppt_price_bands(product.agreement_price, config.price_bands)
+            ]
+            if not rows:
+                self._transition(run, RecommendationRunStatus.NO_CANDIDATES)
+                await self._restore_project_after_terminal_run(
+                    run, "PPT_RECOMMENDATION_NO_CANDIDATES"
+                )
+                return 0
+            candidates = [
+                self._candidate_from_product(run.id, rank, product, supplier)
+                for rank, (product, supplier) in enumerate(rows, start=1)
+            ]
+            self.session.add_all(candidates)
+            self._transition(run, RecommendationRunStatus.CANDIDATES_READY)
+            self._transition(run, RecommendationRunStatus.WAITING_CONFIRMATION)
+            project = await self.repository.recommendation_project_for_update(run.project_id)
+            if project is None:
+                raise AppError("RECOMMENDATION_PROJECT_NOT_FOUND", "推品项目不存在", 404)
+            self._set_project_status(
+                project,
+                BidProjectStatus.SELECTING,
+                actor_id=run.created_by,
+                event_type="PPT_RECOMMENDATION_POOL_READY",
+            )
+            await self.session.flush()
+        return len(candidates)
+
+    @staticmethod
+    def _matches_ppt_price_bands(
+        price: Decimal | None, price_bands: list[dict[str, object]]
+    ) -> bool:
+        if price is None:
+            return False
+        for band in price_bands:
+            try:
+                maximum = Decimal(str(band.get("max_price")))
+                minimum_raw = band.get("min_price")
+                minimum = Decimal(str(minimum_raw)) if minimum_raw is not None else None
+            except (ArithmeticError, ValueError):
+                continue
+            if price <= maximum and (minimum is None or price >= minimum):
+                return True
+        return False
+
     async def mark_no_candidates(self, run_id: uuid.UUID) -> RecommendationRunResponse:
         async with transaction_scope(self.session):
             run = await self._run_or_404_for_update(run_id)
@@ -565,9 +692,7 @@ class RecommendationService:
             await self.session.refresh(confirmation)
         return self._confirmation_response(confirmation)
 
-    async def remove_confirmation(
-        self, candidate_id: uuid.UUID, actor_id: uuid.UUID
-    ) -> bool:
+    async def remove_confirmation(self, candidate_id: uuid.UUID, actor_id: uuid.UUID) -> bool:
         async with transaction_scope(self.session):
             row = await self.repository.candidate_with_run_for_update(candidate_id)
             if row is None:
@@ -780,18 +905,22 @@ class RecommendationService:
         if project.status == target.value:
             return
         previous = project.status
-        if not (
-            allow_selecting_restart
-            and previous == BidProjectStatus.SELECTING.value
-            and target == BidProjectStatus.MATCHING
-        ) and not (
-            allow_selection_reopen
-            and previous in {BidProjectStatus.READY.value, BidProjectStatus.EXPORTED.value}
-            and target == BidProjectStatus.SELECTING
-        ) and not (
-            allow_run_recovery
-            and previous == BidProjectStatus.MATCHING.value
-            and target in {BidProjectStatus.IMPORTED, BidProjectStatus.SELECTING}
+        if (
+            not (
+                allow_selecting_restart
+                and previous == BidProjectStatus.SELECTING.value
+                and target == BidProjectStatus.MATCHING
+            )
+            and not (
+                allow_selection_reopen
+                and previous in {BidProjectStatus.READY.value, BidProjectStatus.EXPORTED.value}
+                and target == BidProjectStatus.SELECTING
+            )
+            and not (
+                allow_run_recovery
+                and previous == BidProjectStatus.MATCHING.value
+                and target in {BidProjectStatus.IMPORTED, BidProjectStatus.SELECTING}
+            )
         ):
             ensure_bid_project_transition(previous, target)
         project.status = target.value

@@ -20,11 +20,47 @@ from app.modules.recommendation.ppt_schemas import (
     PptGenerationTaskResponse,
     PptPackageCreateRequest,
     PptPackageResponse,
+    PptRecommendationConfigResponse,
+    PptRecommendationConfigUpdateRequest,
+    PptSolutionPlanResponse,
 )
 
 router = APIRouter(prefix="/ppt-solution-projects", tags=["ppt-solution"])
 SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 logger = logging.getLogger(__name__)
+
+@router.get(
+    "/{project_id}/recommendation-config",
+    response_model=ApiResponse[PptRecommendationConfigResponse | None],
+)
+async def get_recommendation_config(
+    project_id: uuid.UUID,
+    _: Annotated[CurrentUser, Depends(require_permission("recommendation:detail"))],
+    session: SessionDep,
+) -> ApiResponse[PptRecommendationConfigResponse | None]:
+    return success(await PptSolutionService(session).config(project_id))
+
+@router.put(
+    "/{project_id}/recommendation-config",
+    response_model=ApiResponse[PptRecommendationConfigResponse],
+)
+async def put_recommendation_config(
+    project_id: uuid.UUID,
+    payload: PptRecommendationConfigUpdateRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("recommendation:run"))],
+    session: SessionDep,
+) -> ApiResponse[PptRecommendationConfigResponse]:
+    result = await PptSolutionService(session).save_config(project_id, payload, current.user_id)
+    return success(result)
+
+
+@router.get("/runs/{run_id}/plans", response_model=ApiResponse[list[PptSolutionPlanResponse]])
+async def list_plans(
+    run_id: uuid.UUID,
+    _: Annotated[CurrentUser, Depends(require_permission("recommendation:detail"))],
+    session: SessionDep,
+) -> ApiResponse[list[PptSolutionPlanResponse]]:
+    return success(await PptSolutionService(session).list_plans(run_id))
 
 
 @router.get("/runs/{run_id}/packages", response_model=ApiResponse[list[PptPackageResponse]])

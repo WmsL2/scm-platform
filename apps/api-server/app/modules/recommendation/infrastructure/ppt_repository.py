@@ -11,8 +11,10 @@ from app.modules.bid.domain.lifecycle import BidFileType, BidProjectType
 from app.modules.bid.infrastructure.models import BidProject, BidProjectFile
 from app.modules.recommendation.infrastructure.models import (
     PptGenerationTask,
+    PptRecommendationConfig,
     PptSolutionPackage,
     PptSolutionPackageItem,
+    PptSolutionPlan,
     RecommendationCandidate,
     RecommendationConfirmation,
     RecommendationRun,
@@ -47,13 +49,21 @@ class PptSolutionRepository:
             ),
         )
 
+    async def config(
+        self, project_id: uuid.UUID, *, lock: bool = False
+    ) -> PptRecommendationConfig | None:
+        statement = select(PptRecommendationConfig).where(
+            PptRecommendationConfig.project_id == project_id
+        )
+        if lock:
+            statement = statement.with_for_update()
+        return cast(PptRecommendationConfig | None, await self.session.scalar(statement))
+
     async def run_for_update(self, run_id: uuid.UUID) -> RecommendationRun | None:
         return cast(
             RecommendationRun | None,
             await self.session.scalar(
-                select(RecommendationRun)
-                .where(RecommendationRun.id == run_id)
-                .with_for_update()
+                select(RecommendationRun).where(RecommendationRun.id == run_id).with_for_update()
             ),
         )
 
@@ -73,6 +83,28 @@ class PptSolutionRepository:
             statement = statement.where(RecommendationCandidate.id.in_(candidate_ids))
         rows = await self.session.execute(statement)
         return [(row[0], row[1]) for row in rows]
+
+    async def candidates(self, run_id: uuid.UUID) -> list[RecommendationCandidate]:
+        return list(
+            (
+                await self.session.scalars(
+                    select(RecommendationCandidate)
+                    .where(RecommendationCandidate.run_id == run_id)
+                    .order_by(RecommendationCandidate.rank, RecommendationCandidate.id)
+                )
+            ).all()
+        )
+
+    async def plans(self, run_id: uuid.UUID) -> list[PptSolutionPlan]:
+        return list(
+            (
+                await self.session.scalars(
+                    select(PptSolutionPlan)
+                    .where(PptSolutionPlan.run_id == run_id)
+                    .order_by(PptSolutionPlan.price_band_index, PptSolutionPlan.plan_no)
+                )
+            ).all()
+        )
 
     async def packages(self, run_id: uuid.UUID) -> list[PptSolutionPackage]:
         return list(
@@ -101,9 +133,7 @@ class PptSolutionRepository:
         )
         return [(row[0], row[1]) for row in rows]
 
-    async def package_for_update(
-        self, package_id: uuid.UUID
-    ) -> PptSolutionPackage | None:
+    async def package_for_update(self, package_id: uuid.UUID) -> PptSolutionPackage | None:
         return cast(
             PptSolutionPackage | None,
             await self.session.scalar(
@@ -113,9 +143,7 @@ class PptSolutionRepository:
             ),
         )
 
-    async def package_items_for_update(
-        self, package_id: uuid.UUID
-    ) -> list[PptSolutionPackageItem]:
+    async def package_items_for_update(self, package_id: uuid.UUID) -> list[PptSolutionPackageItem]:
         return list(
             (
                 await self.session.scalars(
@@ -160,15 +188,11 @@ class PptSolutionRepository:
             ).all()
         )
 
-    async def generation_for_update(
-        self, task_id: uuid.UUID
-    ) -> PptGenerationTask | None:
+    async def generation_for_update(self, task_id: uuid.UUID) -> PptGenerationTask | None:
         return cast(
             PptGenerationTask | None,
             await self.session.scalar(
-                select(PptGenerationTask)
-                .where(PptGenerationTask.id == task_id)
-                .with_for_update()
+                select(PptGenerationTask).where(PptGenerationTask.id == task_id).with_for_update()
             ),
         )
 

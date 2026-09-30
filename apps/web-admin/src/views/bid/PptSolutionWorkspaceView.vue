@@ -7,7 +7,7 @@ import { pptSolutionApi } from "../../api/pptSolution"
 import { recommendationApi } from "../../api/recommendation"
 import { HttpError } from "../../shared/http"
 import type { BidProjectDetail } from "../../types/bid"
-import type { PptGenerationTask, PptPackage } from "../../types/pptSolution"
+import type { PptGenerationTask, PptPackage, PptRecommendationMode, PptSolutionPlan, PptSolutionPlanItem } from "../../types/pptSolution"
 import { RUN_STATUS_LABELS, type RecommendationCandidate, type RecommendationRun } from "../../types/recommendation"
 
 const route = useRoute()
@@ -17,25 +17,26 @@ const loading = ref(false)
 const acting = ref(false)
 const project = ref<BidProjectDetail>()
 const run = ref<RecommendationRun | null>(null)
+const plans = ref<PptSolutionPlan[]>([])
 const packages = ref<PptPackage[]>([])
 const generations = ref<PptGenerationTask[]>([])
-const checked = ref<string[]>([])
 const packageVisible = ref(false)
+const planDetailVisible = ref(false)
+const selectedPlan = ref<PptSolutionPlan>()
 const packageForm = reactive({ name: "", price_tier: "", reason: "", quantities: {} as Record<string, number> })
+const recommendationConfig = reactive({ recommendation_mode: "MIXED" as PptRecommendationMode, price_bands: [{ min_price: null as string | null, max_price: "50" }], candidate_count_per_band: 10, plan_count_per_band: 3, fulfillment_deadline: null as string | null })
 let generationTimer: ReturnType<typeof setInterval> | undefined
 
 const candidates = computed(() => run.value?.candidates ?? [])
 const confirmed = computed(() => candidates.value.filter((item) => item.confirmation))
-const unconfirmed = computed(() => candidates.value.filter((item) => !item.confirmation))
 const packagedCandidateIds = computed(() => new Set(packages.value.flatMap((item) => item.items.map((line) => line.candidate_id))))
 const directPptCount = computed(() => confirmed.value.filter((item) => !packagedCandidateIds.value.has(item.id)).length)
 const editable = computed(() => project.value?.status === "SELECTING")
-const canComplete = computed(() => editable.value && confirmed.value.length > 0)
+const canComplete = computed(() => editable.value && (run.value?.candidate_page?.confirmed_total ?? 0) > 0)
 const canGenerate = computed(() => Boolean(run.value && ["READY", "EXPORTED"].includes(project.value?.status ?? "") && ["CONFIRMED", "EXPORTED"].includes(run.value.status)))
 
 function nonEmptyText(value: unknown): string | null { const result = String(value ?? "").trim(); return result || null }
 function nameOf(item: RecommendationCandidate): string { return nonEmptyText(item.product_snapshot.product_name) || `商品 ${item.product_id.slice(0, 8)}` }
-function modelOf(item: RecommendationCandidate): string { return [item.product_snapshot.brand, item.product_snapshot.model].filter(Boolean).join(" / ") || "—" }
 function formatMoney(value: unknown): string {
   const raw = nonEmptyText(value)
   if (!raw) return "—"
@@ -44,7 +45,10 @@ function formatMoney(value: unknown): string {
   const integer = match[2].replace(/\B(?=(\d{3})+(?!\d))/g, ",")
   return `${match[1]}${integer}.${(match[3] ?? "").slice(0, 2).padEnd(2, "0")}`
 }
-function priceOf(item: RecommendationCandidate): string { return formatMoney(item.confirmation?.campaign_price ?? item.price_snapshot.agreement_price ?? item.price_snapshot.jd_price) }
+function planItemValue(item: PptSolutionPlanItem, key: string): string {
+  const value = item.product_snapshot[key] ?? item.price_snapshot[key]
+  return value === null || value === undefined || value === "" ? "-" : String(value)
+}
 function messageFor(error: unknown, fallback: string): string { return error instanceof HttpError ? error.response.message : fallback }
 
 async function load(): Promise<void> {
@@ -56,9 +60,21 @@ async function load(): Promise<void> {
       await router.replace(`/bid-projects/${projectId}`)
       return
     }
+    const savedConfig = await pptSolutionApi.config(projectId)
+    if (savedConfig) Object.assign(recommendationConfig, { recommendation_mode: savedConfig.recommendation_mode, price_bands: savedConfig.price_bands, candidate_count_per_band: savedConfig.candidate_count_per_band, plan_count_per_band: savedConfig.plan_count_per_band, fulfillment_deadline: savedConfig.fulfillment_deadline })
     const history = await recommendationApi.runs(projectId)
     run.value = history[0] ? await recommendationApi.run(history[0].id, 1, 100) : null
-    if (run.value) packages.value = await pptSolutionApi.packages(run.value.id)
+    if (run.value) {
+      const [loadedPlans, loadedPackages] = await Promise.all([
+        pptSolutionApi.plans(run.value.id),
+        pptSolutionApi.packages(run.value.id),
+      ])
+      plans.value = loadedPlans
+      packages.value = loadedPackages
+    } else {
+      plans.value = []
+      packages.value = []
+    }
     generations.value = await pptSolutionApi.generations(projectId)
   } catch (error) {
     ElMessage.error(messageFor(error, "加载 PPT 方案失败"))
@@ -68,35 +84,31 @@ async function load(): Promise<void> {
 async function startRun(): Promise<void> {
   acting.value = true
   try {
+    await pptSolutionApi.saveConfig(projectId, recommendationConfig)
     run.value = await recommendationApi.start(projectId)
     await load()
     if (run.value?.status === "FAILED") ElMessage.error(run.value.error || "AI 推荐执行失败")
-    else ElMessage.success("商品推荐已生成，请人工选择")
+    else ElMessage.success("推品方案已生成，请选择并确认商品")
   } catch (error) { ElMessage.error(messageFor(error, "生成推荐失败")) }
   finally { acting.value = false }
 }
 
-async function confirmCandidate(candidate: RecommendationCandidate): Promise<void> {
+function addPriceBand(): void { recommendationConfig.price_bands.push({ min_price: null, max_price: "" }) }
+function removePriceBand(index: number): void { if (recommendationConfig.price_bands.length > 1) recommendationConfig.price_bands.splice(index, 1) }
+
+function openPlanDetail(plan: PptSolutionPlan): void {
+  selectedPlan.value = plan
+  planDetailVisible.value = true
+}
+
+async function confirmPlan(plan: PptSolutionPlan): Promise<void> {
+  if (!run.value) return
   acting.value = true
   try {
-    await recommendationApi.confirm(candidate.id, {})
+    await recommendationApi.confirmMany(run.value.id, plan.candidate_ids)
     await load()
-  } catch (error) { ElMessage.error(messageFor(error, "确认商品失败")) }
-  finally { acting.value = false }
-}
-
-async function removeCandidate(candidate: RecommendationCandidate): Promise<void> {
-  acting.value = true
-  try { await recommendationApi.removeConfirmation(candidate.id); await load() }
-  catch (error) { ElMessage.error(messageFor(error, "移除商品失败")) }
-  finally { acting.value = false }
-}
-
-async function confirmChecked(): Promise<void> {
-  if (!run.value || checked.value.length === 0) return
-  acting.value = true
-  try { await recommendationApi.confirmMany(run.value.id, checked.value); checked.value = []; await load() }
-  catch (error) { ElMessage.error(messageFor(error, "批量确认失败")) }
+    ElMessage.success(`已确认方案“${plan.name}”中的 ${plan.candidate_ids.length} 件商品`)
+  } catch (error) { ElMessage.error(messageFor(error, "确认方案商品失败")) }
   finally { acting.value = false }
 }
 
@@ -217,23 +229,29 @@ onBeforeUnmount(() => { if (generationTimer) clearInterval(generationTimer) })
       <div class="hero-actions"><el-button @click="router.push('/bid-projects')">返回项目</el-button></div>
     </header>
     <el-alert v-if="run?.error" :title="run.error" :type="run.status === 'FAILED' ? 'error' : 'warning'" show-icon :closable="false" />
-    <el-card><template #header><div class="card-title"><div><strong>AI 推荐与人工选品</strong><el-tag v-if="run">{{ RUN_STATUS_LABELS[run.status] }}</el-tag></div><div class="module-actions"><el-button v-if="!run || ['FAILED', 'NO_CANDIDATES', 'NEEDS_INPUT'].includes(run.status)" type="primary" :loading="acting" @click="startRun">{{ run ? "重新生成推品" : "生成推品" }}</el-button><el-button v-if="editable" type="success" :disabled="!canComplete" :loading="acting" @click="completeSelection">完成选品</el-button><el-button v-else-if="canGenerate" @click="reopenSelection">返回调整选品</el-button></div></div></template>
-      <el-empty v-if="!run" description="请先生成 AI 推品候选"><el-button type="primary" :loading="acting" @click="startRun">生成推品</el-button></el-empty>
-      <div v-else class="selection-grid">
-        <section><div class="section-title"><div><b>AI 推荐候选</b><small> DeepSeek 根据甲方需求推荐，最终由人工决定</small></div><el-button type="primary" :disabled="!editable || checked.length === 0" @click="confirmChecked">添加选中（{{ checked.length }}）</el-button></div>
-          <el-checkbox-group v-model="checked" class="product-list"><article v-for="item in unconfirmed" :key="item.id" class="product-card"><el-checkbox :value="item.id" :disabled="!editable" /><div><b>{{ nameOf(item) }}</b><p>{{ modelOf(item) }}</p><p class="reason">{{ item.reason }}</p></div><div class="price">¥ {{ priceOf(item) }}<el-button link type="primary" :disabled="!editable" @click="confirmCandidate(item)">添加</el-button></div></article><el-empty v-if="unconfirmed.length === 0" description="暂无待选候选" /></el-checkbox-group>
-        </section>
-        <section><div class="section-title"><div><b>人工已选商品</b><small> {{ confirmed.length }} 件</small></div><el-button :disabled="!editable || confirmed.length < 2" @click="openPackage">组成套装</el-button></div>
-          <div class="product-list"><article v-for="item in confirmed" :key="item.id" class="product-card selected"><div><b>{{ nameOf(item) }}</b><p>{{ modelOf(item) }}</p></div><div class="price">¥ {{ priceOf(item) }}<el-button link type="danger" :disabled="!editable" @click="removeCandidate(item)">移除</el-button></div></article><el-empty v-if="confirmed.length === 0" description="从左侧添加商品" /></div>
-        </section>
+    <el-card v-if="!run || editable"><template #header><div class="card-title"><div><strong>推品配置</strong><span>先设置模式、价格档和生成数量，再生成推品方案</span></div></div></template>
+      <el-form label-position="top" class="recommendation-config">
+        <el-form-item label="推品方式"><el-radio-group v-model="recommendationConfig.recommendation_mode"><el-radio-button value="SINGLE">单品推品</el-radio-button><el-radio-button value="COMBINATION">组合推品</el-radio-button><el-radio-button value="MIXED">混合推品</el-radio-button></el-radio-group></el-form-item>
+        <el-form-item label="价格档 / 价格区间"><div class="price-bands"><div v-for="(band, index) in recommendationConfig.price_bands" :key="index" class="price-band"><el-input v-model="band.min_price" type="number" min="0" placeholder="最低价（可空）" /><span>至</span><el-input v-model="band.max_price" type="number" min="0.01" placeholder="最高预算 *" /><el-button link type="danger" :disabled="recommendationConfig.price_bands.length === 1" @click="removePriceBand(index)">删除</el-button></div><el-button @click="addPriceBand">新增价格档</el-button></div></el-form-item>
+        <el-form-item label="每个方案商品数量"><el-input-number v-model="recommendationConfig.candidate_count_per_band" :min="1" :max="500" /></el-form-item>
+        <el-form-item label="每档生成方案数"><el-input-number v-model="recommendationConfig.plan_count_per_band" :min="1" :max="20" /></el-form-item>
+        <el-form-item label="履约截止日"><el-date-picker v-model="recommendationConfig.fulfillment_deadline" type="date" value-format="YYYY-MM-DD" placeholder="例如 2027-12-31" /></el-form-item>
+        <el-alert title="价格档按每件商品的协议价筛选，不计算方案总价；每个方案会从完整商品池中组织指定数量的商品。履约截止日会进入方案说明，仍需人工核验商品的实际履约能力。" type="info" :closable="false" />
+      </el-form>
+    </el-card>
+    <el-card><template #header><div class="card-title"><div><strong>推品方案与人工选品</strong><el-tag v-if="run">{{ RUN_STATUS_LABELS[run.status] }}</el-tag></div><div class="module-actions"><el-button v-if="!run || editable" type="primary" :loading="acting" @click="startRun">{{ run ? "重新生成推品" : "生成推品" }}</el-button><el-button v-if="editable" type="success" :disabled="!canComplete" :loading="acting" @click="completeSelection">完成选品</el-button><el-button v-else-if="canGenerate" @click="reopenSelection">返回调整选品</el-button></div></div></template>
+      <el-empty v-if="!run" description="请先生成推品方案"><el-button type="primary" :loading="acting" @click="startRun">生成推品</el-button></el-empty>
+      <div v-else>
+        <section class="plan-section"><div class="plan-section-title"><b>本次推品方案</b><small>价格档按每件商品的协议价筛选；每个方案含指定数量的商品。</small></div><div v-if="plans.length" class="plan-grid"><article v-for="plan in plans" :key="plan.id" class="plan-card"><div class="plan-card-head"><strong>{{ plan.name }}</strong><el-tag :type="plan.plan_type === 'SINGLE' ? 'primary' : 'success'">{{ plan.plan_type === 'SINGLE' ? '单品方案' : '组合方案' }}</el-tag></div><p>{{ plan.summary }}</p><div class="plan-actions"><el-button @click="openPlanDetail(plan)">具体商品详情（{{ plan.items.length }}）</el-button><el-button type="primary" :disabled="!editable" :loading="acting" @click="confirmPlan(plan)">确认本方案商品</el-button></div></article></div><el-alert v-else-if="['WAITING_CONFIRMATION', 'CONFIRMED', 'EXPORTED'].includes(run.status)" title="符合该价格档的商品数量不足以组成每个方案所需的商品数量；请调整价格档或每个方案商品数量后重新生成。" type="warning" :closable="false" /><el-empty v-else :description="run.status === 'FAILED' ? '本次推品执行失败，请修改配置后重新生成。' : '正在生成推品方案，请稍候。'" /></section>
       </div>
     </el-card>
     <el-card v-if="run"><template #header><div class="card-title"><strong>单品与组合套装</strong><span>组套仅用于把多件商品合成一页，不是生成 PPT 的前置条件</span></div></template><el-alert :title="`当前有 ${directPptCount} 件人工确认单品会各生成 1 页 PPT；已组成套装的商品按套装生成。`" type="info" show-icon :closable="false" /><div class="package-grid"><article v-for="item in packages" :key="item.id" class="package-card"><div><b>{{ item.name }}</b><p>{{ item.items.length }} 种商品 · 总价 ¥{{ formatMoney(item.total_price) }} · 档位 {{ item.price_tier ? `¥${formatMoney(item.price_tier)}` : '未指定' }}</p></div><el-button v-if="editable" link type="danger" @click="removePackage(item)">删除</el-button></article><el-empty v-if="packages.length === 0" description="暂未组成套装；所有人工确认单品都会直接生成各自的 PPT 页" /></div></el-card>
     <el-card v-if="run"><template #header><div class="card-title"><div><strong>生成可编辑 PPT</strong><span>固定使用系统默认模板</span></div><el-button type="primary" :disabled="!canGenerate" :loading="acting" @click="generatePpt">生成系统 PPT</el-button></div></template><el-table :data="generations"><el-table-column prop="created_at" label="生成时间" min-width="180" /><el-table-column label="状态" min-width="110"><template #default="{ row }"><el-tag :type="row.status === 'SUCCEEDED' ? 'success' : row.status === 'FAILED' ? 'danger' : 'warning'">{{ row.status === 'SUCCEEDED' ? '已生成' : row.status === 'FAILED' ? '生成失败' : '生成中' }}</el-tag></template></el-table-column><el-table-column prop="provider" label="生成服务" min-width="190" /><el-table-column prop="error" label="结果说明" min-width="260" /><el-table-column label="文件" min-width="130"><template #default="{ row }"><el-button v-if="row.status === 'SUCCEEDED'" link type="primary" @click="download(row)">下载 PPTX</el-button><span v-else>—</span></template></el-table-column></el-table></el-card>
+    <el-dialog v-model="planDetailVisible" :title="selectedPlan?.name ?? '方案商品详情'" width="min(1200px, 94vw)"><el-table :data="selectedPlan?.items ?? []" max-height="560"><el-table-column prop="rank" label="序号" width="80" /><el-table-column label="SKU" min-width="150"><template #default="{ row }">{{ planItemValue(row, 'sku') }}</template></el-table-column><el-table-column label="商品名称" min-width="260" show-overflow-tooltip><template #default="{ row }">{{ planItemValue(row, 'product_name') }}</template></el-table-column><el-table-column label="品牌" min-width="130"><template #default="{ row }">{{ planItemValue(row, 'brand') }}</template></el-table-column><el-table-column label="型号" min-width="170" show-overflow-tooltip><template #default="{ row }">{{ planItemValue(row, 'model') }}</template></el-table-column><el-table-column label="三级类目" min-width="150"><template #default="{ row }">{{ planItemValue(row, 'category_level3_name') }}</template></el-table-column><el-table-column label="京东价" min-width="120"><template #default="{ row }">¥ {{ formatMoney(row.price_snapshot.jd_price) }}</template></el-table-column><el-table-column label="协议价" min-width="120"><template #default="{ row }">¥ {{ formatMoney(row.price_snapshot.agreement_price) }}</template></el-table-column></el-table><template #footer><el-button @click="planDetailVisible = false">关闭</el-button><el-button v-if="selectedPlan && editable" type="primary" :loading="acting" @click="confirmPlan(selectedPlan)">确认本方案商品</el-button></template></el-dialog>
     <el-dialog v-model="packageVisible" title="组合商品套装" width="min(720px, 94vw)"><el-form label-position="top"><el-form-item label="套装名称 *"><el-input v-model="packageForm.name" /></el-form-item><el-form-item label="价格档位"><el-input v-model="packageForm.price_tier" type="number" min="0" placeholder="例如 500" /></el-form-item><el-form-item label="组套说明"><el-input v-model="packageForm.reason" type="textarea" /></el-form-item><el-form-item label="选择商品及数量"><div class="quantity-list"><div v-for="item in confirmed" :key="item.id"><span>{{ nameOf(item) }}</span><el-input-number v-model="packageForm.quantities[item.id]" :min="0" :max="9999" /></div></div></el-form-item></el-form><template #footer><el-button @click="packageVisible = false">取消</el-button><el-button type="primary" :loading="acting" @click="createPackage">保存套装</el-button></template></el-dialog>
   </div>
 </template>
 
 <style scoped>
-.ppt-page{display:grid;gap:18px}.hero{display:flex;justify-content:space-between;gap:24px;padding:24px 28px;border-radius:14px;background:linear-gradient(120deg,#edf5ff,#f7f2ff)}.hero p{margin:0;color:#2670ca;font-weight:700}.hero h1{margin:5px 0}.hero span{color:#606266;line-height:1.6}.hero-actions,.card-title,.section-title,.module-actions{display:flex;align-items:center;justify-content:space-between;gap:12px}.module-actions{justify-content:flex-end}.card-title>div:first-child{display:flex;align-items:center;gap:10px}.card-title span,.section-title small{color:#909399;font-weight:400}.selection-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.selection-grid section{min-width:0;padding:14px;border:1px solid #e4e7ed;border-radius:10px;background:#fafcff}.product-list{display:grid;gap:10px;margin-top:14px}.product-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:start;padding:14px;border:1px solid #dcdfe6;border-radius:9px;background:white}.product-card>div{min-width:0}.product-card b,.product-card p{overflow-wrap:anywhere}.product-card.selected{grid-template-columns:minmax(0,1fr) auto;border-color:#91caff;background:#ecf5ff}.product-card p{margin:5px 0 0;color:#909399}.product-card .reason{color:#606266}.price{display:grid;min-width:108px;justify-items:end;gap:8px;color:#e66b1d;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}.package-grid,.quantity-list{display:grid;gap:10px;margin-top:14px}.package-card,.quantity-list>div{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px;border:1px solid #e4e7ed;border-radius:8px}.package-card p{margin:5px 0 0;color:#909399}@media(max-width:900px){.selection-grid{grid-template-columns:1fr}.hero{flex-direction:column}.hero-actions,.module-actions{justify-content:flex-start;flex-wrap:wrap}}
+.ppt-page{display:grid;gap:18px}.hero{display:flex;justify-content:space-between;gap:24px;padding:24px 28px;border-radius:14px;background:linear-gradient(120deg,#edf5ff,#f7f2ff)}.hero p{margin:0;color:#2670ca;font-weight:700}.hero h1{margin:5px 0}.hero span{color:#606266;line-height:1.6}.hero-actions,.card-title,.module-actions,.plan-section-title,.plan-card-head,.plan-actions{display:flex;align-items:center;gap:12px}.card-title,.plan-section-title,.plan-card-head{justify-content:space-between}.module-actions,.plan-actions{justify-content:flex-end;flex-wrap:wrap}.card-title>div:first-child{display:flex;align-items:center;gap:10px}.card-title span,.plan-section-title small{color:#909399;font-weight:400}.recommendation-config{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px}.recommendation-config .el-form-item:nth-child(2),.recommendation-config .el-alert{grid-column:1/-1}.price-bands{display:grid;gap:8px}.price-band{display:flex;align-items:center;gap:8px}.price-band .el-input{max-width:180px}.plan-section{margin-bottom:20px}.plan-section-title{margin-bottom:12px}.plan-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.plan-card{display:grid;gap:12px;padding:16px;border:1px solid #d9ecff;border-radius:8px;background:#f8fbff}.plan-card p{margin:0;color:#606266}.plan-actions{justify-content:flex-start}.package-grid,.quantity-list{display:grid;gap:10px;margin-top:14px}.package-card,.quantity-list>div{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px;border:1px solid #e4e7ed;border-radius:8px}.package-card p{margin:5px 0 0;color:#909399}@media(max-width:900px){.recommendation-config{grid-template-columns:1fr}.hero,.plan-section-title{flex-direction:column}.hero-actions,.module-actions,.plan-actions{justify-content:flex-start;flex-wrap:wrap}.price-band{flex-wrap:wrap}}
 </style>

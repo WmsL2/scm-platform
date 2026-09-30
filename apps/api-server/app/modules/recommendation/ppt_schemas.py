@@ -1,6 +1,7 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -11,6 +12,59 @@ class PptGenerationStatus(StrEnum):
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
+
+
+class PptRecommendationMode(StrEnum):
+    SINGLE = "SINGLE"
+    COMBINATION = "COMBINATION"
+    MIXED = "MIXED"
+
+
+class PptPriceBandInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    min_price: Decimal | None = Field(default=None, ge=0)
+    max_price: Decimal = Field(gt=0)
+
+    @model_validator(mode="after")
+    def valid_range(self) -> "PptPriceBandInput":
+        if self.min_price is not None and self.min_price > self.max_price:
+            raise ValueError("min_price must not exceed max_price")
+        return self
+
+
+class PptRecommendationConfigUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    recommendation_mode: PptRecommendationMode
+    price_bands: list[PptPriceBandInput] = Field(min_length=1, max_length=12)
+    candidate_count_per_band: int = Field(ge=1, le=500)
+    plan_count_per_band: int = Field(ge=1, le=20)
+    fulfillment_deadline: date | None = None
+
+
+class PptRecommendationConfigResponse(PptRecommendationConfigUpdateRequest):
+    project_id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+class PptSolutionPlanItemResponse(BaseModel):
+    candidate_id: UUID
+    rank: int
+    product_snapshot: dict[str, object]
+    price_snapshot: dict[str, object]
+
+
+class PptSolutionPlanResponse(BaseModel):
+    id: UUID
+    run_id: UUID
+    price_band_index: int
+    plan_no: int
+    plan_type: Literal["SINGLE", "COMBINATION"]
+    name: str
+    summary: str | None
+    candidate_ids: list[UUID]
+    items: list[PptSolutionPlanItemResponse]
+    created_at: datetime
 
 
 class PptPackageItemInput(BaseModel):

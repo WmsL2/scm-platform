@@ -2,9 +2,16 @@ import { describe, expect, it } from "vitest"
 import source from "./PptSolutionWorkspaceView.vue?raw"
 
 describe("PptSolutionWorkspaceView", () => {
-  it("keeps AI recommendation, human confirmation, bundling and PPT generation explicit", () => {
-    expect(source).toContain("AI 推荐候选")
-    expect(source).toContain("人工已选商品")
+  it("uses Type-5-only plans with on-demand product details", () => {
+    expect(source).toContain("本次推品方案")
+    expect(source).toContain("每个方案含指定数量的商品")
+    expect(source).toContain("具体商品详情")
+    expect(source).toContain("确认本方案商品")
+    expect(source).toContain("重新生成推品")
+    expect(source).toContain("本次推品执行失败，请修改配置后重新生成。")
+    expect(source).not.toContain("AI 推荐与人工选品")
+    expect(source).not.toContain("全选待确认商品")
+    expect(source).not.toContain("方案总价：")
     expect(source).toContain("组成套装")
     expect(source).toContain("组套仅用于把多件商品合成一页")
     expect(source).toContain("完成选品")

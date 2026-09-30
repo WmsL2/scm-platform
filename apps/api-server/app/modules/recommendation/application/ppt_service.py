@@ -21,8 +21,10 @@ from app.modules.catalog.application.media import local_media_storage_key
 from app.modules.recommendation.application.ppt_renderer import PptRenderer
 from app.modules.recommendation.infrastructure.models import (
     PptGenerationTask,
+    PptRecommendationConfig,
     PptSolutionPackage,
     PptSolutionPackageItem,
+    PptSolutionPlan,
     RecommendationCandidate,
     RecommendationConfirmation,
 )
@@ -33,6 +35,10 @@ from app.modules.recommendation.ppt_schemas import (
     PptPackageCreateRequest,
     PptPackageItemResponse,
     PptPackageResponse,
+    PptRecommendationConfigResponse,
+    PptRecommendationConfigUpdateRequest,
+    PptSolutionPlanItemResponse,
+    PptSolutionPlanResponse,
 )
 from app.modules.recommendation.template.schemas import RecommendationRunStatus
 
@@ -51,6 +57,87 @@ class PptSolutionService:
         self.storage = storage or get_object_storage()
         self.renderer = renderer or PptRenderer()
         self.repository = PptSolutionRepository(session)
+
+    async def config(self, project_id: uuid.UUID) -> PptRecommendationConfigResponse | None:
+        config = await self.repository.config(project_id)
+        return self._config_response(config) if config else None
+
+    async def save_config(
+        self,
+        project_id: uuid.UUID,
+        payload: PptRecommendationConfigUpdateRequest,
+        actor_id: uuid.UUID,
+    ) -> PptRecommendationConfigResponse:
+        async with transaction_scope(self.session):
+            project = await self.repository.project_for_update(project_id)
+            if project is None:
+                raise AppError("PPT_SOLUTION_PROJECT_NOT_FOUND", "PPT 方案项目不存在", 404)
+            if project.status not in {
+                BidProjectStatus.IMPORTED.value,
+                BidProjectStatus.SELECTING.value,
+            }:
+                raise AppError("PPT_CONFIG_NOT_EDITABLE", "当前项目状态不能调整推品配置", 409)
+            config = await self.repository.config(project_id, lock=True)
+            values = [item.model_dump(mode="json") for item in payload.price_bands]
+            if config is None:
+                config = PptRecommendationConfig(
+                    project_id=project_id,
+                    recommendation_mode=payload.recommendation_mode.value,
+                    price_bands=values,
+                    candidate_count_per_band=payload.candidate_count_per_band,
+                    plan_count_per_band=payload.plan_count_per_band,
+                    fulfillment_deadline=payload.fulfillment_deadline,
+                    created_by=actor_id,
+                    updated_by=actor_id,
+                )
+                self.session.add(config)
+            else:
+                config.recommendation_mode = payload.recommendation_mode.value
+                config.price_bands = values
+                config.candidate_count_per_band = payload.candidate_count_per_band
+                config.plan_count_per_band = payload.plan_count_per_band
+                config.fulfillment_deadline = payload.fulfillment_deadline
+                config.updated_by = actor_id
+            await self.session.flush()
+            await self.session.refresh(config)
+        return self._config_response(config)
+
+    async def list_plans(self, run_id: uuid.UUID) -> list[PptSolutionPlanResponse]:
+        candidates = {
+            candidate.id: candidate for candidate in await self.repository.candidates(run_id)
+        }
+        return [
+            self._plan_response(item, candidates) for item in await self.repository.plans(run_id)
+        ]
+
+    async def create_generated_plans(self, run_id: uuid.UUID) -> list[PptSolutionPlanResponse]:
+        """Persist distinct Type-5 proposals from the complete frozen product pool."""
+        async with transaction_scope(self.session):
+            run = await self.repository.run_for_update(run_id)
+            if run is None:
+                raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
+            project = await self.repository.project_for_update(run.project_id)
+            config = await self.repository.config(run.project_id, lock=True)
+            if project is None or config is None:
+                raise AppError("PPT_RECOMMENDATION_CONFIG_REQUIRED", "类型 5 推品配置不存在", 409)
+            existing = await self.repository.plans(run_id)
+            if existing:
+                return await self.list_plans(run_id)
+            candidates = await self.repository.candidates(run_id)
+            for plan in self._build_plans(config, candidates):
+                self.session.add(
+                    PptSolutionPlan(
+                        run_id=run_id,
+                        price_band_index=plan["price_band_index"],
+                        plan_no=plan["plan_no"],
+                        plan_type=plan["plan_type"],
+                        name=plan["name"],
+                        summary=plan["summary"],
+                        candidate_ids=plan["candidate_ids"],
+                    )
+                )
+            await self.session.flush()
+        return await self.list_plans(run_id)
 
     async def create_package(
         self, run_id: uuid.UUID, payload: PptPackageCreateRequest, actor_id: uuid.UUID
@@ -362,6 +449,88 @@ class PptSolutionService:
         """Persist a dispatch failure so the UI never waits on a stuck queued task."""
         await self._fail_task(task_id, error)
 
+    @classmethod
+    def _build_plans(
+        cls,
+        config: PptRecommendationConfig,
+        candidates: Sequence[RecommendationCandidate],
+    ) -> list[dict[str, object]]:
+        """Turn the complete frozen Type-5 product pool into distinct proposals.
+
+        The configured quantity is the number of products in *each* proposal, not a
+        cap on the candidate pool.  Proposals intentionally use overlapping windows
+        when needed, while rotating their starting positions so they are not copies.
+        """
+        plans: list[dict[str, object]] = []
+        mode = config.recommendation_mode
+        for band_index, raw_band in enumerate(config.price_bands, start=1):
+            minimum = cls._decimal_value(raw_band.get("min_price"))
+            maximum = cls._decimal_value(raw_band.get("max_price"))
+            if maximum is None:
+                continue
+            available = cls._band_candidates(candidates, minimum, maximum)
+            quantity = config.candidate_count_per_band
+            if len(available) < quantity:
+                continue
+            for plan_no in range(1, config.plan_count_per_band + 1):
+                plan_type = (
+                    "SINGLE"
+                    if mode == "SINGLE" or (mode == "MIXED" and plan_no % 2 == 1)
+                    else "COMBINATION"
+                )
+                step = max(1, quantity // 2)
+                start = ((plan_no - 1) * step) % len(available)
+                selected = [
+                    available[(start + index) % len(available)] for index in range(quantity)
+                ]
+                band_label = cls._price_band_label(minimum, maximum)
+                plan_type_label = "单品" if plan_type == "SINGLE" else "组合"
+                plans.append(
+                    {
+                        "price_band_index": band_index,
+                        "plan_no": plan_no,
+                        "plan_type": plan_type,
+                        "name": f"{band_label} · {plan_type_label}方案 {plan_no}",
+                        "summary": (
+                            f"包含 {len(selected)} 件商品；每件商品的协议价均在 {band_label} 内。"
+                        ),
+                        "candidate_ids": [str(candidate.id) for candidate in selected],
+                    }
+                )
+        return plans
+
+    @classmethod
+    def _band_candidates(
+        cls,
+        candidates: Sequence[RecommendationCandidate],
+        minimum: Decimal | None,
+        maximum: Decimal,
+    ) -> list[RecommendationCandidate]:
+        return [
+            candidate
+            for candidate in candidates
+            if cls._candidate_agreement_price(candidate) <= maximum
+            and (minimum is None or cls._candidate_agreement_price(candidate) >= minimum)
+        ]
+
+    @staticmethod
+    def _decimal_value(value: object) -> Decimal | None:
+        if value is None:
+            return None
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, TypeError):
+            return None
+
+    @classmethod
+    def _candidate_agreement_price(cls, candidate: RecommendationCandidate) -> Decimal:
+        value = cls._decimal_value(candidate.price_snapshot.get("agreement_price"))
+        return value if value is not None and value >= 0 else Decimal(0)
+
+    @staticmethod
+    def _price_band_label(minimum: Decimal | None, maximum: Decimal) -> str:
+        return f"{minimum if minimum is not None else 0}–{maximum} 元"
+
     @staticmethod
     def _candidate_price(snapshot: dict[str, object], campaign_price: Decimal | None) -> Decimal:
         if campaign_price is not None:
@@ -396,6 +565,32 @@ class PptSolutionService:
         return images
 
     @staticmethod
+    def _plan_response(
+        plan: PptSolutionPlan, candidates: dict[uuid.UUID, RecommendationCandidate]
+    ) -> PptSolutionPlanResponse:
+        return PptSolutionPlanResponse(
+            id=plan.id,
+            run_id=plan.run_id,
+            price_band_index=plan.price_band_index,
+            plan_no=plan.plan_no,
+            plan_type=plan.plan_type,  # type: ignore[arg-type]
+            name=plan.name,
+            summary=plan.summary,
+            candidate_ids=[uuid.UUID(value) for value in plan.candidate_ids],
+            items=[
+                PptSolutionPlanItemResponse(
+                    candidate_id=candidate.id,
+                    rank=candidate.rank,
+                    product_snapshot=candidate.product_snapshot,
+                    price_snapshot=candidate.price_snapshot,
+                )
+                for candidate_id in plan.candidate_ids
+                if (candidate := candidates.get(uuid.UUID(candidate_id))) is not None
+            ],
+            created_at=plan.created_at,
+        )
+
+    @staticmethod
     def _task_response(task: PptGenerationTask) -> PptGenerationTaskResponse:
         return PptGenerationTaskResponse(
             id=task.id,
@@ -410,4 +605,19 @@ class PptSolutionService:
             error=task.error,
             created_at=task.created_at,
             updated_at=task.updated_at,
+        )
+
+    @staticmethod
+    def _config_response(config: PptRecommendationConfig) -> PptRecommendationConfigResponse:
+        return PptRecommendationConfigResponse.model_validate(
+            {
+                "project_id": config.project_id,
+                "recommendation_mode": config.recommendation_mode,
+                "price_bands": config.price_bands,
+                "candidate_count_per_band": config.candidate_count_per_band,
+                "plan_count_per_band": config.plan_count_per_band,
+                "fulfillment_deadline": config.fulfillment_deadline,
+                "created_at": config.created_at,
+                "updated_at": config.updated_at,
+            }
         )

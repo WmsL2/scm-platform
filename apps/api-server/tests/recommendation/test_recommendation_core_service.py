@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
@@ -19,6 +19,7 @@ from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.recommendation.application.service import RecommendationService
 from app.modules.recommendation.infrastructure.models import (
+    PptRecommendationConfig,
     RecommendationCandidate,
     RecommendationRun,
 )
@@ -255,9 +256,7 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
         )
         direct_count = await service.persist_all_eligible_candidates(direct_run.id)
         assert direct_count >= 2
-        direct_page = await service.list_candidates(
-            direct_run.id, PageParams(page=1, page_size=1)
-        )
+        direct_page = await service.list_candidates(direct_run.id, PageParams(page=1, page_size=1))
         assert direct_page.total == direct_count  # type: ignore[union-attr]
         assert direct_page.unconfirmed_total == direct_count  # type: ignore[union-attr]
         assert len(direct_page.items) == 1  # type: ignore[union-attr]
@@ -326,20 +325,17 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
             ),
             provider="deepseek",
             model="deepseek-chat",
-                prompt_version="free-v8",
+            prompt_version="free-v8",
         )
         snapshot = await service.create_category_catalog_snapshot(catalog_run.id)
         assert (await service.get_run(catalog_run.id)).category_catalog_snapshot == snapshot
         selected_item = next(
             item
             for item in snapshot.items
-            if item.level1_name == "食品饮料"
-            and item.level == "LEVEL1"
+            if item.level1_name == "食品饮料" and item.level == "LEVEL1"
         )
         assert selected_item.candidate_count >= 2
-        await service.record_catalog_category_matches(
-            catalog_run.id, [selected_item.category_key]
-        )
+        await service.record_catalog_category_matches(catalog_run.id, [selected_item.category_key])
         assert (
             await service.persist_all_eligible_candidates(catalog_run.id)
             == selected_item.candidate_count
@@ -347,6 +343,74 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
         with pytest.raises(AppError, match="真实类目清单之外"):
             await service.record_catalog_category_matches(catalog_run.id, ["invented-key"])
         assert (await session.get(RecommendationCandidate, saved[0].id)) is not None
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_ppt_solution_run_reads_saved_config_by_project_id() -> None:
+    actor_id = uuid.uuid4()
+    token = uuid.uuid4().hex
+    project = BidProject(
+        project_code=f"PPT{token[:11]}",
+        project_name="类型5推品配置读取测试",
+        buyer_name="测试客户",
+        status=BidProjectStatus.IMPORTED.value,
+        import_status=BidImportStatus.NOT_REQUIRED.value,
+        project_type=BidProjectType.PPT_SOLUTION.value,
+        remark="这是用于验证类型5推品配置读取路径的足够长需求说明。",
+        created_by=actor_id,
+    )
+    async with SessionLocal() as session:
+        session.add(project)
+        await session.flush()
+        session.add(
+            PptRecommendationConfig(
+                project_id=project.id,
+                recommendation_mode="SINGLE",
+                price_bands=[{"min_price": "100", "max_price": "200"}],
+                candidate_count_per_band=13,
+                plan_count_per_band=6,
+                fulfillment_deadline=date(2029, 9, 29),
+                created_by=actor_id,
+                updated_by=actor_id,
+            )
+        )
+        await session.flush()
+
+        run = await RecommendationService(session).create_run(project.id, actor_id)
+
+        assert run.status == RecommendationRunStatus.QUEUED.value
+        assert "推品方式：SINGLE" in run.raw_requirement_snapshot
+        assert '"min_price": "100"' in run.raw_requirement_snapshot
+        assert '"max_price": "200"' in run.raw_requirement_snapshot
+        assert "每个方案商品数量：13" in run.raw_requirement_snapshot
+        assert "每档生成方案数：6" in run.raw_requirement_snapshot
+        service = RecommendationService(session)
+        missing_category = f"类型5无匹配类目-{token}"
+        await service.save_parsed_requirement(
+            run.id,
+            ParsedRequirement(requirement_version="ppt-v1", search_keywords=["测试"]),
+            provider="deepseek",
+            model="deepseek-chat",
+            prompt_version="ppt-v1",
+        )
+        await service.record_category_choices(
+            run.id,
+            [
+                CategoryChoiceInput(
+                    level1_name=missing_category,
+                    level2_name=None,
+                    level3_name=None,
+                    source="AI",
+                    reason="测试",
+                )
+            ],
+        )
+        # Type 5 no longer invokes a product-ranking step, so it arrives here
+        # directly from RETRIEVING.  It must advance through its own path rather
+        # than failing with RECOMMENDATION_RUN_NOT_RANKING.
+        assert await service.persist_ppt_eligible_candidates(run.id) == 0
+        assert (await service.get_run(run.id)).status == RecommendationRunStatus.NO_CANDIDATES
         await session.rollback()
 
 
