@@ -18,6 +18,8 @@ from app.infrastructure.adapters import ObjectStorage, get_object_storage
 from app.modules.bid.domain.lifecycle import BidFileType, BidProjectStatus, ensure_transition
 from app.modules.bid.infrastructure.models import BidProjectEvent, BidProjectFile
 from app.modules.catalog.application.media import local_media_storage_key
+from app.modules.recommendation.application.agent_runner import StructuredProvider
+from app.modules.recommendation.application.ppt_plan_runner import PptPlanAgentRunner
 from app.modules.recommendation.application.ppt_renderer import PptRenderer
 from app.modules.recommendation.infrastructure.models import (
     PptGenerationTask,
@@ -35,6 +37,7 @@ from app.modules.recommendation.ppt_schemas import (
     PptPackageCreateRequest,
     PptPackageItemResponse,
     PptPackageResponse,
+    PptPriceBandAvailabilityResponse,
     PptRecommendationConfigResponse,
     PptRecommendationConfigUpdateRequest,
     PptSolutionPlanItemResponse,
@@ -110,6 +113,17 @@ class PptSolutionService:
             self._plan_response(item, candidates) for item in await self.repository.plans(run_id)
         ]
 
+    async def plan_availability(
+        self, run_id: uuid.UUID
+    ) -> list[PptPriceBandAvailabilityResponse]:
+        run = await self.repository.run(run_id)
+        if run is None:
+            raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
+        config = await self.repository.config(run.project_id)
+        if config is None:
+            raise AppError("PPT_RECOMMENDATION_CONFIG_REQUIRED", "类型 5 推品配置不存在", 409)
+        return self._plan_availability(config, await self.repository.candidates(run_id))
+
     async def create_generated_plans(self, run_id: uuid.UUID) -> list[PptSolutionPlanResponse]:
         """Persist distinct Type-5 proposals from the complete frozen product pool."""
         async with transaction_scope(self.session):
@@ -134,9 +148,81 @@ class PptSolutionService:
                         name=plan["name"],
                         summary=plan["summary"],
                         candidate_ids=plan["candidate_ids"],
+                        selection_source="DETERMINISTIC",
+                        selection_provider=None,
+                        selection_model=None,
+                        selection_prompt_version=None,
                     )
                 )
             await self.session.flush()
+        return await self.list_plans(run_id)
+
+    async def create_ai_generated_plans(
+        self, run_id: uuid.UUID, provider: StructuredProvider
+    ) -> list[PptSolutionPlanResponse]:
+        """Persist Type-5 AI proposals after the complete candidate pool is frozen."""
+        # Do not hold a Run row lock while waiting for the external structured provider.
+        run = await self.repository.run(run_id)
+        if run is None:
+            raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
+        config = await self.repository.config(run.project_id)
+        if config is None:
+            raise AppError("PPT_RECOMMENDATION_CONFIG_REQUIRED", "类型 5 推品配置不存在", 409)
+        candidates = await self.repository.candidates(run_id)
+        proposals = await PptPlanAgentRunner(provider).run(config, candidates)
+        expected = self._expected_plan_slots(config, candidates)
+        by_slot = {(item.price_band_index, item.plan_no): item for item in proposals.plans}
+        if set(by_slot) != expected or len(by_slot) != len(proposals.plans):
+            raise AppError(
+                "PPT_PLAN_AI_CONTRACT_INVALID", "方案 AI 未按每个价格档返回完整且唯一的方案", 422
+            )
+        async with transaction_scope(self.session):
+            locked_run = await self.repository.run_for_update(run_id)
+            if locked_run is None:
+                raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
+            if await self.repository.plans(run_id):
+                raise AppError("PPT_PLAN_ALREADY_CREATED", "类型 5 方案已经生成", 409)
+            for slot in sorted(expected):
+                proposal = by_slot[slot]
+                maximum = self._decimal_value(config.price_bands[slot[0] - 1].get("max_price"))
+                if maximum is None:
+                    raise AppError("PPT_PLAN_AI_CONTRACT_INVALID", "价格档配置无效", 422)
+                permitted = self._band_candidates(
+                    candidates,
+                    self._decimal_value(config.price_bands[slot[0] - 1].get("min_price")),
+                    maximum,
+                )
+                allowed_ids = {item.id for item in permitted}
+                ids = list(proposal.candidate_ids)
+                if len(ids) != config.candidate_count_per_band or any(
+                    item not in allowed_ids for item in ids
+                ):
+                    raise AppError(
+                        "PPT_PLAN_AI_CANDIDATE_INVALID",
+                        "方案 AI 返回了价格档外或数量不符的商品",
+                        422,
+                    )
+                mode = config.recommendation_mode
+                plan_type = (
+                    "SINGLE"
+                    if mode == "SINGLE" or (mode == "MIXED" and slot[1] % 2 == 1)
+                    else "COMBINATION"
+                )
+                self.session.add(
+                    PptSolutionPlan(
+                        run_id=run_id,
+                        price_band_index=slot[0],
+                        plan_no=slot[1],
+                        plan_type=plan_type,
+                        name=proposal.name.strip(),
+                        summary=proposal.summary.strip() if proposal.summary else None,
+                        candidate_ids=[str(item) for item in ids],
+                        selection_source="AI",
+                        selection_provider=provider.provider,
+                        selection_model=provider.model,
+                        selection_prompt_version=f"{provider.prompt_version}:ppt-plan-v1",
+                    )
+                )
         return await self.list_plans(run_id)
 
     async def create_package(
@@ -450,6 +536,57 @@ class PptSolutionService:
         await self._fail_task(task_id, error)
 
     @classmethod
+    def _expected_plan_slots(
+        cls, config: PptRecommendationConfig, candidates: Sequence[RecommendationCandidate]
+    ) -> set[tuple[int, int]]:
+        slots: set[tuple[int, int]] = set()
+        for band_index, raw_band in enumerate(config.price_bands, start=1):
+            minimum = cls._decimal_value(raw_band.get("min_price"))
+            maximum = cls._decimal_value(raw_band.get("max_price"))
+            if maximum is None:
+                continue
+            if (
+                len(cls._band_candidates(candidates, minimum, maximum))
+                < config.candidate_count_per_band
+            ):
+                continue
+            slots.update(
+                (band_index, plan_no) for plan_no in range(1, config.plan_count_per_band + 1)
+            )
+        return slots
+
+    @classmethod
+    def _plan_availability(
+        cls, config: PptRecommendationConfig, candidates: Sequence[RecommendationCandidate]
+    ) -> list[PptPriceBandAvailabilityResponse]:
+        values: list[PptPriceBandAvailabilityResponse] = []
+        for band_index, raw_band in enumerate(config.price_bands, start=1):
+            minimum = cls._decimal_value(raw_band.get("min_price"))
+            maximum = cls._decimal_value(raw_band.get("max_price"))
+            if maximum is None:
+                continue
+            count = len(cls._band_candidates(candidates, minimum, maximum))
+            required = config.candidate_count_per_band
+            label = cls._price_band_label(minimum, maximum)
+            can_generate = count >= required
+            values.append(
+                PptPriceBandAvailabilityResponse(
+                    price_band_index=band_index,
+                    min_price=minimum,
+                    max_price=maximum,
+                    candidate_count=count,
+                    required_count=required,
+                    can_generate=can_generate,
+                    message=(
+                        f"{label}：有 {count} 件，满足每方案 {required} 件的要求"
+                        if can_generate
+                        else f"{label}：只有 {count} 件，还差 {required - count} 件才能组成每个方案"
+                    ),
+                )
+            )
+        return values
+
+    @classmethod
     def _build_plans(
         cls,
         config: PptRecommendationConfig,
@@ -577,6 +714,10 @@ class PptSolutionService:
             name=plan.name,
             summary=plan.summary,
             candidate_ids=[uuid.UUID(value) for value in plan.candidate_ids],
+            selection_source=plan.selection_source,
+            selection_provider=plan.selection_provider,
+            selection_model=plan.selection_model,
+            selection_prompt_version=plan.selection_prompt_version,
             items=[
                 PptSolutionPlanItemResponse(
                     candidate_id=candidate.id,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -117,15 +116,8 @@ class RecommendationService:
                         "请先填写类型 5 的推品方式、价格档和生成数量",
                         409,
                     )
-                requirement = (
-                    f"{requirement}\n\n"
-                    "【系统确认的推品配置，必须遵守】\n"
-                    f"推品方式：{config.recommendation_mode}\n"
-                    f"价格档：{json.dumps(config.price_bands, ensure_ascii=False)}\n"
-                    f"每个方案商品数量：{config.candidate_count_per_band}\n"
-                    f"每档生成方案数：{config.plan_count_per_band}\n"
-                    f"履约截止日：{config.fulfillment_deadline or '未指定'}"
-                )
+                # Type-5 V8 recall receives exactly the customer requirement, just as Type 4.
+                # Its saved price bands are deliberately consumed only by the later plan AI.
             if project.status in {
                 BidProjectStatus.READY.value,
                 BidProjectStatus.EXPORTED.value,

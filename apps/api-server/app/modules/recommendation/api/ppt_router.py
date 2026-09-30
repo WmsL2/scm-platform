@@ -20,6 +20,7 @@ from app.modules.recommendation.ppt_schemas import (
     PptGenerationTaskResponse,
     PptPackageCreateRequest,
     PptPackageResponse,
+    PptPriceBandAvailabilityResponse,
     PptRecommendationConfigResponse,
     PptRecommendationConfigUpdateRequest,
     PptSolutionPlanResponse,
@@ -61,6 +62,18 @@ async def list_plans(
     session: SessionDep,
 ) -> ApiResponse[list[PptSolutionPlanResponse]]:
     return success(await PptSolutionService(session).list_plans(run_id))
+
+
+@router.get(
+    "/runs/{run_id}/plan-availability",
+    response_model=ApiResponse[list[PptPriceBandAvailabilityResponse]],
+)
+async def get_plan_availability(
+    run_id: uuid.UUID,
+    _: Annotated[CurrentUser, Depends(require_permission("recommendation:detail"))],
+    session: SessionDep,
+) -> ApiResponse[list[PptPriceBandAvailabilityResponse]]:
+    return success(await PptSolutionService(session).plan_availability(run_id))
 
 
 @router.get("/runs/{run_id}/packages", response_model=ApiResponse[list[PptPackageResponse]])

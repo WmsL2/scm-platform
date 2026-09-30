@@ -50,9 +50,7 @@ class RecommendationRun(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     raw_requirement_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
     parsed_requirement: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
-    category_catalog_snapshot: Mapped[dict[str, object] | None] = mapped_column(
-        JSON, nullable=True
-    )
+    category_catalog_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     prompt_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -265,6 +263,10 @@ class PptSolutionPlan(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     candidate_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    selection_source: Mapped[str] = mapped_column(String(16), nullable=False)
+    selection_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    selection_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    selection_prompt_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )

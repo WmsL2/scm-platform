@@ -7,7 +7,7 @@ import { pptSolutionApi } from "../../api/pptSolution"
 import { recommendationApi } from "../../api/recommendation"
 import { HttpError } from "../../shared/http"
 import type { BidProjectDetail } from "../../types/bid"
-import type { PptGenerationTask, PptPackage, PptRecommendationMode, PptSolutionPlan, PptSolutionPlanItem } from "../../types/pptSolution"
+import type { PptGenerationTask, PptPackage, PptPriceBandAvailability, PptRecommendationMode, PptSolutionPlan, PptSolutionPlanItem } from "../../types/pptSolution"
 import { RUN_STATUS_LABELS, type RecommendationCandidate, type RecommendationRun } from "../../types/recommendation"
 
 const route = useRoute()
@@ -18,6 +18,7 @@ const acting = ref(false)
 const project = ref<BidProjectDetail>()
 const run = ref<RecommendationRun | null>(null)
 const plans = ref<PptSolutionPlan[]>([])
+const planAvailability = ref<PptPriceBandAvailability[]>([])
 const packages = ref<PptPackage[]>([])
 const generations = ref<PptGenerationTask[]>([])
 const packageVisible = ref(false)
@@ -28,6 +29,7 @@ const recommendationConfig = reactive({ recommendation_mode: "MIXED" as PptRecom
 let generationTimer: ReturnType<typeof setInterval> | undefined
 
 const candidates = computed(() => run.value?.candidates ?? [])
+const candidatePoolTotal = computed(() => run.value?.candidate_page?.total ?? 0)
 const confirmed = computed(() => candidates.value.filter((item) => item.confirmation))
 const packagedCandidateIds = computed(() => new Set(packages.value.flatMap((item) => item.items.map((line) => line.candidate_id))))
 const directPptCount = computed(() => confirmed.value.filter((item) => !packagedCandidateIds.value.has(item.id)).length)
@@ -65,15 +67,18 @@ async function load(): Promise<void> {
     const history = await recommendationApi.runs(projectId)
     run.value = history[0] ? await recommendationApi.run(history[0].id, 1, 100) : null
     if (run.value) {
-      const [loadedPlans, loadedPackages] = await Promise.all([
+      const [loadedPlans, loadedPackages, loadedAvailability] = await Promise.all([
         pptSolutionApi.plans(run.value.id),
         pptSolutionApi.packages(run.value.id),
+        pptSolutionApi.planAvailability(run.value.id),
       ])
       plans.value = loadedPlans
       packages.value = loadedPackages
+      planAvailability.value = loadedAvailability
     } else {
       plans.value = []
       packages.value = []
+      planAvailability.value = []
     }
     generations.value = await pptSolutionApi.generations(projectId)
   } catch (error) {
@@ -242,7 +247,7 @@ onBeforeUnmount(() => { if (generationTimer) clearInterval(generationTimer) })
     <el-card><template #header><div class="card-title"><div><strong>推品方案与人工选品</strong><el-tag v-if="run">{{ RUN_STATUS_LABELS[run.status] }}</el-tag></div><div class="module-actions"><el-button v-if="!run || editable" type="primary" :loading="acting" @click="startRun">{{ run ? "重新生成推品" : "生成推品" }}</el-button><el-button v-if="editable" type="success" :disabled="!canComplete" :loading="acting" @click="completeSelection">完成选品</el-button><el-button v-else-if="canGenerate" @click="reopenSelection">返回调整选品</el-button></div></div></template>
       <el-empty v-if="!run" description="请先生成推品方案"><el-button type="primary" :loading="acting" @click="startRun">生成推品</el-button></el-empty>
       <div v-else>
-        <section class="plan-section"><div class="plan-section-title"><b>本次推品方案</b><small>价格档按每件商品的协议价筛选；每个方案含指定数量的商品。</small></div><div v-if="plans.length" class="plan-grid"><article v-for="plan in plans" :key="plan.id" class="plan-card"><div class="plan-card-head"><strong>{{ plan.name }}</strong><el-tag :type="plan.plan_type === 'SINGLE' ? 'primary' : 'success'">{{ plan.plan_type === 'SINGLE' ? '单品方案' : '组合方案' }}</el-tag></div><p>{{ plan.summary }}</p><div class="plan-actions"><el-button @click="openPlanDetail(plan)">具体商品详情（{{ plan.items.length }}）</el-button><el-button type="primary" :disabled="!editable" :loading="acting" @click="confirmPlan(plan)">确认本方案商品</el-button></div></article></div><el-alert v-else-if="['WAITING_CONFIRMATION', 'CONFIRMED', 'EXPORTED'].includes(run.status)" title="符合该价格档的商品数量不足以组成每个方案所需的商品数量；请调整价格档或每个方案商品数量后重新生成。" type="warning" :closable="false" /><el-empty v-else :description="run.status === 'FAILED' ? '本次推品执行失败，请修改配置后重新生成。' : '正在生成推品方案，请稍候。'" /></section>
+        <section class="plan-section"><div class="plan-section-title"><b>本次推品方案</b><small>已冻结 {{ candidatePoolTotal }} 件完整候选商品；价格档按每件商品的协议价筛选，每个方案含指定数量的商品。</small></div><div v-if="planAvailability.length" class="plan-availability"><el-tag v-for="band in planAvailability" :key="band.price_band_index" :type="band.can_generate ? 'success' : 'warning'">{{ band.message }}</el-tag></div><div v-if="plans.length" class="plan-grid"><article v-for="plan in plans" :key="plan.id" class="plan-card"><div class="plan-card-head"><strong>{{ plan.name }}</strong><el-tag :type="plan.plan_type === 'SINGLE' ? 'primary' : 'success'">{{ plan.plan_type === 'SINGLE' ? '单品方案' : '组合方案' }}</el-tag></div><p>{{ plan.summary }}</p><div class="plan-actions"><el-button @click="openPlanDetail(plan)">具体商品详情（{{ plan.items.length }}）</el-button><el-button type="primary" :disabled="!editable" :loading="acting" @click="confirmPlan(plan)">确认本方案商品</el-button></div></article></div><el-alert v-else-if="['WAITING_CONFIRMATION', 'CONFIRMED', 'EXPORTED'].includes(run.status)" :title="planAvailability.some((band) => band.can_generate) ? '存在满足数量要求的价格档，但尚未生成方案；请查看上方失败原因后重新生成。' : '没有价格档满足每个方案所需商品数量；请按上方每档真实数量调整价格档或每方案商品数量。'" type="warning" :closable="false" /><el-empty v-else :description="run.status === 'FAILED' ? '本次推品执行失败，请修改配置后重新生成。' : '正在生成推品方案，请稍候。'" /></section>
       </div>
     </el-card>
     <el-card v-if="run"><template #header><div class="card-title"><strong>单品与组合套装</strong><span>组套仅用于把多件商品合成一页，不是生成 PPT 的前置条件</span></div></template><el-alert :title="`当前有 ${directPptCount} 件人工确认单品会各生成 1 页 PPT；已组成套装的商品按套装生成。`" type="info" show-icon :closable="false" /><div class="package-grid"><article v-for="item in packages" :key="item.id" class="package-card"><div><b>{{ item.name }}</b><p>{{ item.items.length }} 种商品 · 总价 ¥{{ formatMoney(item.total_price) }} · 档位 {{ item.price_tier ? `¥${formatMoney(item.price_tier)}` : '未指定' }}</p></div><el-button v-if="editable" link type="danger" @click="removePackage(item)">删除</el-button></article><el-empty v-if="packages.length === 0" description="暂未组成套装；所有人工确认单品都会直接生成各自的 PPT 页" /></div></el-card>
@@ -253,5 +258,5 @@ onBeforeUnmount(() => { if (generationTimer) clearInterval(generationTimer) })
 </template>
 
 <style scoped>
-.ppt-page{display:grid;gap:18px}.hero{display:flex;justify-content:space-between;gap:24px;padding:24px 28px;border-radius:14px;background:linear-gradient(120deg,#edf5ff,#f7f2ff)}.hero p{margin:0;color:#2670ca;font-weight:700}.hero h1{margin:5px 0}.hero span{color:#606266;line-height:1.6}.hero-actions,.card-title,.module-actions,.plan-section-title,.plan-card-head,.plan-actions{display:flex;align-items:center;gap:12px}.card-title,.plan-section-title,.plan-card-head{justify-content:space-between}.module-actions,.plan-actions{justify-content:flex-end;flex-wrap:wrap}.card-title>div:first-child{display:flex;align-items:center;gap:10px}.card-title span,.plan-section-title small{color:#909399;font-weight:400}.recommendation-config{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px}.recommendation-config .el-form-item:nth-child(2),.recommendation-config .el-alert{grid-column:1/-1}.price-bands{display:grid;gap:8px}.price-band{display:flex;align-items:center;gap:8px}.price-band .el-input{max-width:180px}.plan-section{margin-bottom:20px}.plan-section-title{margin-bottom:12px}.plan-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.plan-card{display:grid;gap:12px;padding:16px;border:1px solid #d9ecff;border-radius:8px;background:#f8fbff}.plan-card p{margin:0;color:#606266}.plan-actions{justify-content:flex-start}.package-grid,.quantity-list{display:grid;gap:10px;margin-top:14px}.package-card,.quantity-list>div{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px;border:1px solid #e4e7ed;border-radius:8px}.package-card p{margin:5px 0 0;color:#909399}@media(max-width:900px){.recommendation-config{grid-template-columns:1fr}.hero,.plan-section-title{flex-direction:column}.hero-actions,.module-actions,.plan-actions{justify-content:flex-start;flex-wrap:wrap}.price-band{flex-wrap:wrap}}
+.ppt-page{display:grid;gap:18px}.hero{display:flex;justify-content:space-between;gap:24px;padding:24px 28px;border-radius:14px;background:linear-gradient(120deg,#edf5ff,#f7f2ff)}.hero p{margin:0;color:#2670ca;font-weight:700}.hero h1{margin:5px 0}.hero span{color:#606266;line-height:1.6}.hero-actions,.card-title,.module-actions,.plan-section-title,.plan-card-head,.plan-actions,.plan-availability{display:flex;align-items:center;gap:12px}.card-title,.plan-section-title,.plan-card-head{justify-content:space-between}.module-actions,.plan-actions{justify-content:flex-end;flex-wrap:wrap}.card-title>div:first-child{display:flex;align-items:center;gap:10px}.card-title span,.plan-section-title small{color:#909399;font-weight:400}.recommendation-config{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px}.recommendation-config .el-form-item:nth-child(2),.recommendation-config .el-alert{grid-column:1/-1}.price-bands{display:grid;gap:8px}.price-band{display:flex;align-items:center;gap:8px}.price-band .el-input{max-width:180px}.plan-section{margin-bottom:20px}.plan-section-title{margin-bottom:12px}.plan-availability{flex-wrap:wrap;margin:0 0 12px}.plan-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.plan-card{display:grid;gap:12px;padding:16px;border:1px solid #d9ecff;border-radius:8px;background:#f8fbff}.plan-card p{margin:0;color:#606266}.plan-actions{justify-content:flex-start}.package-grid,.quantity-list{display:grid;gap:10px;margin-top:14px}.package-card,.quantity-list>div{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px;border:1px solid #e4e7ed;border-radius:8px}.package-card p{margin:5px 0 0;color:#909399}@media(max-width:900px){.recommendation-config{grid-template-columns:1fr}.hero,.plan-section-title{flex-direction:column}.hero-actions,.module-actions,.plan-actions{justify-content:flex-start;flex-wrap:wrap}.price-band{flex-wrap:wrap}}
 </style>

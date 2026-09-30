@@ -21,6 +21,7 @@ from app.modules.recommendation.application.agent_service_adapter import (
     RecommendationServiceJobPort,
     RecommendationServiceTools,
 )
+from app.modules.recommendation.application.ppt_catalog_service import PptCatalogService
 from app.modules.recommendation.application.ppt_selection_adapter import (
     PptSelectionJobPort,
     PptSelectionServiceTools,
@@ -56,7 +57,7 @@ class RecommendationJobPort(Protocol):
 async def execute_recommendation_agent(
     run_id: UUID,
     *,
-    runner: AgentRunner,
+    runner: AgentRunner | PptSelectionAgentRunner,
     job_port: RecommendationJobPort,
 ) -> None:
     """Queue-compatible job entry; persistence stays behind the B-owned port."""
@@ -123,9 +124,10 @@ async def execute_recommendation_agent_inline(run_id: UUID, session: AsyncSessio
     service = RecommendationService(session)
     if await service.project_type_for_run(run_id) == BidProjectType.PPT_SOLUTION:
         provider = DeepSeekClient()
+        ppt_service = PptCatalogService(session)
         ppt_tools = PptSelectionServiceTools(
             run_id,
-            service,
+            ppt_service,
             provider=provider.provider,
             model=provider.model,
             prompt_version=provider.prompt_version,
@@ -133,7 +135,7 @@ async def execute_recommendation_agent_inline(run_id: UUID, session: AsyncSessio
         await execute_recommendation_agent(
             run_id,
             runner=PptSelectionAgentRunner(provider, ppt_tools),
-            job_port=PptSelectionJobPort(service),
+            job_port=PptSelectionJobPort(ppt_service, provider),
         )
         return
     provider = DeepSeekClient()

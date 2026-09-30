@@ -4,11 +4,14 @@ import uuid
 from collections.abc import Sequence
 from typing import cast
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.modules.bid.domain.lifecycle import BidFileType, BidProjectType
 from app.modules.bid.infrastructure.models import BidProject, BidProjectFile
+from app.modules.catalog.domain.lifecycle import ProductStatus
+from app.modules.catalog.infrastructure.models import Product
 from app.modules.recommendation.infrastructure.models import (
     PptGenerationTask,
     PptRecommendationConfig,
@@ -16,9 +19,13 @@ from app.modules.recommendation.infrastructure.models import (
     PptSolutionPackageItem,
     PptSolutionPlan,
     RecommendationCandidate,
+    RecommendationCategoryChoice,
     RecommendationConfirmation,
     RecommendationRun,
 )
+from app.modules.recommendation.schemas import CategoryPath, ParsedRequirement
+from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
+from app.modules.supplier.infrastructure.models import Supplier
 
 
 class PptSolutionRepository:
@@ -66,6 +73,117 @@ class PptSolutionRepository:
                 select(RecommendationRun).where(RecommendationRun.id == run_id).with_for_update()
             ),
         )
+
+    async def run(self, run_id: uuid.UUID) -> RecommendationRun | None:
+        return cast(
+            RecommendationRun | None,
+            await self.session.scalar(
+                select(RecommendationRun).where(RecommendationRun.id == run_id)
+            ),
+        )
+
+    async def category_pool(self, requirement: ParsedRequirement) -> list[tuple[CategoryPath, int]]:
+        """Type-5-owned V8 catalogue source; do not call the Type-4 repository."""
+        statement = (
+            select(
+                Product.category_level1_name,
+                Product.category_level2_name,
+                Product.category_level3_name,
+                func.count(Product.id),
+            )
+            .select_from(Product)
+            .join(Supplier, Product.source_supplier_id == Supplier.id)
+            .where(*self._eligibility_filters(requirement))
+            .where(Product.category_level3_name.is_not(None))
+            .group_by(
+                Product.category_level1_name,
+                Product.category_level2_name,
+                Product.category_level3_name,
+            )
+            .order_by(
+                func.count(Product.id).desc(),
+                Product.category_level1_name,
+                Product.category_level2_name,
+                Product.category_level3_name,
+            )
+        )
+        rows = (await self.session.execute(statement)).all()
+        return [
+            (
+                CategoryPath(level1_name=row[0], level2_name=row[1], level3_name=row[2]),
+                int(row[3]),
+            )
+            for row in rows
+        ]
+
+    async def category_choices(self, run_id: uuid.UUID) -> list[RecommendationCategoryChoice]:
+        return list(
+            (
+                await self.session.scalars(
+                    select(RecommendationCategoryChoice)
+                    .where(RecommendationCategoryChoice.run_id == run_id)
+                    .order_by(
+                        RecommendationCategoryChoice.created_at, RecommendationCategoryChoice.id
+                    )
+                )
+            ).all()
+        )
+
+    async def all_eligible_products(
+        self, requirement: ParsedRequirement, category_paths: Sequence[CategoryPath]
+    ) -> list[tuple[Product, Supplier]]:
+        statement = (
+            select(Product, Supplier)
+            .join(Supplier, Product.source_supplier_id == Supplier.id)
+            .where(*self._eligibility_filters(requirement))
+            .order_by(Product.positive_rating.desc(), Product.id)
+        )
+        if category_paths:
+            path_conditions: list[ColumnElement[bool]] = []
+            for path in category_paths:
+                parts: list[ColumnElement[bool]] = []
+                if path.level1_name:
+                    parts.append(Product.category_level1_name == path.level1_name)
+                if path.level2_name:
+                    parts.append(Product.category_level2_name == path.level2_name)
+                if path.level3_name:
+                    parts.append(Product.category_level3_name == path.level3_name)
+                path_conditions.append(and_(*parts))
+            statement = statement.where(or_(*path_conditions))
+        rows = await self.session.execute(statement)
+        return [(row[0], row[1]) for row in rows]
+
+    async def project_has_candidates(self, project_id: uuid.UUID) -> bool:
+        value = await self.session.scalar(
+            select(func.count(RecommendationCandidate.id))
+            .join(RecommendationRun, RecommendationRun.id == RecommendationCandidate.run_id)
+            .where(RecommendationRun.project_id == project_id)
+        )
+        return bool(value)
+
+    @staticmethod
+    def _eligibility_filters(requirement: ParsedRequirement) -> list[ColumnElement[bool]]:
+        """Keep Type-5 V8 hard filtering local to this repository."""
+        filters: list[ColumnElement[bool]] = [
+            Product.status == ProductStatus.ACTIVE,
+            Supplier.archive_status == ArchiveStatus.ARCHIVED,
+            Supplier.cooperation_status == CooperationStatus.NORMAL,
+            Supplier.is_deleted.is_(False),
+        ]
+        for field, column, comparison in (
+            ("gross_margin_min", Product.gross_margin, "min"),
+            ("gross_margin_max", Product.gross_margin, "max"),
+            ("agreement_price_min", Product.agreement_price, "min"),
+            ("agreement_price_max", Product.agreement_price, "max"),
+            ("jd_price_min", Product.jd_price, "min"),
+            ("jd_price_max", Product.jd_price, "max"),
+            ("discount_rate_min", Product.discount_rate, "min"),
+            ("discount_rate_max", Product.discount_rate, "max"),
+        ):
+            value = getattr(requirement, field)
+            if value is not None:
+                filters.append(column >= value if comparison == "min" else column <= value)
+        return filters
 
     async def confirmed_candidates(
         self, run_id: uuid.UUID, candidate_ids: Sequence[uuid.UUID] | None = None

@@ -86,3 +86,24 @@ def test_each_plan_uses_requested_quantity_from_full_pool_with_overlap() -> None
     assert len(plans) == 6
     assert all(len(plan["candidate_ids"]) == 50 for plan in plans)
     assert len({tuple(plan["candidate_ids"]) for plan in plans}) == 6
+
+
+def test_price_band_availability_reports_the_actual_frozen_candidate_count() -> None:
+    config = PptRecommendationConfig(
+        project_id=uuid.uuid4(),
+        recommendation_mode="SINGLE",
+        price_bands=[{"min_price": "0", "max_price": "500"}],
+        candidate_count_per_band=200,
+        plan_count_per_band=6,
+        fulfillment_deadline=None,
+        created_by=uuid.uuid4(),
+        updated_by=uuid.uuid4(),
+    )
+
+    availability = PptSolutionService._plan_availability(
+        config, [_candidate(index, "120") for index in range(1, 201)]
+    )
+
+    assert availability[0].candidate_count == 200
+    assert availability[0].can_generate is True
+    assert "满足每方案 200 件" in availability[0].message

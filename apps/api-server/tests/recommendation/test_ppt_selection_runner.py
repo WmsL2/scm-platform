@@ -5,14 +5,13 @@ from typing import Any
 import pytest
 
 from app.modules.recommendation.application.agent_schemas import (
-    CategoryChoice,
-    CategoryChoiceList,
-    CategoryOption,
+    CategoryCatalogMatch,
     RequirementAnalysis,
 )
 from app.modules.recommendation.application.ppt_selection_runner import (
     PptSelectionAgentRunner,
 )
+from app.modules.recommendation.schemas import CategoryCatalogItem, CategoryCatalogSnapshot
 
 
 class FakeProvider:
@@ -33,39 +32,35 @@ class FakePptTools:
     def __init__(self) -> None:
         self.prepared: RequirementAnalysis | None = None
 
-    async def prepare(self, analysis: RequirementAnalysis) -> None:
+    async def prepare(self, analysis: RequirementAnalysis) -> CategoryCatalogSnapshot:
         self.prepared = analysis
+        return CategoryCatalogSnapshot(
+            generated_at="2026-09-30T00:00:00Z",
+            items=[
+                CategoryCatalogItem(
+                    category_key="c1",
+                    level="LEVEL3",
+                    level1_name="日用品",
+                    level2_name="床上用品",
+                    level3_name="毛毯",
+                    candidate_count=70,
+                )
+            ],
+        )
 
-    async def list_categories(
-        self, keywords: list[str], *, limit: int
-    ) -> list[CategoryOption]:
-        del keywords, limit
-        return [
-            CategoryOption(
-                key="category-1",
-                level1="日用品",
-                level2="床上用品",
-                level3="毛毯",
-                product_count=70,
-            )
-        ]
+    async def record_catalog_category_matches(self, category_keys: list[str]) -> None:
+        self.category_keys = category_keys
 
 
 @pytest.mark.asyncio
 async def test_type5_runner_selects_categories_but_does_not_rank_products() -> None:
-    analysis = RequirementAnalysis(summary="慰问品", keywords=["慰问品"])
+    analysis = RequirementAnalysis(
+        summary="慰问品", keywords=["慰问品"], explicit_category_keywords=["毛毯"]
+    )
     provider = FakeProvider(
         [
             analysis,
-            CategoryChoiceList(
-                choices=[
-                    CategoryChoice(
-                        category_key="category-1",
-                        search_keywords=["毛毯"],
-                        reason="符合需求",
-                    )
-                ]
-            ),
+            CategoryCatalogMatch(category_keys=["c1"]),
         ]
     )
     tools = FakePptTools()
@@ -75,6 +70,6 @@ async def test_type5_runner_selects_categories_but_does_not_rank_products() -> N
     )
 
     assert tools.prepared is analysis
-    assert [choice.category_key for choice in result.category_choices] == ["category-1"]
+    assert tools.category_keys == ["c1"]
     assert result.candidates == []
-    assert provider.response_models == ["RequirementAnalysis", "CategoryChoiceList"]
+    assert provider.response_models == ["RequirementAnalysis", "CategoryCatalogMatch"]

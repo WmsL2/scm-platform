@@ -5,6 +5,8 @@ describe("PptSolutionWorkspaceView", () => {
   it("uses Type-5-only plans with on-demand product details", () => {
     expect(source).toContain("本次推品方案")
     expect(source).toContain("每个方案含指定数量的商品")
+    expect(source).toContain("planAvailability")
+    expect(source).toContain("每档真实数量")
     expect(source).toContain("具体商品详情")
     expect(source).toContain("确认本方案商品")
     expect(source).toContain("重新生成推品")

@@ -5,6 +5,10 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-09-30
 
+> 2026-09-30：类型 5 方案 AI 移除了“完整候选池超过 1,000 件即失败”的限制，改为按价格档独立传入该档冻结候选；当前每档技术传输保护为 5,000 件。新增价格档可用性接口，PPT 工作台显示按协议价计算的每档真实候选数、每方案要求数和准确不足原因。无 Migration、无权限变化；真实 DeepSeek 与浏览器验收待执行。
+
+> 2026-09-30：类型 5 已独立实现与类型 4 同口径的 V8 受控召回：类型 5 自己维护需求解析、真实类目树冻结、类目 key 校验和完整候选快照，不能调用类型 4 选品 Service / Repository。随后类型 5 独立方案 AI 仅从已冻结候选 ID 组织价格档方案，后端严格校验。类型 4 的候选表和 Excel 导出不变。Revision `20260930_0046` 记录方案 AI 来源、模型和 Prompt 版本；推荐模块测试、Ruff、Mypy 已通过，真实 DeepSeek 和浏览器验收待执行。
+
 > 2026-09-29：工作区标签拖拽已调整为浏览器式标签栏交互：完整标签预览的纵向位置固定在标签栏，横向坐标受标签栏左右边界约束；鼠标移出标签栏后仍可继续按横向位置换位，原标签位仅保留浅色虚线占位，避免拖到页面内容区出现孤立蓝框。无 Migration、API 或权限变化；前端类型检查、全量 Vitest（165 项）及生产构建已通过。
 
 > 2026-09-29：自由推品 Requirement V8 已在 `codex/feat/recommendation-category-catalog-snapshot` 实现：需求解析仅保留客户明确类目原词，后端按正式可推荐商品、供应商状态及非类目硬条件生成并冻结一级、二级、三级类目树 JSON 快照，AI 只能返回其中存在的 key；选一级展开所有下级、选二级展开所有三级路径、选三级精确筛选。未知 key 被拒绝，明确类目无匹配不回退全库。Revision `20260929_0042` 新增 Run 快照 JSON 列。后端推荐核心/Agent/适配测试以及 Ruff、Mypy 已通过；前端类型检查、生产构建、真实 DeepSeek 新 Run 与浏览器验收待执行（ADR-0045）。
