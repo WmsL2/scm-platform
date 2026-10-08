@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import select
 
 from app.common.contracts import AppError, PageParams
 from app.core.database import SessionLocal
@@ -18,10 +19,13 @@ from app.modules.bid.infrastructure.models import BidProject, BidProjectFile
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.recommendation.application.ppt_catalog_service import PptCatalogService
+from app.modules.recommendation.application.ppt_service import PptSolutionService
 from app.modules.recommendation.application.service import RecommendationService
 from app.modules.recommendation.infrastructure.models import (
     PptRecommendationConfig,
+    PptSolutionPlan,
     RecommendationCandidate,
+    RecommendationConfirmation,
     RecommendationRun,
 )
 from app.modules.recommendation.schemas import (
@@ -397,6 +401,21 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
             await ppt_catalog.persist_eligible_candidates(ppt_run.id)
             == selected_item.candidate_count
         )
+        ppt_candidates = list(
+            (
+                await session.scalars(
+                    select(RecommendationCandidate).where(
+                        RecommendationCandidate.run_id == ppt_run.id
+                    )
+                )
+            ).all()
+        )
+        confirmation = await service.confirm_candidates(
+            ppt_run.id,
+            BatchConfirmationRequest(candidate_ids=[ppt_candidates[0].id]),
+            actor_id,
+        )
+        assert confirmation.confirmed_count == 1
         assert (await session.get(RecommendationCandidate, saved[0].id)) is not None
         await session.rollback()
 
@@ -462,6 +481,92 @@ async def test_ppt_solution_run_keeps_customer_requirement_separate_from_saved_c
         # than failing with RECOMMENDATION_RUN_NOT_RANKING.
         assert await service.persist_ppt_eligible_candidates(run.id) == 0
         assert (await service.get_run(run.id)).status == RecommendationRunStatus.NO_CANDIDATES
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_ppt_selected_plan_is_persisted_with_confirmed_candidates() -> None:
+    actor_id = uuid.uuid4()
+    token = uuid.uuid4().hex
+    supplier = Supplier(
+        supplier_code=f"PS{token[:12]}",
+        supplier_name=f"方案选择供应商-{token}",
+        main_brands="测试品牌",
+        advantage="测试",
+        archive_status=ArchiveStatus.ARCHIVED.value,
+        cooperation_status=CooperationStatus.NORMAL.value,
+    )
+    project = BidProject(
+        project_code=f"SEL{token[:11]}",
+        project_name="类型5方案选择持久化测试",
+        buyer_name="测试客户",
+        status=BidProjectStatus.SELECTING.value,
+        import_status=BidImportStatus.NOT_REQUIRED.value,
+        project_type=BidProjectType.PPT_SOLUTION.value,
+        remark="验证选择方案后刷新仍可识别选中的方案。",
+        created_by=actor_id,
+    )
+
+    async with SessionLocal() as session:
+        session.add_all([supplier, project])
+        await session.flush()
+        product = Product(
+            source_supplier_id=supplier.id,
+            sku=f"PLAN-{token[:8]}",
+            product_name="方案选择测试商品",
+            agreement_price=Decimal("120"),
+            status=ProductStatus.ACTIVE.value,
+        )
+        session.add(product)
+        await session.flush()
+        run = RecommendationRun(
+            project_id=project.id,
+            status=RecommendationRunStatus.WAITING_CONFIRMATION.value,
+            raw_requirement_snapshot=project.remark or "",
+            parsed_requirement={"requirement_version": "ppt-v8"},
+            created_by=actor_id,
+        )
+        session.add(run)
+        await session.flush()
+        candidate = RecommendationCandidate(
+            run_id=run.id,
+            product_id=product.id,
+            rank=1,
+            product_snapshot={"product_name": product.product_name, "sku": product.sku},
+            supplier_snapshot={"supplier_code": supplier.supplier_code},
+            price_snapshot={"agreement_price": "120"},
+        )
+        session.add(candidate)
+        await session.flush()
+        plan = PptSolutionPlan(
+            run_id=run.id,
+            price_band_index=1,
+            plan_no=1,
+            plan_type="SINGLE",
+            name="测试方案",
+            summary="测试方案选择持久化",
+            candidate_ids=[str(candidate.id)],
+            selection_source="AI",
+            selection_provider="fake",
+            selection_model="fake-model",
+            selection_prompt_version="test:ppt-plan-v1",
+        )
+        session.add(plan)
+        await session.flush()
+
+        selected = await PptSolutionService(session).select_plan(plan.id, actor_id)
+
+        assert selected.is_selected is True
+        assert selected.selected_by == actor_id
+        assert selected.selected_at is not None
+        assert (await PptSolutionService(session).list_plans(run.id))[0].is_selected is True
+        confirmation = await session.scalar(
+            select(RecommendationConfirmation).where(
+                RecommendationConfirmation.candidate_id == candidate.id
+            )
+        )
+        assert confirmation is not None
+        assert confirmation.confirmed_by == actor_id
         await session.rollback()
 
 

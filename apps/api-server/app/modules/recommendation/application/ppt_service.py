@@ -21,6 +21,7 @@ from app.modules.catalog.application.media import local_media_storage_key
 from app.modules.recommendation.application.agent_runner import StructuredProvider
 from app.modules.recommendation.application.ppt_plan_runner import PptPlanAgentRunner
 from app.modules.recommendation.application.ppt_renderer import PptRenderer
+from app.modules.recommendation.application.service import RecommendationService
 from app.modules.recommendation.infrastructure.models import (
     PptGenerationTask,
     PptRecommendationConfig,
@@ -43,6 +44,7 @@ from app.modules.recommendation.ppt_schemas import (
     PptSolutionPlanItemResponse,
     PptSolutionPlanResponse,
 )
+from app.modules.recommendation.schemas import BatchConfirmationRequest
 from app.modules.recommendation.template.schemas import RecommendationRunStatus
 
 logger = logging.getLogger(__name__)
@@ -124,6 +126,32 @@ class PptSolutionService:
             raise AppError("PPT_RECOMMENDATION_CONFIG_REQUIRED", "类型 5 推品配置不存在", 409)
         return self._plan_availability(config, await self.repository.candidates(run_id))
 
+    async def select_plan(
+        self, plan_id: uuid.UUID, actor_id: uuid.UUID
+    ) -> PptSolutionPlanResponse:
+        """Persist the selected plan and confirm its candidates as one transaction."""
+        async with transaction_scope(self.session):
+            plan = await self.repository.plan(plan_id)
+            if plan is None:
+                raise AppError("PPT_SOLUTION_PLAN_NOT_FOUND", "类型 5 方案不存在", 404)
+            candidate_ids = [uuid.UUID(value) for value in plan.candidate_ids]
+            await RecommendationService(self.session).confirm_candidates(
+                plan.run_id,
+                BatchConfirmationRequest(candidate_ids=candidate_ids),
+                actor_id,
+            )
+            locked_plan = await self.repository.plan(plan_id, lock=True)
+            if locked_plan is None:
+                raise AppError("PPT_SOLUTION_PLAN_NOT_FOUND", "类型 5 方案不存在", 404)
+            locked_plan.is_selected = True
+            locked_plan.selected_by = actor_id
+            locked_plan.selected_at = datetime.now(UTC).replace(tzinfo=None)
+            await self.session.flush()
+            candidates = {
+                item.id: item for item in await self.repository.candidates(locked_plan.run_id)
+            }
+            return self._plan_response(locked_plan, candidates)
+
     async def create_generated_plans(self, run_id: uuid.UUID) -> list[PptSolutionPlanResponse]:
         """Persist distinct Type-5 proposals from the complete frozen product pool."""
         async with transaction_scope(self.session):
@@ -194,12 +222,14 @@ class PptSolutionService:
                 )
                 allowed_ids = {item.id for item in permitted}
                 ids = list(proposal.candidate_ids)
-                if len(ids) != config.candidate_count_per_band or any(
-                    item not in allowed_ids for item in ids
+                if (
+                    not ids
+                    or len(ids) > config.candidate_count_per_band
+                    or any(item not in allowed_ids for item in ids)
                 ):
                     raise AppError(
                         "PPT_PLAN_AI_CANDIDATE_INVALID",
-                        "方案 AI 返回了价格档外或数量不符的商品",
+                        "方案 AI 返回了价格档外、空方案或超过配置上限的商品",
                         422,
                     )
                 mode = config.recommendation_mode
@@ -718,6 +748,9 @@ class PptSolutionService:
             selection_provider=plan.selection_provider,
             selection_model=plan.selection_model,
             selection_prompt_version=plan.selection_prompt_version,
+            is_selected=plan.is_selected,
+            selected_by=plan.selected_by,
+            selected_at=plan.selected_at,
             items=[
                 PptSolutionPlanItemResponse(
                     candidate_id=candidate.id,

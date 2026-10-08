@@ -79,6 +79,9 @@ class PptSolutionPlanResponse(BaseModel):
     selection_provider: str | None
     selection_model: str | None
     selection_prompt_version: str | None
+    is_selected: bool
+    selected_by: UUID | None
+    selected_at: datetime | None
     items: list[PptSolutionPlanItemResponse]
     created_at: datetime
 
@@ -105,6 +108,22 @@ class PptPlanProposalList(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     plans: list[PptPlanProposal] = Field(default_factory=list, max_length=240)
+
+
+class PptPlanReferenceProposal(BaseModel):
+    """One provider-authored plan using short, run-local candidate references."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=255)
+    summary: str | None = Field(default=None, max_length=2000)
+    candidate_refs: list[str] = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def unique_candidate_refs(self) -> "PptPlanReferenceProposal":
+        if len(self.candidate_refs) != len(set(self.candidate_refs)):
+            raise ValueError("candidate_refs must be unique")
+        return self
 
 
 class PptPackageItemInput(BaseModel):

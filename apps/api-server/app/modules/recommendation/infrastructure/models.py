@@ -267,6 +267,9 @@ class PptSolutionPlan(Base):
     selection_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     selection_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     selection_prompt_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    is_selected: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    selected_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+    selected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
