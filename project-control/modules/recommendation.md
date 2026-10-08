@@ -2,6 +2,13 @@
 
 状态：B_CORE_C_AGENT_WEB_INTEGRATED / EXPORT_IMPLEMENTED
 
+> 2026-10-08：类型 5 对 Token 安全方案编排补充了响应合同校验与一次纠错重试。每个价格档必须
+> 返回配置要求的全部且唯一的方案槽位，所有短 ID 必须仍在本次 AI 窗口内；少方案、重复编号或
+> 清单外短 ID 不再直接落入泛化 `AppError`。两次失败后，逐档状态和页面保留安全具体原因。
+> 当模型返回的合法核心商品多于单方案目标数时，后端只保留前 N 个，不会把足量价格档误判为不足。
+> 无 Migration、API 或权限变化；推荐模块 70 项测试、Ruff 通过。使用失败 Run 的冻结候选进行的
+> 只读 DeepSeek 探测可正常返回 3 套有效方案，真实页面重新生成验收待执行。
+
 > 2026-10-08：类型 5 AI 方案编排改为 Token 安全链路。完整价格档候选池仍冻结保存；每次 DeepSeek 请求只接收按类目/品牌轮换的短 ID 候选窗口，并且只返回每方案至多 12 个核心商品；后端将核心商品置前并从完整冻结价格档池补齐。Revision `20261008_0048` 持久化逐档进度和失败原因，`20261008_0049` 冻结 Run 配置；首次推品按独立短 Session 分阶段提交，重试 API 只补齐当前 Run 缺失槽位。PR #113 的方案选择持久化同时保留：`is_selected`、`selected_by`、`selected_at` 与 `POST /ppt-solution-projects/plans/{plan_id}/select` 均可用，重试不会覆盖已选方案。Revision `20261008_0050` 是 `0047` 与 `0049` 的无 DDL merge revision。MySQL HTTP 专项 2 项、推荐模块 66 项、Ruff、Mypy 和前端 165 项测试均已通过；全量后端为 283 passed、1 failed（本机 Catalog 无筛选超过 5,000 条的既有测试设计问题）。真实 DeepSeek 联调与浏览器端到端验收仍待执行。
 
 > 2026-09-30：类型 5 现使用独立维护的 V8 受控选品链路：独立 Runner、Adapter、Catalog Service 和 Repository 按与类型 4 相同的硬条件冻结真实一级/二级/三级类目目录；AI 只能返回本次目录 key，父节点会展开子路径，完整候选池先按价格档冻结。类型 5 随后由独立方案 AI 仅从冻结 `candidate_id` 编排方案，后端校验价格档、数量、重复和未知 ID。类型 4 的 Runner、Repository、候选表及 Excel 导出未改。Revision `20260930_0046` 为类型 5 方案记录新增 AI 编排审计字段；真实 DeepSeek 与浏览器验收待执行。

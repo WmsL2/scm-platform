@@ -87,15 +87,63 @@ async def test_type5_plan_runner_exposes_only_short_window_keys() -> None:
 @pytest.mark.asyncio
 async def test_type5_plan_runner_bounds_ai_window_without_truncating_complete_pool() -> None:
     candidates = [_candidate("120", rank=index) for index in range(1, 1002)]
-    provider = FakeProvider([PptPlanProposalList()])
+    provider = FakeProvider(
+        [
+            PptPlanProposalList(
+                plans=[
+                    PptPlanProposal(
+                        price_band_index=1,
+                        plan_no=1,
+                        name="受控窗口方案",
+                        candidate_keys=["c1"],
+                    )
+                ]
+            )
+        ]
+    )
 
     result = await PptPlanAgentRunner(provider).run(_config(items=200, plans=1), candidates)
 
-    assert result.plans == []
+    assert result.plans[0].candidate_keys == ["c1"]
     assert len(provider.calls) == 1
     sent = json.loads(provider.calls[0]["user_prompt"])
     assert len(sent["candidates"]) < len(candidates)
     assert len(candidates) == 1001
+
+
+@pytest.mark.asyncio
+async def test_type5_plan_runner_retries_incomplete_plan_slots() -> None:
+    incomplete = PptPlanProposalList(
+        plans=[
+            PptPlanProposal(
+                price_band_index=1,
+                plan_no=1,
+                name="不完整方案",
+                candidate_keys=["c1"],
+            )
+        ]
+    )
+    complete = PptPlanProposalList(
+        plans=[
+            PptPlanProposal(
+                price_band_index=1,
+                plan_no=number,
+                name=f"方案 {number}",
+                candidate_keys=["c1"],
+            )
+            for number in range(1, 4)
+        ]
+    )
+    provider = FakeProvider([incomplete, complete])
+
+    result = await PptPlanAgentRunner(provider).run(
+        _config(items=10, plans=3),
+        [_candidate("120", rank=index) for index in range(1, 12)],
+    )
+
+    assert result == complete
+    assert len(provider.calls) == 2
+    assert "完整且唯一" in provider.calls[1]["user_prompt"]
 
 
 @pytest.mark.asyncio
@@ -132,20 +180,17 @@ async def test_type5_plan_runner_retries_structured_output_without_expanding_inp
 
 @pytest.mark.asyncio
 async def test_type5_plan_runner_rejects_key_outside_ai_window() -> None:
-    provider = FakeProvider(
-        [
-            PptPlanProposalList(
-                plans=[
-                    PptPlanProposal(
-                        price_band_index=1,
-                        plan_no=1,
-                        name="越界方案",
-                        candidate_keys=["c999"],
-                    )
-                ]
+    invalid = PptPlanProposalList(
+        plans=[
+            PptPlanProposal(
+                price_band_index=1,
+                plan_no=1,
+                name="越界方案",
+                candidate_keys=["c999"],
             )
         ]
     )
+    provider = FakeProvider([invalid, invalid])
 
     with pytest.raises(RecommendationAgentContractError, match="清单外商品"):
         await PptPlanAgentRunner(provider).run(

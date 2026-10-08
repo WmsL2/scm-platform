@@ -90,29 +90,49 @@ class PptPlanAgentRunner:
                         self.settings.ppt_ai_output_token_budget, self.settings.deepseek_max_tokens
                     ),
                 )
+                self._validate_provider_result(result, index, config.plan_count_per_band, key_map)
+                return result
             except DeepSeekConfigurationError:
                 raise
-            except DeepSeekStructuredOutputError as exc:
+            except (DeepSeekStructuredOutputError, RecommendationAgentContractError) as exc:
                 if attempt + 1 == self.MAX_PROVIDER_ATTEMPTS:
                     raise
+                detail = (
+                    exc.safe_validation_summary
+                    if isinstance(exc, DeepSeekStructuredOutputError)
+                    else str(exc)
+                )
                 logger.warning(
-                    "ppt token-safe plan schema retry band=%s validation=%s",
+                    "ppt token-safe plan retry band=%s validation=%s",
                     index,
-                    exc.safe_validation_summary,
+                    detail,
                 )
                 retry_note = (
-                    "\n上一次输出未通过 JSON Schema 校验。请仅重新输出合法 JSON；"
-                    f"脱敏错误：{exc.safe_validation_summary}"
+                    "\n上一次输出未通过方案合同校验。请仅重新输出完整且合法 JSON；"
+                    f"脱敏错误：{detail}"
                 )
                 continue
-
-            for proposal in result.plans:
-                if proposal.price_band_index != index or any(
-                    key not in key_map for key in proposal.candidate_keys
-                ):
-                    raise RecommendationAgentContractError("类型 5 方案 AI 返回了清单外商品")
-            return result
         raise RecommendationAgentContractError("类型 5 AI 未返回可用方案")
+
+    @staticmethod
+    def _validate_provider_result(
+        result: PptPlanProposalList,
+        band_index: int,
+        plan_count: int,
+        key_map: dict[str, RecommendationCandidate],
+    ) -> None:
+        expected_slots = {(band_index, number) for number in range(1, plan_count + 1)}
+        actual_slots = {(item.price_band_index, item.plan_no) for item in result.plans}
+        if actual_slots != expected_slots or len(actual_slots) != len(result.plans):
+            raise RecommendationAgentContractError(
+                "类型 5 方案 AI 未按价格档返回完整且唯一的方案"
+            )
+        if any(
+            key not in key_map
+            for proposal in result.plans
+            for key in proposal.candidate_keys
+        ):
+            raise RecommendationAgentContractError("类型 5 方案 AI 返回了清单外商品")
 
     def window_key_map(
         self, candidates: list[RecommendationCandidate]

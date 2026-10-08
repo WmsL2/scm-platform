@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
+from app.common.contracts import AppError
 from app.core.database import SessionLocal
 from app.integrations.deepseek.client import DeepSeekStructuredOutputError
 from app.modules.recommendation.application.agent_runner import (
@@ -117,6 +118,11 @@ class PptSelectionJobPort:
                     run_id,
                     "类型 5 AI 方案编排返回格式异常，自动重试后仍失败"
                     f"（{exc.error_kind}），请重新生成。",
+                )
+        except AppError as exc:
+            async with SessionLocal() as session:
+                await PptCatalogService(session).record_plan_failure(
+                    run_id, f"类型 5 AI 方案编排失败：{exc.message}，请重新生成。"
                 )
         except Exception as exc:
             # Candidate recall remains usable and auditable even if plan composition fails.
