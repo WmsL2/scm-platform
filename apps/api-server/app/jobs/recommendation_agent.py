@@ -21,7 +21,6 @@ from app.modules.recommendation.application.agent_service_adapter import (
     RecommendationServiceJobPort,
     RecommendationServiceTools,
 )
-from app.modules.recommendation.application.ppt_catalog_service import PptCatalogService
 from app.modules.recommendation.application.ppt_selection_adapter import (
     PptSelectionJobPort,
     PptSelectionServiceTools,
@@ -123,21 +122,9 @@ async def execute_recommendation_agent_inline(run_id: UUID, session: AsyncSessio
 
     service = RecommendationService(session)
     if await service.project_type_for_run(run_id) == BidProjectType.PPT_SOLUTION:
-        provider = DeepSeekClient()
-        ppt_service = PptCatalogService(session)
-        ppt_tools = PptSelectionServiceTools(
-            run_id,
-            ppt_service,
-            provider=provider.provider,
-            model=provider.model,
-            prompt_version=provider.prompt_version,
+        raise RuntimeError(
+            "类型 5 必须通过 execute_ppt_recommendation_agent_inline 使用独立短 Session 执行"
         )
-        await execute_recommendation_agent(
-            run_id,
-            runner=PptSelectionAgentRunner(provider, ppt_tools),
-            job_port=PptSelectionJobPort(ppt_service, provider),
-        )
-        return
     provider = DeepSeekClient()
     tools = RecommendationServiceTools(
         run_id,
@@ -150,4 +137,20 @@ async def execute_recommendation_agent_inline(run_id: UUID, session: AsyncSessio
         run_id,
         runner=AgentRunner(provider, tools),
         job_port=RecommendationServiceJobPort(service),
+    )
+
+
+async def execute_ppt_recommendation_agent_inline(run_id: UUID) -> None:
+    """Run Type-5 stages in short, independently committed database sessions."""
+    provider = DeepSeekClient()
+    tools = PptSelectionServiceTools(
+        run_id,
+        provider=provider.provider,
+        model=provider.model,
+        prompt_version=provider.prompt_version,
+    )
+    await execute_recommendation_agent(
+        run_id,
+        runner=PptSelectionAgentRunner(provider, tools),
+        job_port=PptSelectionJobPort(provider),
     )

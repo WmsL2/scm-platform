@@ -2,6 +2,8 @@
 
 状态：B_CORE_C_AGENT_WEB_INTEGRATED / EXPORT_IMPLEMENTED
 
+> 2026-10-08：类型 5 AI 方案编排改为 Token 安全链路。完整价格档候选池仍冻结保存；每次 DeepSeek 请求只接收按类目/品牌轮换的短 ID 候选窗口，并且只返回每方案至多 12 个核心商品；后端将核心商品置前并从完整冻结价格档池补齐。Revision `20261008_0048` 持久化逐档进度和失败原因，`20261008_0049` 冻结 Run 配置；首次推品按独立短 Session 分阶段提交，重试 API 只补齐当前 Run 缺失槽位。PR #113 的方案选择持久化同时保留：`is_selected`、`selected_by`、`selected_at` 与 `POST /ppt-solution-projects/plans/{plan_id}/select` 均可用，重试不会覆盖已选方案。Revision `20261008_0050` 是 `0047` 与 `0049` 的无 DDL merge revision。MySQL HTTP 专项 2 项、推荐模块 66 项、Ruff、Mypy 和前端 165 项测试均已通过；全量后端为 283 passed、1 failed（本机 Catalog 无筛选超过 5,000 条的既有测试设计问题）。真实 DeepSeek 联调与浏览器端到端验收仍待执行。
+
 > 2026-09-30：类型 5 现使用独立维护的 V8 受控选品链路：独立 Runner、Adapter、Catalog Service 和 Repository 按与类型 4 相同的硬条件冻结真实一级/二级/三级类目目录；AI 只能返回本次目录 key，父节点会展开子路径，完整候选池先按价格档冻结。类型 5 随后由独立方案 AI 仅从冻结 `candidate_id` 编排方案，后端校验价格档、数量、重复和未知 ID。类型 4 的 Runner、Repository、候选表及 Excel 导出未改。Revision `20260930_0046` 为类型 5 方案记录新增 AI 编排审计字段；真实 DeepSeek 与浏览器验收待执行。
 
 > 2026-09-30：类型 5 不再因完整候选池超过 1,000 件而拒绝方案编排。方案 AI 改为逐价格档接收对应冻结候选，当前单档传输保护为 5,000 件；新增价格档可用性接口和页面标签，准确显示每档协议价范围内的候选数、每方案要求数和不足原因。无 Migration、无权限变化；真实 DeepSeek 与浏览器验收待执行。

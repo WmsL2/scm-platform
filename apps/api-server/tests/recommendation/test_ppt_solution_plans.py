@@ -4,10 +4,8 @@ import uuid
 from decimal import Decimal
 
 from app.modules.recommendation.application.ppt_service import PptSolutionService
-from app.modules.recommendation.infrastructure.models import (
-    PptRecommendationConfig,
-    RecommendationCandidate,
-)
+from app.modules.recommendation.infrastructure.models import RecommendationCandidate
+from app.modules.recommendation.ppt_schemas import PptFrozenRecommendationConfig
 
 
 def _candidate(rank: int, agreement_price: str) -> RecommendationCandidate:
@@ -24,15 +22,12 @@ def _candidate(rank: int, agreement_price: str) -> RecommendationCandidate:
 
 
 def test_generated_mixed_plans_rotate_full_per_plan_product_sets() -> None:
-    config = PptRecommendationConfig(
-        project_id=uuid.uuid4(),
+    config = PptFrozenRecommendationConfig(
         recommendation_mode="MIXED",
         price_bands=[{"min_price": "100", "max_price": "200"}],
         candidate_count_per_band=3,
         plan_count_per_band=3,
         fulfillment_deadline=None,
-        created_by=uuid.uuid4(),
-        updated_by=uuid.uuid4(),
     )
 
     plans = PptSolutionService._build_plans(
@@ -47,15 +42,12 @@ def test_generated_mixed_plans_rotate_full_per_plan_product_sets() -> None:
 
 
 def test_plan_is_not_created_when_the_price_band_has_too_few_products() -> None:
-    config = PptRecommendationConfig(
-        project_id=uuid.uuid4(),
+    config = PptFrozenRecommendationConfig(
         recommendation_mode="SINGLE",
         price_bands=[{"min_price": "100", "max_price": "200"}],
         candidate_count_per_band=50,
         plan_count_per_band=6,
         fulfillment_deadline=None,
-        created_by=uuid.uuid4(),
-        updated_by=uuid.uuid4(),
     )
 
     plans = PptSolutionService._build_plans(
@@ -67,15 +59,12 @@ def test_plan_is_not_created_when_the_price_band_has_too_few_products() -> None:
 
 
 def test_each_plan_uses_requested_quantity_from_full_pool_with_overlap() -> None:
-    config = PptRecommendationConfig(
-        project_id=uuid.uuid4(),
+    config = PptFrozenRecommendationConfig(
         recommendation_mode="SINGLE",
         price_bands=[{"min_price": "100", "max_price": "200"}],
         candidate_count_per_band=50,
         plan_count_per_band=6,
         fulfillment_deadline=None,
-        created_by=uuid.uuid4(),
-        updated_by=uuid.uuid4(),
     )
 
     plans = PptSolutionService._build_plans(
@@ -89,15 +78,12 @@ def test_each_plan_uses_requested_quantity_from_full_pool_with_overlap() -> None
 
 
 def test_price_band_availability_reports_the_actual_frozen_candidate_count() -> None:
-    config = PptRecommendationConfig(
-        project_id=uuid.uuid4(),
+    config = PptFrozenRecommendationConfig(
         recommendation_mode="SINGLE",
         price_bands=[{"min_price": "0", "max_price": "500"}],
         candidate_count_per_band=200,
         plan_count_per_band=6,
         fulfillment_deadline=None,
-        created_by=uuid.uuid4(),
-        updated_by=uuid.uuid4(),
     )
 
     availability = PptSolutionService._plan_availability(

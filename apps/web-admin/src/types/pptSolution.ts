@@ -19,6 +19,9 @@ export interface PptPriceBandAvailability {
   candidate_count: number
   required_count: number
   can_generate: boolean
+  generated_plan_count: number
+  requested_plan_count: number
+  failure_reason: string | null
   message: string
 }
 
@@ -31,6 +34,9 @@ export interface PptSolutionPlan {
   name: string
   summary: string | null
   candidate_ids: string[]
+  is_selected: boolean
+  selected_by: string | null
+  selected_at: string | null
   items: PptSolutionPlanItem[]
   created_at: string
 }

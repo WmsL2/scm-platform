@@ -51,6 +51,7 @@ class RecommendationRun(Base):
     raw_requirement_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
     parsed_requirement: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     category_catalog_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    ppt_config_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     prompt_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -267,8 +268,40 @@ class PptSolutionPlan(Base):
     selection_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     selection_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     selection_prompt_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Selection is independent from generation.  A later retry may fill another
+    # price-band slot but must not erase the user's persisted plan choice.
+    is_selected: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    selected_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
+    selected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class PptPlanGenerationStatus(Base):
+    """Durable per-band orchestration outcome; survives request/process restarts."""
+
+    __tablename__ = "scm_ppt_plan_generation_status"
+    __table_args__ = (
+        UniqueConstraint("run_id", "price_band_index", name="uq_scm_ppt_plan_generation_run_band"),
+        Index("ix_scm_ppt_plan_generation_status_run_id", "run_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDChar36(), ForeignKey("scm_recommendation_run.id", ondelete="RESTRICT"), nullable=False
+    )
+    price_band_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    requested_plan_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    generated_plan_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
     )
 
 

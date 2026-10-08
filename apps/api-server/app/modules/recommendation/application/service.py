@@ -30,6 +30,7 @@ from app.modules.recommendation.infrastructure.models import (
     RecommendationRun,
 )
 from app.modules.recommendation.infrastructure.repository import RecommendationRepository
+from app.modules.recommendation.ppt_schemas import PptFrozenRecommendationConfig
 from app.modules.recommendation.schemas import (
     BatchConfirmationRequest,
     BatchConfirmationResult,
@@ -81,6 +82,7 @@ class RecommendationService:
     async def create_run(
         self, project_id: uuid.UUID, actor_id: uuid.UUID
     ) -> RecommendationRunResponse:
+        ppt_config_snapshot: dict[str, object] | None = None
         async with transaction_scope(self.session):
             project = await self.repository.recommendation_project_for_update(project_id)
             if project is None:
@@ -116,6 +118,7 @@ class RecommendationService:
                         "请先填写类型 5 的推品方式、价格档和生成数量",
                         409,
                     )
+                ppt_config_snapshot = self._frozen_ppt_config_snapshot(config)
                 # Type-5 V8 recall receives exactly the customer requirement, just as Type 4.
                 # Its saved price bands are deliberately consumed only by the later plan AI.
             if project.status in {
@@ -142,6 +145,7 @@ class RecommendationService:
                 status=RecommendationRunStatus.QUEUED.value,
                 raw_requirement_snapshot=requirement,
                 created_by=actor_id,
+                ppt_config_snapshot=ppt_config_snapshot,
             )
             self.session.add(run)
             await self.session.flush()
@@ -161,16 +165,36 @@ class RecommendationService:
             raise AppError("RECOMMENDATION_PROJECT_NOT_FOUND", "推品项目不存在", 404)
         return BidProjectType(project.project_type)
 
-    async def ppt_recommendation_config_for_run(self, run_id: uuid.UUID) -> PptRecommendationConfig:
+    async def ppt_recommendation_config_for_run(
+        self, run_id: uuid.UUID
+    ) -> PptFrozenRecommendationConfig:
         run = await self._run_or_404(run_id)
-        config = await self.session.scalar(
-            select(PptRecommendationConfig).where(
-                PptRecommendationConfig.project_id == run.project_id
+        if run.ppt_config_snapshot is None:
+            raise AppError(
+                "PPT_RECOMMENDATION_CONFIG_SNAPSHOT_MISSING",
+                "历史类型 5 任务缺少冻结配置，不能重试方案",
+                409,
             )
+        try:
+            return PptFrozenRecommendationConfig.model_validate(run.ppt_config_snapshot)
+        except ValueError as exc:
+            raise AppError(
+                "PPT_RECOMMENDATION_CONFIG_SNAPSHOT_INVALID", "类型 5 冻结配置无效", 409
+            ) from exc
+
+    @staticmethod
+    def _frozen_ppt_config_snapshot(config: PptRecommendationConfig) -> dict[str, object]:
+        """Validate ORM values at the persistence boundary before serialising JSON."""
+        frozen_config = PptFrozenRecommendationConfig.model_validate(
+            {
+                "recommendation_mode": config.recommendation_mode,
+                "price_bands": config.price_bands,
+                "candidate_count_per_band": config.candidate_count_per_band,
+                "plan_count_per_band": config.plan_count_per_band,
+                "fulfillment_deadline": config.fulfillment_deadline,
+            }
         )
-        if config is None:
-            raise AppError("PPT_RECOMMENDATION_CONFIG_REQUIRED", "类型 5 推品配置不存在", 409)
-        return config
+        return frozen_config.model_dump(mode="json")
 
     async def get_run(self, run_id: uuid.UUID) -> RecommendationRunResponse:
         run = await self.repository.run_by_id(run_id)

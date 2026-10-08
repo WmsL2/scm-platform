@@ -4,11 +4,16 @@ import source from "./PptSolutionWorkspaceView.vue?raw"
 describe("PptSolutionWorkspaceView", () => {
   it("uses Type-5-only plans with on-demand product details", () => {
     expect(source).toContain("本次推品方案")
-    expect(source).toContain("每个方案含指定数量的商品")
+    expect(source).toContain("每个方案严格包含指定数量的商品")
     expect(source).toContain("planAvailability")
     expect(source).toContain("每档真实数量")
     expect(source).toContain("具体商品详情")
     expect(source).toContain("确认本方案商品")
+    expect(source).toContain("plan-card--selected")
+    expect(source).toContain("已选方案")
+    expect(source).toContain("已选择此方案")
+    expect(source).toContain("pptSolutionApi.selectPlan(plan.id)")
+    expect(source).toContain("重试未完成方案")
     expect(source).toContain("重新生成推品")
     expect(source).toContain("本次推品执行失败，请修改配置后重新生成。")
     expect(source).not.toContain("AI 推荐与人工选品")

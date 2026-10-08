@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from collections.abc import Sequence
 from typing import Any, TypeVar
@@ -10,6 +11,7 @@ from app.core.config import Settings, get_settings
 
 StructuredResult = TypeVar("StructuredResult", bound=BaseModel)
 _FENCED_JSON = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL | re.IGNORECASE)
+logger = logging.getLogger(__name__)
 
 
 class DeepSeekConfigurationError(RuntimeError):
@@ -18,6 +20,13 @@ class DeepSeekConfigurationError(RuntimeError):
 
 class DeepSeekProviderError(RuntimeError):
     """Provider failure safe to surface without leaking credentials or response bodies."""
+
+    def __init__(
+        self, message: str, *, error_kind: str = "PROVIDER_ERROR", retryable: bool = True
+    ) -> None:
+        self.error_kind = error_kind
+        self.retryable = retryable
+        super().__init__(message)
 
 
 class DeepSeekStructuredOutputError(DeepSeekProviderError):
@@ -33,7 +42,11 @@ class DeepSeekStructuredOutputError(DeepSeekProviderError):
         self.response_model_name = response_model_name
         self.safe_validation_summary = safe_validation_summary
         self.error_kind = error_kind
-        super().__init__(f"DeepSeek 返回的 {response_model_name} 结构不符合业务约束")
+        super().__init__(
+            f"DeepSeek 返回的 {response_model_name} 结构不符合业务约束",
+            error_kind=error_kind,
+            retryable=False,
+        )
 
 
 class DeepSeekClient:
@@ -66,6 +79,7 @@ class DeepSeekClient:
         system_prompt: str,
         user_prompt: str,
         response_model: type[StructuredResult],
+        max_tokens: int | None = None,
     ) -> StructuredResult:
         api_key = self.settings.deepseek_api_key
         if api_key is None:
@@ -82,7 +96,7 @@ class DeepSeekClient:
             ],
             "response_format": {"type": "json_object"},
             "temperature": 0.1,
-            "max_tokens": self.settings.deepseek_max_tokens,
+            "max_tokens": max_tokens or self.settings.deepseek_max_tokens,
         }
         url = f"{self.settings.deepseek_base_url.rstrip('/')}/chat/completions"
         try:
@@ -98,13 +112,44 @@ class DeepSeekClient:
                     },
                     json=payload,
                 )
-                response.raise_for_status()
+                if response.status_code >= 400:
+                    # Do not log or expose the body: it can contain request echoes.
+                    kind = (
+                        "CONTEXT_LENGTH_EXCEEDED"
+                        if response.status_code == 400
+                        else f"HTTP_{response.status_code}"
+                    )
+                    retryable = response.status_code in {408, 429} or response.status_code >= 500
+                    message = (
+                        "DeepSeek 输入超过上下文限制，请缩小任务后重试"
+                        if kind == "CONTEXT_LENGTH_EXCEEDED"
+                        else "DeepSeek 请求失败，请稍后重试"
+                    )
+                    raise DeepSeekProviderError(message, error_kind=kind, retryable=retryable)
                 body = response.json()
+        except DeepSeekProviderError:
+            raise
+        except httpx.TimeoutException as exc:
+            raise DeepSeekProviderError(
+                "DeepSeek 请求超时，请稍后重试", error_kind="TIMEOUT"
+            ) from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise DeepSeekProviderError("DeepSeek 请求失败，请稍后重试") from exc
 
+        usage = body.get("usage") if isinstance(body, dict) else None
+        if isinstance(usage, dict):
+            logger.info(
+                "deepseek structured usage model=%s prompt=%s completion=%s total=%s",
+                self.model,
+                usage.get("prompt_tokens"),
+                usage.get("completion_tokens"),
+                usage.get("total_tokens"),
+            )
+
         try:
-            content = body["choices"][0]["message"]["content"]
+            choice = body["choices"][0]
+            finish_reason = choice.get("finish_reason")
+            content = choice["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise DeepSeekStructuredOutputError(
                 response_model_name=response_model.__name__,
@@ -113,6 +158,13 @@ class DeepSeekClient:
                 ),
                 error_kind="MISSING_CONTENT",
             ) from exc
+
+        if finish_reason == "length":
+            raise DeepSeekStructuredOutputError(
+                response_model_name=response_model.__name__,
+                safe_validation_summary="content: output_truncated: finish_reason=length",
+                error_kind="OUTPUT_TRUNCATED",
+            )
 
         try:
             normalized_content = self._strip_json_fence(content)

@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     deepseek_timeout_seconds: int = 60
     deepseek_max_tokens: int = 4096
     deepseek_prompt_version: str = "free-recommendation-v1"
+    # Type-5 keeps the complete pool in MySQL but bounds each model request.
+    # Token counts are conservative character estimates (Chinese/token ratios vary).
+    ppt_ai_input_token_budget: int = 12000
+    ppt_ai_output_token_budget: int = 2048
+    ppt_ai_seed_count_per_plan: int = 12
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -71,6 +76,9 @@ class Settings(BaseSettings):
         "product_import_max_image_mb",
         "deepseek_timeout_seconds",
         "deepseek_max_tokens",
+        "ppt_ai_input_token_budget",
+        "ppt_ai_output_token_budget",
+        "ppt_ai_seed_count_per_plan",
     )
     @classmethod
     def positive_auth_duration(cls, value: int) -> int:
@@ -81,9 +89,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_session_durations(self) -> "Settings":
         if self.auth_refresh_idle_days > self.auth_session_absolute_days:
-            raise ValueError(
-                "auth_refresh_idle_days cannot exceed auth_session_absolute_days"
-            )
+            raise ValueError("auth_refresh_idle_days cannot exceed auth_session_absolute_days")
         if (self.initial_admin_username is None) != (self.initial_admin_password is None):
             raise ValueError(
                 "initial_admin_username and initial_admin_password must be configured together"

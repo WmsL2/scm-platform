@@ -37,6 +37,7 @@ class StructuredProvider(Protocol):
         system_prompt: str,
         user_prompt: str,
         response_model: type[StructuredModel],
+        max_tokens: int | None = None,
     ) -> StructuredModel: ...
 
 

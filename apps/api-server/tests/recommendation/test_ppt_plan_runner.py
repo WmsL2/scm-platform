@@ -7,11 +7,12 @@ from typing import Any
 import pytest
 
 from app.modules.recommendation.application.ppt_plan_runner import PptPlanAgentRunner
-from app.modules.recommendation.infrastructure.models import (
-    PptRecommendationConfig,
-    RecommendationCandidate,
+from app.modules.recommendation.infrastructure.models import RecommendationCandidate
+from app.modules.recommendation.ppt_schemas import (
+    PptFrozenRecommendationConfig,
+    PptPlanProposal,
+    PptPlanProposalList,
 )
-from app.modules.recommendation.ppt_schemas import PptPlanProposal, PptPlanProposalList
 
 
 class FakeProvider:
@@ -42,7 +43,7 @@ def _candidate(price: str) -> RecommendationCandidate:
 
 
 @pytest.mark.asyncio
-async def test_type5_plan_runner_only_exposes_frozen_candidate_ids() -> None:
+async def test_type5_plan_runner_exposes_only_short_window_keys() -> None:
     candidates = [_candidate("120"), _candidate("180"), _candidate("250")]
     output = PptPlanProposalList(
         plans=[
@@ -50,39 +51,37 @@ async def test_type5_plan_runner_only_exposes_frozen_candidate_ids() -> None:
                 price_band_index=1,
                 plan_no=1,
                 name="方案一",
-                candidate_ids=[candidates[0].id, candidates[1].id],
+                candidate_keys=["c1", "c2"],
             )
         ]
     )
-    config = PptRecommendationConfig(
-        project_id=uuid.uuid4(),
+    config = PptFrozenRecommendationConfig(
         recommendation_mode="SINGLE",
         price_bands=[{"min_price": "100", "max_price": "200"}],
         candidate_count_per_band=2,
         plan_count_per_band=1,
         fulfillment_deadline=None,
-        created_by=uuid.uuid4(),
-        updated_by=uuid.uuid4(),
     )
 
-    result = await PptPlanAgentRunner(FakeProvider(output)).run(config, candidates)
+    provider = FakeProvider(output)
+    result = await PptPlanAgentRunner(provider).run(config, candidates)
 
     assert result == output
+    sent = json.loads(provider.calls[0]["user_prompt"])
+    assert sent["candidates"][0]["id"] == "c1"
+    assert str(candidates[0].id) not in provider.calls[0]["user_prompt"]
 
 
 @pytest.mark.asyncio
-async def test_type5_plan_runner_does_not_apply_a_total_candidate_pool_limit() -> None:
+async def test_type5_plan_runner_bounds_ai_window_without_truncating_complete_pool() -> None:
     candidates = [_candidate("120") for _ in range(1001)]
     provider = FakeProvider(PptPlanProposalList())
-    config = PptRecommendationConfig(
-        project_id=uuid.uuid4(),
+    config = PptFrozenRecommendationConfig(
         recommendation_mode="SINGLE",
         price_bands=[{"min_price": "100", "max_price": "200"}],
         candidate_count_per_band=200,
         plan_count_per_band=1,
         fulfillment_deadline=None,
-        created_by=uuid.uuid4(),
-        updated_by=uuid.uuid4(),
     )
 
     result = await PptPlanAgentRunner(provider).run(config, candidates)
@@ -90,4 +89,5 @@ async def test_type5_plan_runner_does_not_apply_a_total_candidate_pool_limit() -
     assert result.plans == []
     assert len(provider.calls) == 1
     sent = json.loads(provider.calls[0]["user_prompt"])
-    assert len(sent["price_band"]["candidates"]) == 1001
+    assert len(sent["candidates"]) < 1001
+    assert len(candidates) == 1001

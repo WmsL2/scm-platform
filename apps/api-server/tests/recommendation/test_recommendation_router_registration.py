@@ -28,7 +28,11 @@ async def test_recommendation_router_is_registered_in_api_v1() -> None:
         download_response = await client.get(
             f"/api/v1/recommendation-projects/runs/{uuid4()}/exports/{uuid4()}/download"
         )
+        select_plan_response = await client.post(
+            f"/api/v1/ppt-solution-projects/plans/{uuid4()}/select"
+        )
     assert response.status_code == 401
     assert response.json()["code"] == "AUTH_UNAUTHORIZED"
     assert export_response.status_code == 401
     assert download_response.status_code == 401
+    assert select_plan_response.status_code == 401

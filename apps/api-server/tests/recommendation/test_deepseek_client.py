@@ -169,3 +169,24 @@ async def test_candidate_ranking_over_thirty_is_schema_validation_error() -> Non
         )
     assert error.value.error_kind == "SCHEMA_VALIDATION"
     assert "too_long" in error.value.safe_validation_summary
+
+
+@pytest.mark.asyncio
+async def test_finish_reason_length_is_classified_as_output_truncation() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"finish_reason": "length", "message": {"content": '{"value":"partial'}}
+                ],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16},
+            },
+        )
+
+    client = DeepSeekClient(settings(), transport=httpx.MockTransport(handler))
+    with pytest.raises(DeepSeekStructuredOutputError) as error:
+        await client.structured_completion(
+            system_prompt="system", user_prompt="user", response_model=Answer
+        )
+    assert error.value.error_kind == "OUTPUT_TRUNCATED"
