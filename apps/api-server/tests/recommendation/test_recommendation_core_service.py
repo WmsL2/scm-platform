@@ -401,6 +401,21 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
             await ppt_catalog.persist_eligible_candidates(ppt_run.id)
             == selected_item.candidate_count
         )
+        ppt_candidates = list(
+            (
+                await session.scalars(
+                    select(RecommendationCandidate).where(
+                        RecommendationCandidate.run_id == ppt_run.id
+                    )
+                )
+            ).all()
+        )
+        confirmation = await service.confirm_candidates(
+            ppt_run.id,
+            BatchConfirmationRequest(candidate_ids=[ppt_candidates[0].id]),
+            actor_id,
+        )
+        assert confirmation.confirmed_count == 1
         assert (await session.get(RecommendationCandidate, saved[0].id)) is not None
         await session.rollback()
 

@@ -3,7 +3,22 @@
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
-日期：2026-09-30
+日期：2026-10-08
+
+> 2026-10-08：类型 5 已新增可审计的方案选择持久化。方案选择与方案内商品确认在同一事务
+> 完成，刷新、重新进入及完成选品后仍显示绿色高亮和“已选方案”；允许累计选择多张方案。
+> Revision `20261008_0047`，新增选择 API，沿用 `recommendation:review`，推荐模块 68 项测试、
+> Ruff、Mypy、前端类型检查、类型 5 工作台测试和生产构建已通过（ADR-0049）。
+
+> 2026-10-08：类型 5 方案编排已改为每个方案独立调用 DeepSeek，模型仅返回本次调用的
+> `P0001` 短引用，后端映射到冻结 Candidate ID 并严格校验；结构或合同错误只重试当前方案。
+> 修复 `ppt-v8` 确认阶段误用原始类目文字二次筛选导致批量确认 409。无 Migration、API、UI
+> 或权限变化；推荐模块 65 项测试、Ruff、Mypy 已通过，真实 DeepSeek 与浏览器验收待执行。
+
+> 2026-10-08：类型 5 不再因 DeepSeek 返回的有效商品数少于配置目标而丢弃整个方案。
+> 配置数量现作为 AI 编排目标：少选方案正常持久化和展示，页面标注实际/目标数量；多选结果
+> 截断到配置上限。未知引用、空方案和价格档外商品仍由后端拒绝。无 Migration、API 或权限变化；
+> 推荐模块 67 项测试、Ruff、Mypy、前端类型检查、类型 5 工作台测试和生产构建已通过。
 
 > 2026-10-08：类型 5 PPT 方案 AI 编排 Token 安全修复已在 `codex/fix/type5-token-safety` 实现，待审查。完整候选池不受截断；AI 使用基于预算的短 ID 轮换窗口，只输出有限核心商品，由后端从完整冻结价格档池补齐。价格档分别持久化，失败不会回滚既有方案；Revision `20261008_0048` 持久化每档生成状态，`20261008_0049` 冻结 Run 配置。已与 main PR #113 的方案选择持久化兼容：计划的选择者和时间可刷新读取，选择仍原子确认其冻结候选，重试不覆盖既有选择。`20261008_0050` 仅合并 `0047` 与 `0049` 的 Alembic 图。首次与重试按独立短 Session 编排，重试 API 只补齐当前 Run 缺失槽位。MySQL HTTP 专项验收已通过；真实 DeepSeek 与浏览器端到端验收待执行。
 

@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict, deque
 from decimal import Decimal, InvalidOperation
 
 from app.core.config import Settings, get_settings
+from app.integrations.deepseek.client import (
+    DeepSeekConfigurationError,
+    DeepSeekStructuredOutputError,
+)
 from app.modules.recommendation.application.agent_runner import (
     RecommendationAgentContractError,
     StructuredProvider,
@@ -18,6 +23,8 @@ from app.modules.recommendation.ppt_schemas import (
     PptPriceBandInput,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class PptPlanAgentRunner:
     """Let AI choose seeds from a bounded window; never transmit real UUIDs.
@@ -26,6 +33,8 @@ class PptPlanAgentRunner:
     token) because no provider tokenizer is available in the local-first runtime.
     The complete pool remains frozen in MySQL and fills the remaining positions.
     """
+
+    MAX_PROVIDER_ATTEMPTS = 2
 
     def __init__(self, provider: StructuredProvider, settings: Settings | None = None) -> None:
         self.provider = provider
@@ -52,37 +61,58 @@ class PptPlanAgentRunner:
             return PptPlanProposalList()
         window, key_map = self._window(eligible)
         seed_count = min(config.candidate_count_per_band, self.settings.ppt_ai_seed_count_per_plan)
-        result = await self.provider.structured_completion(
-            system_prompt=(
-                "你是类型 5 PPT 商品方案编排助手。只能从 candidates 中返回 server-issued short "
-                "candidate_keys（例如 c1），绝不能生成 UUID、商品或清单外 key。每张方案仅选择 "
-                f"1 到 {seed_count} 个不重复核心商品；"
-                "服务器会从完整合格池补齐剩余数量。返回严格 JSON。"
-            ),
-            user_prompt=json.dumps(
-                {
-                    "price_band_index": index,
-                    "recommendation_mode": config.recommendation_mode,
-                    "items_per_plan": config.candidate_count_per_band,
-                    "plans_per_band": config.plan_count_per_band,
-                    "seed_count_limit": seed_count,
-                    "candidate_window_count": len(window),
-                    "candidates": window,
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
-            response_model=PptPlanProposalList,
-            max_tokens=min(
-                self.settings.ppt_ai_output_token_budget, self.settings.deepseek_max_tokens
-            ),
+        payload = json.dumps(
+            {
+                "price_band_index": index,
+                "recommendation_mode": config.recommendation_mode,
+                "items_per_plan": config.candidate_count_per_band,
+                "plans_per_band": config.plan_count_per_band,
+                "seed_count_limit": seed_count,
+                "candidate_window_count": len(window),
+                "candidates": window,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
         )
-        for proposal in result.plans:
-            if proposal.price_band_index != index or any(
-                key not in key_map for key in proposal.candidate_keys
-            ):
-                raise RecommendationAgentContractError("类型 5 方案 AI 返回了清单外商品")
-        return result
+        retry_note = ""
+        for attempt in range(self.MAX_PROVIDER_ATTEMPTS):
+            try:
+                result = await self.provider.structured_completion(
+                    system_prompt=(
+                        "你是类型 5 PPT 商品方案编排助手。只能从 candidates 中返回 server-issued "
+                        "short candidate_keys（例如 c1），绝不能生成 UUID、商品或清单外 key。"
+                        f"每张方案仅选择 1 到 {seed_count} 个不重复核心商品；"
+                        "服务器会从完整合格池补齐剩余数量。返回严格 JSON。"
+                    ),
+                    user_prompt=f"{payload}{retry_note}",
+                    response_model=PptPlanProposalList,
+                    max_tokens=min(
+                        self.settings.ppt_ai_output_token_budget, self.settings.deepseek_max_tokens
+                    ),
+                )
+            except DeepSeekConfigurationError:
+                raise
+            except DeepSeekStructuredOutputError as exc:
+                if attempt + 1 == self.MAX_PROVIDER_ATTEMPTS:
+                    raise
+                logger.warning(
+                    "ppt token-safe plan schema retry band=%s validation=%s",
+                    index,
+                    exc.safe_validation_summary,
+                )
+                retry_note = (
+                    "\n上一次输出未通过 JSON Schema 校验。请仅重新输出合法 JSON；"
+                    f"脱敏错误：{exc.safe_validation_summary}"
+                )
+                continue
+
+            for proposal in result.plans:
+                if proposal.price_band_index != index or any(
+                    key not in key_map for key in proposal.candidate_keys
+                ):
+                    raise RecommendationAgentContractError("类型 5 方案 AI 返回了清单外商品")
+            return result
+        raise RecommendationAgentContractError("类型 5 AI 未返回可用方案")
 
     def window_key_map(
         self, candidates: list[RecommendationCandidate]
