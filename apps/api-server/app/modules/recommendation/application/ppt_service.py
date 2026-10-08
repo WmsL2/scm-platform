@@ -19,7 +19,10 @@ from app.infrastructure.adapters import ObjectStorage, get_object_storage
 from app.modules.bid.domain.lifecycle import BidFileType, BidProjectStatus, ensure_transition
 from app.modules.bid.infrastructure.models import BidProjectEvent, BidProjectFile
 from app.modules.catalog.application.media import local_media_storage_key
-from app.modules.recommendation.application.agent_runner import StructuredProvider
+from app.modules.recommendation.application.agent_runner import (
+    RecommendationAgentContractError,
+    StructuredProvider,
+)
 from app.modules.recommendation.application.ppt_plan_runner import PptPlanAgentRunner
 from app.modules.recommendation.application.ppt_renderer import PptRenderer
 from app.modules.recommendation.application.service import RecommendationService
@@ -241,8 +244,11 @@ class PptSolutionService:
                     band_index,
                     type(exc).__name__,
                 )
-                failures.append(f"第 {band_index} 个价格档生成失败")
-                await self._persist_band_failure(run_id, band_index, config.plan_count_per_band)
+                failure_reason = self._safe_plan_failure_reason(exc)
+                failures.append(f"第 {band_index} 个价格档：{failure_reason}")
+                await self._persist_band_failure(
+                    run_id, band_index, config.plan_count_per_band, failure_reason
+                )
         if failures:
             raise AppError(
                 "PPT_PLAN_PARTIALLY_GENERATED",
@@ -328,7 +334,7 @@ class PptSolutionService:
                     )
 
     async def _persist_band_failure(
-        self, run_id: uuid.UUID, band_index: int, requested: int
+        self, run_id: uuid.UUID, band_index: int, requested: int, failure_reason: str
     ) -> None:
         async with SessionLocal() as session:
             service = PptSolutionService(session)
@@ -343,7 +349,7 @@ class PptSolutionService:
                             price_band_index=band_index,
                             requested_plan_count=requested,
                             generated_plan_count=0,
-                            error="方案生成失败",
+                            error=failure_reason,
                         )
                     )
                 else:
@@ -354,7 +360,13 @@ class PptSolutionService:
                     )
                     status.requested_plan_count = requested
                     status.generated_plan_count = generated
-                    status.error = None if generated >= requested else "方案生成失败"
+                    status.error = None if generated >= requested else failure_reason
+
+    @staticmethod
+    def _safe_plan_failure_reason(exc: Exception) -> str:
+        if isinstance(exc, (AppError, RecommendationAgentContractError)):
+            return str(exc)
+        return "方案生成失败"
 
     @staticmethod
     def _complete_ai_plan(
@@ -364,7 +376,12 @@ class PptSolutionService:
         plan_no: int,
     ) -> list[uuid.UUID]:
         """Keep AI-selected seeds first, then deterministically fill from the full frozen band."""
-        selected = list(dict.fromkeys(item.id for item in seeds))
+        # The response schema permits up to 12 seeds globally while a configured
+        # plan can request fewer items. Extra valid seeds are preferences, not a
+        # reason to reject a price band that already has enough frozen products.
+        selected = list(dict.fromkeys(item.id for item in seeds))[:quantity]
+        if len(selected) == quantity:
+            return selected
         start = ((plan_no - 1) * max(1, quantity // 2)) % len(permitted)
         for offset in range(len(permitted)):
             value = permitted[(start + offset) % len(permitted)].id

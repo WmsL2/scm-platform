@@ -10,6 +10,13 @@ Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Su
 > Revision `20261008_0047`，新增选择 API，沿用 `recommendation:review`，推荐模块 68 项测试、
 > Ruff、Mypy、前端类型检查、类型 5 工作台测试和生产构建已通过（ADR-0049）。
 
+> 2026-10-08：类型 5 方案编排新增模型响应合同校验和一次纠错重试。每个价格档必须返回配置要求
+> 的完整且唯一方案编号，且短 ID 必须位于当前 AI 窗口；少方案、重复编号或窗口外短 ID 失败后，
+> 逐档状态与页面显示安全具体原因，不再泛化为 `(AppError)`。核心商品超过单方案目标数时只保留
+> 前 N 个，不会再将足量价格档误报为商品不足。无 Migration、API 或权限变化；
+> 推荐模块 70 项测试、Ruff 与 MySQL HTTP 专项测试均通过。使用失败 Run 冻结候选的只读 DeepSeek
+> 探测可正常返回 3 套有效方案，真实页面重新生成验收待执行。
+
 > 2026-10-08：类型 5 方案编排已改为每个方案独立调用 DeepSeek，模型仅返回本次调用的
 > `P0001` 短引用，后端映射到冻结 Candidate ID 并严格校验；结构或合同错误只重试当前方案。
 > 修复 `ppt-v8` 确认阶段误用原始类目文字二次筛选导致批量确认 409。无 Migration、API、UI

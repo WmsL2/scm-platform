@@ -77,6 +77,19 @@ def test_each_plan_uses_requested_quantity_from_full_pool_with_overlap() -> None
     assert len({tuple(plan["candidate_ids"]) for plan in plans}) == 6
 
 
+def test_ai_plan_caps_extra_valid_seeds_to_the_requested_quantity() -> None:
+    permitted = [_candidate(index, "120") for index in range(1, 13)]
+
+    candidate_ids = PptSolutionService._complete_ai_plan(
+        permitted,
+        permitted,
+        quantity=10,
+        plan_no=1,
+    )
+
+    assert candidate_ids == [candidate.id for candidate in permitted[:10]]
+
+
 def test_price_band_availability_reports_the_actual_frozen_candidate_count() -> None:
     config = PptFrozenRecommendationConfig(
         recommendation_mode="SINGLE",
