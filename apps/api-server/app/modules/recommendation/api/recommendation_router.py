@@ -10,13 +10,17 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import ApiResponse, PageParams, success
-from app.core.database import FunctionSessionDep, get_db_session
-from app.jobs.recommendation_agent import execute_recommendation_agent_inline
+from app.core.database import FunctionSessionDep, SessionLocal, get_db_session
+from app.jobs.recommendation_agent import (
+    execute_ppt_recommendation_agent_inline,
+    execute_recommendation_agent_inline,
+)
 from app.modules.auth.dependencies import require_permission, require_permission_before_response
 from app.modules.auth.schemas import CurrentUser
 from app.modules.bid.schemas import BidProjectFileResponse, BidProjectStatusResponse
 from app.modules.recommendation.application.export_service import RecommendationExportService
 from app.modules.recommendation.application.service import RecommendationService
+from app.modules.recommendation.infrastructure.ppt_repository import PptSolutionRepository
 from app.modules.recommendation.schemas import (
     BatchConfirmationRequest,
     BatchConfirmationResult,
@@ -46,6 +50,19 @@ async def create_run(
     current: Annotated[CurrentUser, Depends(require_permission("recommendation:run"))],
     session: SessionDep,
 ) -> ApiResponse[RecommendationRunResponse]:
+    # Type 5 calls an external AI provider inline. Keep it out of the request-owned
+    # transaction so Run creation, candidate freezing and every plan band can commit
+    # independently. Type 4 continues to use the established request transaction.
+    async with SessionLocal() as lookup_session:
+        is_ppt_solution = await PptSolutionRepository(lookup_session).project(project_id)
+    if is_ppt_solution is not None:
+        async with SessionLocal() as create_session:
+            run = await RecommendationService(create_session).create_run(
+                project_id, current.user_id
+            )
+        await execute_ppt_recommendation_agent_inline(run.id)
+        async with SessionLocal() as result_session:
+            return success(await RecommendationService(result_session).get_run(run.id))
     service = RecommendationService(session)
     run = await service.create_run(project_id, current.user_id)
     await execute_recommendation_agent_inline(run.id, session)

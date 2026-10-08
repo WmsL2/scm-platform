@@ -47,6 +47,10 @@ class PptRecommendationConfigResponse(PptRecommendationConfigUpdateRequest):
     updated_at: datetime
 
 
+class PptFrozenRecommendationConfig(PptRecommendationConfigUpdateRequest):
+    """Immutable Type-5 generation inputs stored with one RecommendationRun."""
+
+
 class PptPriceBandAvailabilityResponse(BaseModel):
     """Frozen candidate availability for one Type-5 price band."""
 
@@ -56,6 +60,9 @@ class PptPriceBandAvailabilityResponse(BaseModel):
     candidate_count: int = Field(ge=0)
     required_count: int = Field(ge=1)
     can_generate: bool
+    generated_plan_count: int = Field(default=0, ge=0)
+    requested_plan_count: int = Field(default=0, ge=0)
+    failure_reason: str | None = None
     message: str
 
 
@@ -87,7 +94,7 @@ class PptSolutionPlanResponse(BaseModel):
 
 
 class PptPlanProposal(BaseModel):
-    """AI may only assemble server-issued Type-5 candidate IDs."""
+    """AI selects a few server-issued short keys; the server fills the rest."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -95,12 +102,16 @@ class PptPlanProposal(BaseModel):
     plan_no: int = Field(ge=1, le=20)
     name: str = Field(min_length=1, max_length=255)
     summary: str | None = Field(default=None, max_length=2000)
-    candidate_ids: list[UUID] = Field(min_length=1, max_length=500)
+    candidate_keys: list[str] = Field(min_length=1, max_length=12)
 
     @model_validator(mode="after")
     def unique_candidates(self) -> "PptPlanProposal":
-        if len(self.candidate_ids) != len(set(self.candidate_ids)):
-            raise ValueError("candidate_ids must be unique")
+        if len(self.candidate_keys) != len(set(self.candidate_keys)):
+            raise ValueError("candidate_keys must be unique")
+        if any(
+            not value.startswith("c") or not value[1:].isdigit() for value in self.candidate_keys
+        ):
+            raise ValueError("candidate_keys must be server-issued short keys")
         return self
 
 

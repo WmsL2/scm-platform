@@ -36,6 +36,9 @@ const directPptCount = computed(() => confirmed.value.filter((item) => !packaged
 const editable = computed(() => project.value?.status === "SELECTING")
 const canComplete = computed(() => editable.value && (run.value?.candidate_page?.confirmed_total ?? 0) > 0)
 const canGenerate = computed(() => Boolean(run.value && ["READY", "EXPORTED"].includes(project.value?.status ?? "") && ["CONFIRMED", "EXPORTED"].includes(run.value.status)))
+const generatedPlanCount = computed(() => plans.value.length)
+const requestedPlanCount = computed(() => planAvailability.value.reduce((sum, band) => sum + band.requested_plan_count, 0))
+const planStatus = computed(() => generatedPlanCount.value === 0 ? "失败或未生成" : generatedPlanCount.value < requestedPlanCount.value ? "部分成功" : "已成功")
 
 function nonEmptyText(value: unknown): string | null { const result = String(value ?? "").trim(); return result || null }
 function nameOf(item: RecommendationCandidate): string { return nonEmptyText(item.product_snapshot.product_name) || `商品 ${item.product_id.slice(0, 8)}` }
@@ -93,8 +96,17 @@ async function startRun(): Promise<void> {
     run.value = await recommendationApi.start(projectId)
     await load()
     if (run.value?.status === "FAILED") ElMessage.error(run.value.error || "AI 推荐执行失败")
-    else ElMessage.success("推品方案已生成，请选择并确认商品")
+    else if (run.value?.error || plans.value.length < requestedPlanCount.value) ElMessage.warning(run.value?.error || "候选池已冻结，方案仅部分生成，可重新执行")
+    else ElMessage.success("候选池和 AI 推品方案均已生成，请选择并确认商品")
   } catch (error) { ElMessage.error(messageFor(error, "生成推荐失败")) }
+  finally { acting.value = false }
+}
+
+async function retryIncompletePlans(): Promise<void> {
+  if (!run.value) return
+  acting.value = true
+  try { await pptSolutionApi.retryPlans(run.value.id); await load(); ElMessage.success("已重试未完成方案") }
+  catch (error) { ElMessage.error(messageFor(error, "重试方案失败")) }
   finally { acting.value = false }
 }
 
@@ -249,8 +261,9 @@ onBeforeUnmount(() => { if (generationTimer) clearInterval(generationTimer) })
     </el-card>
     <el-card><template #header><div class="card-title"><div><strong>推品方案与人工选品</strong><el-tag v-if="run">{{ RUN_STATUS_LABELS[run.status] }}</el-tag></div><div class="module-actions"><el-button v-if="!run || editable" type="primary" :loading="acting" @click="startRun">{{ run ? "重新生成推品" : "生成推品" }}</el-button><el-button v-if="editable" type="success" :disabled="!canComplete" :loading="acting" @click="completeSelection">完成选品</el-button><el-button v-else-if="canGenerate" @click="reopenSelection">返回调整选品</el-button></div></div></template>
       <el-empty v-if="!run" description="请先生成推品方案"><el-button type="primary" :loading="acting" @click="startRun">生成推品</el-button></el-empty>
-      <div v-else>
-        <section class="plan-section"><div class="plan-section-title"><b>本次推品方案</b><small>已冻结 {{ candidatePoolTotal }} 件完整候选商品；价格档按每件商品的协议价筛选，配置数量作为方案目标，AI 少选时仍保留有效方案。</small></div><div v-if="planAvailability.length" class="plan-availability"><el-tag v-for="band in planAvailability" :key="band.price_band_index" :type="band.can_generate ? 'success' : 'warning'">{{ band.message }}</el-tag></div><div v-if="plans.length" class="plan-grid"><article v-for="plan in plans" :key="plan.id" class="plan-card" :class="{ 'plan-card--selected': plan.is_selected }"><div class="plan-card-head"><strong>{{ plan.name }}</strong><div class="plan-tags"><el-tag v-if="plan.is_selected" type="success" effect="dark">已选方案</el-tag><el-tag v-if="plan.candidate_ids.length < recommendationConfig.candidate_count_per_band" type="warning">实际 {{ plan.candidate_ids.length }} / 目标 {{ recommendationConfig.candidate_count_per_band }} 件</el-tag><el-tag :type="plan.plan_type === 'SINGLE' ? 'primary' : 'success'">{{ plan.plan_type === 'SINGLE' ? '单品方案' : '组合方案' }}</el-tag></div></div><p>{{ plan.summary }}</p><div class="plan-actions"><el-button @click="openPlanDetail(plan)">具体商品详情（{{ plan.items.length }}）</el-button><el-button :type="plan.is_selected ? 'success' : 'primary'" :disabled="!editable || plan.is_selected" :loading="acting && !plan.is_selected" @click="confirmPlan(plan)">{{ plan.is_selected ? "已选择此方案" : "确认本方案商品" }}</el-button></div></article></div><el-alert v-else-if="['WAITING_CONFIRMATION', 'CONFIRMED', 'EXPORTED'].includes(run.status)" :title="planAvailability.some((band) => band.can_generate) ? '存在可生成的价格档，但尚未生成方案；请查看上方失败原因后重新生成。' : '没有价格档满足每个方案所需商品数量；请按上方每档真实数量调整价格档或每方案商品数量。'" type="warning" :closable="false" /><el-empty v-else :description="run.status === 'FAILED' ? '本次推品执行失败，请修改配置后重新生成。' : '正在生成推品方案，请稍候。'" /></section>
+       <div v-else>
+         <el-button v-if="plans.length < requestedPlanCount" type="warning" :loading="acting" @click="retryIncompletePlans">重试未完成方案</el-button>
+        <section class="plan-section"><div class="plan-section-title"><b>本次推品方案</b><small>完整候选池 {{ candidatePoolTotal }} 件；每档真实数量见下方，每个方案严格包含指定数量的商品；AI 方案状态：{{ planStatus }}（{{ generatedPlanCount }}/{{ requestedPlanCount }}）。</small></div><el-alert v-if="run?.error" :title="run.error" type="warning" :closable="false" /><div v-if="planAvailability.length" class="plan-availability"><el-tag v-for="band in planAvailability" :key="band.price_band_index" :type="band.generated_plan_count >= band.requested_plan_count ? 'success' : 'warning'">{{ band.message }}；已生成 {{ band.generated_plan_count }}/{{ band.requested_plan_count }}{{ band.failure_reason ? `：${band.failure_reason}` : '' }}</el-tag></div><div v-if="plans.length" class="plan-grid"><article v-for="plan in plans" :key="plan.id" class="plan-card" :class="{ 'plan-card--selected': plan.is_selected }"><div class="plan-card-head"><strong>{{ plan.name }}</strong><div class="plan-tags"><el-tag v-if="plan.is_selected" type="success" effect="dark">已选方案</el-tag><el-tag :type="plan.plan_type === 'SINGLE' ? 'primary' : 'success'">{{ plan.plan_type === 'SINGLE' ? '单品方案' : '组合方案' }}</el-tag></div></div><p>{{ plan.summary }}</p><div class="plan-actions"><el-button @click="openPlanDetail(plan)">具体商品详情（{{ plan.items.length }}）</el-button><el-button :type="plan.is_selected ? 'success' : 'primary'" :disabled="!editable || plan.is_selected" :loading="acting && !plan.is_selected" @click="confirmPlan(plan)">{{ plan.is_selected ? "已选择此方案" : "确认本方案商品" }}</el-button></div></article></div><el-alert v-else-if="['WAITING_CONFIRMATION', 'CONFIRMED', 'EXPORTED'].includes(run.status)" :title="planAvailability.some((band) => band.can_generate) ? '候选池已冻结，但 AI 方案尚未生成或失败；可重新执行。' : '没有价格档满足每个方案所需商品数量；请调整价格档或每方案商品数量。'" type="warning" :closable="false" /><el-empty v-else :description="run.status === 'FAILED' ? '本次推品执行失败，请修改配置后重新生成。' : '正在生成推品方案，请稍候。'" /></section>
       </div>
     </el-card>
     <el-card v-if="run"><template #header><div class="card-title"><strong>单品与组合套装</strong><span>组套仅用于把多件商品合成一页，不是生成 PPT 的前置条件</span></div></template><el-alert :title="`当前有 ${directPptCount} 件人工确认单品会各生成 1 页 PPT；已组成套装的商品按套装生成。`" type="info" show-icon :closable="false" /><div class="package-grid"><article v-for="item in packages" :key="item.id" class="package-card"><div><b>{{ item.name }}</b><p>{{ item.items.length }} 种商品 · 总价 ¥{{ formatMoney(item.total_price) }} · 档位 {{ item.price_tier ? `¥${formatMoney(item.price_tier)}` : '未指定' }}</p></div><el-button v-if="editable" link type="danger" @click="removePackage(item)">删除</el-button></article><el-empty v-if="packages.length === 0" description="暂未组成套装；所有人工确认单品都会直接生成各自的 PPT 页" /></div></el-card>

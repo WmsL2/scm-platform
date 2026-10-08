@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError
 from app.core.config import get_settings
+from app.core.database import SessionLocal
 from app.core.transaction import transaction_scope
 from app.infrastructure.adapters import ObjectStorage, get_object_storage
 from app.modules.bid.domain.lifecycle import BidFileType, BidProjectStatus, ensure_transition
@@ -24,6 +25,7 @@ from app.modules.recommendation.application.ppt_renderer import PptRenderer
 from app.modules.recommendation.application.service import RecommendationService
 from app.modules.recommendation.infrastructure.models import (
     PptGenerationTask,
+    PptPlanGenerationStatus,
     PptRecommendationConfig,
     PptSolutionPackage,
     PptSolutionPackageItem,
@@ -33,11 +35,13 @@ from app.modules.recommendation.infrastructure.models import (
 )
 from app.modules.recommendation.infrastructure.ppt_repository import PptSolutionRepository
 from app.modules.recommendation.ppt_schemas import (
+    PptFrozenRecommendationConfig,
     PptGenerationStatus,
     PptGenerationTaskResponse,
     PptPackageCreateRequest,
     PptPackageItemResponse,
     PptPackageResponse,
+    PptPlanProposal,
     PptPriceBandAvailabilityResponse,
     PptRecommendationConfigResponse,
     PptRecommendationConfigUpdateRequest,
@@ -115,23 +119,29 @@ class PptSolutionService:
             self._plan_response(item, candidates) for item in await self.repository.plans(run_id)
         ]
 
-    async def plan_availability(
-        self, run_id: uuid.UUID
-    ) -> list[PptPriceBandAvailabilityResponse]:
+    async def plan_availability(self, run_id: uuid.UUID) -> list[PptPriceBandAvailabilityResponse]:
         run = await self.repository.run(run_id)
         if run is None:
             raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
-        config = await self.repository.config(run.project_id)
-        if config is None:
-            raise AppError("PPT_RECOMMENDATION_CONFIG_REQUIRED", "类型 5 推品配置不存在", 409)
-        return self._plan_availability(config, await self.repository.candidates(run_id))
+        config = await RecommendationService(self.session).ppt_recommendation_config_for_run(run_id)
+        return self._plan_availability(
+            config,
+            await self.repository.candidates(run_id),
+            await self.repository.plans(run_id),
+            await self.repository.plan_generation_statuses(run_id),
+        )
 
     async def select_plan(
         self, plan_id: uuid.UUID, actor_id: uuid.UUID
     ) -> PptSolutionPlanResponse:
-        """Persist the selected plan and confirm its candidates as one transaction."""
+        """Persist a chosen Type-5 plan and confirm exactly its frozen candidates.
+
+        This remains a short, local transaction.  It is deliberately separate from
+        external AI generation, so retrying an incomplete price band cannot alter a
+        previously selected plan or its confirmation audit trail.
+        """
         async with transaction_scope(self.session):
-            plan = await self.repository.plan(plan_id)
+            plan = await self.repository.plan(plan_id, lock=True)
             if plan is None:
                 raise AppError("PPT_SOLUTION_PLAN_NOT_FOUND", "类型 5 方案不存在", 404)
             candidate_ids = [uuid.UUID(value) for value in plan.candidate_ids]
@@ -140,17 +150,14 @@ class PptSolutionService:
                 BatchConfirmationRequest(candidate_ids=candidate_ids),
                 actor_id,
             )
-            locked_plan = await self.repository.plan(plan_id, lock=True)
-            if locked_plan is None:
-                raise AppError("PPT_SOLUTION_PLAN_NOT_FOUND", "类型 5 方案不存在", 404)
-            locked_plan.is_selected = True
-            locked_plan.selected_by = actor_id
-            locked_plan.selected_at = datetime.now(UTC).replace(tzinfo=None)
+            plan.is_selected = True
+            plan.selected_by = actor_id
+            plan.selected_at = datetime.now(UTC).replace(tzinfo=None)
             await self.session.flush()
             candidates = {
-                item.id: item for item in await self.repository.candidates(locked_plan.run_id)
+                item.id: item for item in await self.repository.candidates(plan.run_id)
             }
-            return self._plan_response(locked_plan, candidates)
+            return self._plan_response(plan, candidates)
 
     async def create_generated_plans(self, run_id: uuid.UUID) -> list[PptSolutionPlanResponse]:
         """Persist distinct Type-5 proposals from the complete frozen product pool."""
@@ -166,7 +173,8 @@ class PptSolutionService:
             if existing:
                 return await self.list_plans(run_id)
             candidates = await self.repository.candidates(run_id)
-            for plan in self._build_plans(config, candidates):
+            frozen_config = self._frozen_config_from_orm(config)
+            for plan in self._build_plans(frozen_config, candidates):
                 self.session.add(
                     PptSolutionPlan(
                         run_id=run_id,
@@ -188,72 +196,183 @@ class PptSolutionService:
     async def create_ai_generated_plans(
         self, run_id: uuid.UUID, provider: StructuredProvider
     ) -> list[PptSolutionPlanResponse]:
-        """Persist Type-5 AI proposals after the complete candidate pool is frozen."""
-        # Do not hold a Run row lock while waiting for the external structured provider.
-        run = await self.repository.run(run_id)
-        if run is None:
-            raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
-        config = await self.repository.config(run.project_id)
-        if config is None:
-            raise AppError("PPT_RECOMMENDATION_CONFIG_REQUIRED", "类型 5 推品配置不存在", 409)
-        candidates = await self.repository.candidates(run_id)
-        proposals = await PptPlanAgentRunner(provider).run(config, candidates)
-        expected = self._expected_plan_slots(config, candidates)
-        by_slot = {(item.price_band_index, item.plan_no): item for item in proposals.plans}
-        if set(by_slot) != expected or len(by_slot) != len(proposals.plans):
-            raise AppError(
-                "PPT_PLAN_AI_CONTRACT_INVALID", "方案 AI 未按每个价格档返回完整且唯一的方案", 422
-            )
-        async with transaction_scope(self.session):
-            locked_run = await self.repository.run_for_update(run_id)
-            if locked_run is None:
+        """Compose and commit each price band independently; never lock during AI I/O."""
+        # Read the immutable plan context in a short separate session. The request
+        # session must never remain in a transaction during external provider I/O.
+        async with SessionLocal() as context_session:
+            context_service = PptSolutionService(context_session)
+            run = await context_service.repository.run(run_id)
+            if run is None:
                 raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
-            if await self.repository.plans(run_id):
-                raise AppError("PPT_PLAN_ALREADY_CREATED", "类型 5 方案已经生成", 409)
-            for slot in sorted(expected):
-                proposal = by_slot[slot]
-                maximum = self._decimal_value(config.price_bands[slot[0] - 1].get("max_price"))
-                if maximum is None:
-                    raise AppError("PPT_PLAN_AI_CONTRACT_INVALID", "价格档配置无效", 422)
-                permitted = self._band_candidates(
-                    candidates,
-                    self._decimal_value(config.price_bands[slot[0] - 1].get("min_price")),
-                    maximum,
-                )
-                allowed_ids = {item.id for item in permitted}
-                ids = list(proposal.candidate_ids)
-                if (
-                    not ids
-                    or len(ids) > config.candidate_count_per_band
-                    or any(item not in allowed_ids for item in ids)
-                ):
+            config = await RecommendationService(
+                context_session
+            ).ppt_recommendation_config_for_run(run_id)
+            candidates = await context_service.repository.candidates(run_id)
+            existing_slots = {
+                (item.price_band_index, item.plan_no)
+                for item in await context_service.repository.plans(run_id)
+            }
+        runner = PptPlanAgentRunner(provider)
+        failures: list[str] = []
+        for band_index, band in enumerate(config.price_bands, 1):
+            permitted = runner.band_candidates(band, candidates)
+            expected = {(band_index, number) for number in range(1, config.plan_count_per_band + 1)}
+            missing = expected - existing_slots
+            if not missing or len(permitted) < config.candidate_count_per_band:
+                continue
+            try:
+                proposals = await runner.run_band(band_index, band, config, candidates)
+                by_slot = {(item.price_band_index, item.plan_no): item for item in proposals.plans}
+                if set(by_slot) != expected or len(by_slot) != len(proposals.plans):
                     raise AppError(
-                        "PPT_PLAN_AI_CANDIDATE_INVALID",
-                        "方案 AI 返回了价格档外、空方案或超过配置上限的商品",
+                        "PPT_PLAN_AI_CONTRACT_INVALID",
+                        "方案 AI 未按价格档返回完整且唯一的方案",
                         422,
                     )
-                mode = config.recommendation_mode
-                plan_type = (
-                    "SINGLE"
-                    if mode == "SINGLE" or (mode == "MIXED" and slot[1] % 2 == 1)
-                    else "COMBINATION"
+                key_map = runner.window_key_map(permitted)
+                await self._persist_ai_band(
+                    run_id, band_index, missing, by_slot, key_map, permitted, config, provider
                 )
-                self.session.add(
-                    PptSolutionPlan(
-                        run_id=run_id,
-                        price_band_index=slot[0],
-                        plan_no=slot[1],
-                        plan_type=plan_type,
-                        name=proposal.name.strip(),
-                        summary=proposal.summary.strip() if proposal.summary else None,
-                        candidate_ids=[str(item) for item in ids],
-                        selection_source="AI",
-                        selection_provider=provider.provider,
-                        selection_model=provider.model,
-                        selection_prompt_version=f"{provider.prompt_version}:ppt-plan-v1",
+                existing_slots.update(missing)
+            except Exception as exc:
+                logger.warning(
+                    "ppt plan band failed run_id=%s band=%s error=%s",
+                    run_id,
+                    band_index,
+                    type(exc).__name__,
+                )
+                failures.append(f"第 {band_index} 个价格档生成失败")
+                await self._persist_band_failure(run_id, band_index, config.plan_count_per_band)
+        if failures:
+            raise AppError(
+                "PPT_PLAN_PARTIALLY_GENERATED",
+                "；".join(failures) + "，已成功的价格档已保留，可重新执行。",
+                422,
+            )
+        async with SessionLocal() as result_session:
+            return await PptSolutionService(result_session).list_plans(run_id)
+
+    async def _persist_ai_band(
+        self,
+        run_id: uuid.UUID,
+        band_index: int,
+        missing: set[tuple[int, int]],
+        by_slot: dict[tuple[int, int], PptPlanProposal],
+        key_map: dict[str, RecommendationCandidate],
+        permitted: Sequence[RecommendationCandidate],
+        config: PptFrozenRecommendationConfig,
+        provider: StructuredProvider,
+    ) -> None:
+        async with SessionLocal() as session:
+            service = PptSolutionService(session)
+            async with session.begin():
+                if await service.repository.run_for_update(run_id) is None:
+                    raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
+                persisted = {
+                    (item.price_band_index, item.plan_no)
+                    for item in await service.repository.plans(run_id)
+                }
+                for slot in sorted(missing - persisted):
+                    proposal = by_slot[slot]
+                    ids = self._complete_ai_plan(
+                        [key_map[key] for key in proposal.candidate_keys],
+                        permitted,
+                        config.candidate_count_per_band,
+                        slot[1],
                     )
+                    plan_type = (
+                        "SINGLE"
+                        if config.recommendation_mode == "SINGLE"
+                        or (config.recommendation_mode == "MIXED" and slot[1] % 2 == 1)
+                        else "COMBINATION"
+                    )
+                    session.add(
+                        PptSolutionPlan(
+                            run_id=run_id,
+                            price_band_index=band_index,
+                            plan_no=slot[1],
+                            plan_type=plan_type,
+                            name=proposal.name.strip(),
+                            summary=proposal.summary.strip() if proposal.summary else None,
+                            candidate_ids=[str(item) for item in ids],
+                            selection_source="AI",
+                            selection_provider=provider.provider,
+                            selection_model=provider.model,
+                            selection_prompt_version=f"{provider.prompt_version}:ppt-plan-v2",
+                        )
+                    )
+                await session.flush()
+                status = await service.repository.plan_generation_status_for_update(
+                    run_id, band_index
                 )
-        return await self.list_plans(run_id)
+                generated = sum(
+                    1
+                    for item in await service.repository.plans(run_id)
+                    if item.price_band_index == band_index
+                )
+                if status is None:
+                    session.add(
+                        PptPlanGenerationStatus(
+                            run_id=run_id,
+                            price_band_index=band_index,
+                            requested_plan_count=config.plan_count_per_band,
+                            generated_plan_count=generated,
+                            error=None,
+                        )
+                    )
+                else:
+                    status.requested_plan_count, status.generated_plan_count, status.error = (
+                        config.plan_count_per_band,
+                        generated,
+                        None,
+                    )
+
+    async def _persist_band_failure(
+        self, run_id: uuid.UUID, band_index: int, requested: int
+    ) -> None:
+        async with SessionLocal() as session:
+            service = PptSolutionService(session)
+            async with session.begin():
+                status = await service.repository.plan_generation_status_for_update(
+                    run_id, band_index
+                )
+                if status is None:
+                    session.add(
+                        PptPlanGenerationStatus(
+                            run_id=run_id,
+                            price_band_index=band_index,
+                            requested_plan_count=requested,
+                            generated_plan_count=0,
+                            error="方案生成失败",
+                        )
+                    )
+                else:
+                    generated = sum(
+                        1
+                        for item in await service.repository.plans(run_id)
+                        if item.price_band_index == band_index
+                    )
+                    status.requested_plan_count = requested
+                    status.generated_plan_count = generated
+                    status.error = None if generated >= requested else "方案生成失败"
+
+    @staticmethod
+    def _complete_ai_plan(
+        seeds: Sequence[RecommendationCandidate],
+        permitted: Sequence[RecommendationCandidate],
+        quantity: int,
+        plan_no: int,
+    ) -> list[uuid.UUID]:
+        """Keep AI-selected seeds first, then deterministically fill from the full frozen band."""
+        selected = list(dict.fromkeys(item.id for item in seeds))
+        start = ((plan_no - 1) * max(1, quantity // 2)) % len(permitted)
+        for offset in range(len(permitted)):
+            value = permitted[(start + offset) % len(permitted)].id
+            if value not in selected:
+                selected.append(value)
+            if len(selected) == quantity:
+                return selected
+        raise AppError("PPT_PLAN_POOL_INSUFFICIENT", "价格档商品不足，无法补齐方案商品数量", 422)
 
     async def create_package(
         self, run_id: uuid.UUID, payload: PptPackageCreateRequest, actor_id: uuid.UUID
@@ -567,14 +686,13 @@ class PptSolutionService:
 
     @classmethod
     def _expected_plan_slots(
-        cls, config: PptRecommendationConfig, candidates: Sequence[RecommendationCandidate]
+        cls,
+        config: PptFrozenRecommendationConfig,
+        candidates: Sequence[RecommendationCandidate],
     ) -> set[tuple[int, int]]:
         slots: set[tuple[int, int]] = set()
-        for band_index, raw_band in enumerate(config.price_bands, start=1):
-            minimum = cls._decimal_value(raw_band.get("min_price"))
-            maximum = cls._decimal_value(raw_band.get("max_price"))
-            if maximum is None:
-                continue
+        for band_index, band in enumerate(config.price_bands, start=1):
+            minimum, maximum = band.min_price, band.max_price
             if (
                 len(cls._band_candidates(candidates, minimum, maximum))
                 < config.candidate_count_per_band
@@ -587,16 +705,19 @@ class PptSolutionService:
 
     @classmethod
     def _plan_availability(
-        cls, config: PptRecommendationConfig, candidates: Sequence[RecommendationCandidate]
+        cls,
+        config: PptFrozenRecommendationConfig,
+        candidates: Sequence[RecommendationCandidate],
+        plans: Sequence[PptSolutionPlan] = (),
+        statuses: Sequence[PptPlanGenerationStatus] = (),
     ) -> list[PptPriceBandAvailabilityResponse]:
         values: list[PptPriceBandAvailabilityResponse] = []
-        for band_index, raw_band in enumerate(config.price_bands, start=1):
-            minimum = cls._decimal_value(raw_band.get("min_price"))
-            maximum = cls._decimal_value(raw_band.get("max_price"))
-            if maximum is None:
-                continue
+        for band_index, band in enumerate(config.price_bands, start=1):
+            minimum, maximum = band.min_price, band.max_price
             count = len(cls._band_candidates(candidates, minimum, maximum))
             required = config.candidate_count_per_band
+            generated = sum(1 for plan in plans if plan.price_band_index == band_index)
+            status = next((item for item in statuses if item.price_band_index == band_index), None)
             label = cls._price_band_label(minimum, maximum)
             can_generate = count >= required
             values.append(
@@ -607,6 +728,9 @@ class PptSolutionService:
                     candidate_count=count,
                     required_count=required,
                     can_generate=can_generate,
+                    generated_plan_count=status.generated_plan_count if status else generated,
+                    requested_plan_count=config.plan_count_per_band if can_generate else 0,
+                    failure_reason=status.error if status else None,
                     message=(
                         f"{label}：有 {count} 件，满足每方案 {required} 件的要求"
                         if can_generate
@@ -619,7 +743,7 @@ class PptSolutionService:
     @classmethod
     def _build_plans(
         cls,
-        config: PptRecommendationConfig,
+        config: PptFrozenRecommendationConfig,
         candidates: Sequence[RecommendationCandidate],
     ) -> list[dict[str, object]]:
         """Turn the complete frozen Type-5 product pool into distinct proposals.
@@ -630,11 +754,8 @@ class PptSolutionService:
         """
         plans: list[dict[str, object]] = []
         mode = config.recommendation_mode
-        for band_index, raw_band in enumerate(config.price_bands, start=1):
-            minimum = cls._decimal_value(raw_band.get("min_price"))
-            maximum = cls._decimal_value(raw_band.get("max_price"))
-            if maximum is None:
-                continue
+        for band_index, band in enumerate(config.price_bands, start=1):
+            minimum, maximum = band.min_price, band.max_price
             available = cls._band_candidates(candidates, minimum, maximum)
             quantity = config.candidate_count_per_band
             if len(available) < quantity:
@@ -665,6 +786,20 @@ class PptSolutionService:
                     }
                 )
         return plans
+
+    @staticmethod
+    def _frozen_config_from_orm(
+        config: PptRecommendationConfig,
+    ) -> PptFrozenRecommendationConfig:
+        return PptFrozenRecommendationConfig.model_validate(
+            {
+                "recommendation_mode": config.recommendation_mode,
+                "price_bands": config.price_bands,
+                "candidate_count_per_band": config.candidate_count_per_band,
+                "plan_count_per_band": config.plan_count_per_band,
+                "fulfillment_deadline": config.fulfillment_deadline,
+            }
+        )
 
     @classmethod
     def _band_candidates(

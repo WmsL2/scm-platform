@@ -15,6 +15,9 @@ export const pptSolutionApi = {
   planAvailability(runId: string): Promise<PptPriceBandAvailability[]> {
     return http.get(`${base}/runs/${runId}/plan-availability`)
   },
+  retryPlans(runId: string): Promise<PptSolutionPlan[]> {
+    return http.post(`${base}/runs/${runId}/commands/retry-plans`, undefined, { timeoutMs: 300_000 })
+  },
   packages(runId: string): Promise<PptPackage[]> {
     return http.get(`${base}/runs/${runId}/packages`)
   },

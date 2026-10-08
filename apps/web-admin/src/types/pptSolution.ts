@@ -19,6 +19,9 @@ export interface PptPriceBandAvailability {
   candidate_count: number
   required_count: number
   can_generate: boolean
+  generated_plan_count: number
+  requested_plan_count: number
+  failure_reason: string | null
   message: string
 }
 

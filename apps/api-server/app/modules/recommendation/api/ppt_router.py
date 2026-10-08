@@ -12,6 +12,7 @@ from app.common.contracts import ApiResponse, success
 from app.core.config import get_settings
 from app.core.database import SessionLocal, get_db_session
 from app.infrastructure.adapters import get_task_queue
+from app.integrations.deepseek.client import DeepSeekClient
 from app.modules.auth.dependencies import require_permission, require_permission_before_response
 from app.modules.auth.schemas import CurrentUser
 from app.modules.recommendation.application.ppt_service import PptSolutionService
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/ppt-solution-projects", tags=["ppt-solution"])
 SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 logger = logging.getLogger(__name__)
 
+
 @router.get(
     "/{project_id}/recommendation-config",
     response_model=ApiResponse[PptRecommendationConfigResponse | None],
@@ -40,6 +42,7 @@ async def get_recommendation_config(
     session: SessionDep,
 ) -> ApiResponse[PptRecommendationConfigResponse | None]:
     return success(await PptSolutionService(session).config(project_id))
+
 
 @router.put(
     "/{project_id}/recommendation-config",
@@ -83,6 +86,20 @@ async def get_plan_availability(
     session: SessionDep,
 ) -> ApiResponse[list[PptPriceBandAvailabilityResponse]]:
     return success(await PptSolutionService(session).plan_availability(run_id))
+
+
+@router.post(
+    "/runs/{run_id}/commands/retry-plans", response_model=ApiResponse[list[PptSolutionPlanResponse]]
+)
+async def retry_incomplete_plans(
+    run_id: uuid.UUID,
+    _: Annotated[CurrentUser, Depends(require_permission("recommendation:run"))],
+    session: SessionDep,
+) -> ApiResponse[list[PptSolutionPlanResponse]]:
+    """Retry only missing slots from this Run's immutable candidate snapshot."""
+    return success(
+        await PptSolutionService(session).create_ai_generated_plans(run_id, DeepSeekClient())
+    )
 
 
 @router.get("/runs/{run_id}/packages", response_model=ApiResponse[list[PptPackageResponse]])

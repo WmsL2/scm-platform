@@ -14,6 +14,7 @@ from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.recommendation.infrastructure.models import (
     PptGenerationTask,
+    PptPlanGenerationStatus,
     PptRecommendationConfig,
     PptSolutionPackage,
     PptSolutionPackageItem,
@@ -229,6 +230,30 @@ class PptSolutionRepository:
         if lock:
             statement = statement.with_for_update()
         return cast(PptSolutionPlan | None, await self.session.scalar(statement))
+
+    async def plan_generation_statuses(self, run_id: uuid.UUID) -> list[PptPlanGenerationStatus]:
+        return list(
+            (
+                await self.session.scalars(
+                    select(PptPlanGenerationStatus).where(PptPlanGenerationStatus.run_id == run_id)
+                )
+            ).all()
+        )
+
+    async def plan_generation_status_for_update(
+        self, run_id: uuid.UUID, band: int
+    ) -> PptPlanGenerationStatus | None:
+        return cast(
+            PptPlanGenerationStatus | None,
+            await self.session.scalar(
+                select(PptPlanGenerationStatus)
+                .where(
+                    PptPlanGenerationStatus.run_id == run_id,
+                    PptPlanGenerationStatus.price_band_index == band,
+                )
+                .with_for_update()
+            ),
+        )
 
     async def packages(self, run_id: uuid.UUID) -> list[PptSolutionPackage]:
         return list(

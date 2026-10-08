@@ -485,7 +485,8 @@ async def test_ppt_solution_run_keeps_customer_requirement_separate_from_saved_c
 
 
 @pytest.mark.asyncio
-async def test_ppt_selected_plan_is_persisted_with_confirmed_candidates() -> None:
+async def test_ppt_v8_selected_plan_persists_confirmation_and_selection() -> None:
+    """PR #113 plan selection must coexist with the Type-5 ppt-v8 workflow."""
     actor_id = uuid.uuid4()
     token = uuid.uuid4().hex
     supplier = Supplier(
@@ -506,7 +507,6 @@ async def test_ppt_selected_plan_is_persisted_with_confirmed_candidates() -> Non
         remark="验证选择方案后刷新仍可识别选中的方案。",
         created_by=actor_id,
     )
-
     async with SessionLocal() as session:
         session.add_all([supplier, project])
         await session.flush()
@@ -549,7 +549,7 @@ async def test_ppt_selected_plan_is_persisted_with_confirmed_candidates() -> Non
             selection_source="AI",
             selection_provider="fake",
             selection_model="fake-model",
-            selection_prompt_version="test:ppt-plan-v1",
+            selection_prompt_version="test:ppt-plan-v2",
         )
         session.add(plan)
         await session.flush()

@@ -6,12 +6,14 @@ contracts remain isolated even though both implement the same V8 policy.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Protocol, TypeVar
 
 from pydantic import BaseModel
 
+from app.core.config import get_settings
 from app.integrations.deepseek.client import (
     DeepSeekConfigurationError,
     DeepSeekStructuredOutputError,
@@ -26,7 +28,7 @@ from app.modules.recommendation.application.agent_schemas import (
     CategoryCatalogMatch,
     RequirementAnalysis,
 )
-from app.modules.recommendation.schemas import CategoryCatalogSnapshot
+from app.modules.recommendation.schemas import CategoryCatalogItem, CategoryCatalogSnapshot
 
 logger = logging.getLogger(__name__)
 ProgressReporter = Callable[[str, int, str], Awaitable[None]]
@@ -82,19 +84,23 @@ class PptSelectionAgentRunner:
         catalog = await self.tools.prepare(analysis)
         if analysis.explicit_category_keywords:
             await self._report(report_progress, "MATCHING_CATEGORIES", 45, "正在匹配真实商品类目")
-            match = await self._complete(
-                CategoryCatalogMatch,
-                system=(
-                    "你是类型 5 受控商品类目匹配器。只能返回 "
-                    "category_catalog.items 中已有的 category_key，"
-                    "绝不能输出类目文字或清单外 key。一级、二级、三级节点均可选择；"
-                    "选父节点时服务端会展开下级。"
-                    "只匹配客户明确提出的商品类目及其明确上下级或同义对应，场景关联不算类目。"
-                    "客户明确类目没有匹配时返回空 category_keys。严格返回 JSON Schema 对应对象。"
-                ),
-                user=f"客户需求：{requirement}\n\ncategory_catalog：\n{catalog.model_dump_json()}",
-            )
-            await self.tools.record_catalog_category_matches(match.category_keys)
+            matched_keys: list[str] = []
+            for batch in self._catalog_batches(catalog):
+                match = await self._complete(
+                    CategoryCatalogMatch,
+                    system=(
+                        "你是类型 5 受控商品类目匹配器。只能返回 "
+                        "category_catalog.items 中已有的 category_key，"
+                        "绝不能输出类目文字或清单外 key。一级、二级、三级节点均可选择；"
+                        "选父节点时服务端会展开下级。"
+                        "只匹配客户明确提出的商品类目及其明确上下级或同义对应，场景关联不算类目。"
+                        "客户明确类目没有匹配时返回空 category_keys。"
+                        "严格返回 JSON Schema 对应对象。"
+                    ),
+                    user=f"客户需求：{requirement}\n\ncategory_catalog：\n{batch.model_dump_json()}",
+                )
+                matched_keys.extend(match.category_keys)
+            await self.tools.record_catalog_category_matches(list(dict.fromkeys(matched_keys)))
         await self._check_cancelled(is_cancelled)
         await self._report(report_progress, "RETRIEVING", 60, "正在冻结类型 5 完整合格商品池")
         await self._report(
@@ -112,6 +118,28 @@ class PptSelectionAgentRunner:
             prompt_version=self.provider.prompt_version,
             tool_call_count=0,
         )
+
+    @staticmethod
+    def _catalog_batches(catalog: CategoryCatalogSnapshot) -> list[CategoryCatalogSnapshot]:
+        """Cover every real category in bounded requests; never permanently truncate it."""
+        max_chars = max(1000, int(get_settings().ppt_ai_input_token_budget * 4 * 0.65))
+        batches: list[CategoryCatalogSnapshot] = []
+        current: list[CategoryCatalogItem] = []
+        size = 64
+        for item in catalog.items:
+            item_size = len(json.dumps(item.model_dump(mode="json"), ensure_ascii=False)) + 1
+            if current and size + item_size > max_chars:
+                batches.append(
+                    CategoryCatalogSnapshot(generated_at=catalog.generated_at, items=current)
+                )
+                current, size = [], 64
+            current.append(item)
+            size += item_size
+        if current or not batches:
+            batches.append(
+                CategoryCatalogSnapshot(generated_at=catalog.generated_at, items=current)
+            )
+        return batches
 
     async def _complete(
         self, response_model: type[StructuredModel], *, system: str, user: str

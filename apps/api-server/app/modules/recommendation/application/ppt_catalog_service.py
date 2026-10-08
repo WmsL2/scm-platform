@@ -27,12 +27,12 @@ from app.modules.catalog.application.product_export_columns import PRODUCT_EXPOR
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.recommendation.domain.lifecycle import ensure_transition
 from app.modules.recommendation.infrastructure.models import (
-    PptRecommendationConfig,
     RecommendationCandidate,
     RecommendationCategoryChoice,
     RecommendationRun,
 )
 from app.modules.recommendation.infrastructure.ppt_repository import PptSolutionRepository
+from app.modules.recommendation.ppt_schemas import PptFrozenRecommendationConfig
 from app.modules.recommendation.schemas import (
     CategoryCatalogItem,
     CategoryCatalogSnapshot,
@@ -101,12 +101,20 @@ class PptCatalogService:
             run.prompt_version = prompt_version.strip()[:64] or None
             run.error = None
 
-    async def config_for_run(self, run_id: uuid.UUID) -> PptRecommendationConfig:
+    async def config_for_run(self, run_id: uuid.UUID) -> PptFrozenRecommendationConfig:
         run = await self._run_or_404(run_id)
-        config = await self.repository.config(run.project_id)
-        if config is None:
-            raise AppError("PPT_RECOMMENDATION_CONFIG_REQUIRED", "类型 5 推品配置不存在", 409)
-        return config
+        if run.ppt_config_snapshot is None:
+            raise AppError(
+                "PPT_RECOMMENDATION_CONFIG_SNAPSHOT_MISSING",
+                "历史类型 5 任务缺少冻结配置，不能继续推品",
+                409,
+            )
+        try:
+            return PptFrozenRecommendationConfig.model_validate(run.ppt_config_snapshot)
+        except ValueError as exc:
+            raise AppError(
+                "PPT_RECOMMENDATION_CONFIG_SNAPSHOT_INVALID", "类型 5 冻结配置无效", 409
+            ) from exc
 
     async def create_category_catalog_snapshot(self, run_id: uuid.UUID) -> CategoryCatalogSnapshot:
         async with transaction_scope(self.session):
