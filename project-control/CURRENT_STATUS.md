@@ -3,7 +3,22 @@
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
-日期：2026-09-30
+日期：2026-10-08
+
+> 2026-10-08：类型 5 已新增可审计的方案选择持久化。方案选择与方案内商品确认在同一事务
+> 完成，刷新、重新进入及完成选品后仍显示绿色高亮和“已选方案”；允许累计选择多张方案。
+> Revision `20261008_0047`，新增选择 API，沿用 `recommendation:review`，推荐模块 68 项测试、
+> Ruff、Mypy、前端类型检查、类型 5 工作台测试和生产构建已通过（ADR-0049）。
+
+> 2026-10-08：类型 5 方案编排已改为每个方案独立调用 DeepSeek，模型仅返回本次调用的
+> `P0001` 短引用，后端映射到冻结 Candidate ID 并严格校验；结构或合同错误只重试当前方案。
+> 修复 `ppt-v8` 确认阶段误用原始类目文字二次筛选导致批量确认 409。无 Migration、API、UI
+> 或权限变化；推荐模块 65 项测试、Ruff、Mypy 已通过，真实 DeepSeek 与浏览器验收待执行。
+
+> 2026-10-08：类型 5 不再因 DeepSeek 返回的有效商品数少于配置目标而丢弃整个方案。
+> 配置数量现作为 AI 编排目标：少选方案正常持久化和展示，页面标注实际/目标数量；多选结果
+> 截断到配置上限。未知引用、空方案和价格档外商品仍由后端拒绝。无 Migration、API 或权限变化；
+> 推荐模块 67 项测试、Ruff、Mypy、前端类型检查、类型 5 工作台测试和生产构建已通过。
 
 > 2026-09-30：类型 5 方案 AI 移除了“完整候选池超过 1,000 件即失败”的限制，改为按价格档独立传入该档冻结候选；当前每档技术传输保护为 5,000 件。新增价格档可用性接口，PPT 工作台显示按协议价计算的每档真实候选数、每方案要求数和准确不足原因。无 Migration、无权限变化；真实 DeepSeek 与浏览器验收待执行。
 

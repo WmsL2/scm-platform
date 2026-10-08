@@ -64,6 +64,15 @@ async def list_plans(
     return success(await PptSolutionService(session).list_plans(run_id))
 
 
+@router.post("/plans/{plan_id}/select", response_model=ApiResponse[PptSolutionPlanResponse])
+async def select_plan(
+    plan_id: uuid.UUID,
+    current: Annotated[CurrentUser, Depends(require_permission("recommendation:review"))],
+    session: SessionDep,
+) -> ApiResponse[PptSolutionPlanResponse]:
+    return success(await PptSolutionService(session).select_plan(plan_id, current.user_id))
+
+
 @router.get(
     "/runs/{run_id}/plan-availability",
     response_model=ApiResponse[list[PptPriceBandAvailabilityResponse]],

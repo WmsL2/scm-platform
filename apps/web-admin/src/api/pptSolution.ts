@@ -9,6 +9,9 @@ export const pptSolutionApi = {
   plans(runId: string): Promise<PptSolutionPlan[]> {
     return http.get(`${base}/runs/${runId}/plans`)
   },
+  selectPlan(planId: string): Promise<PptSolutionPlan> {
+    return http.post(`${base}/plans/${planId}/select`)
+  },
   planAvailability(runId: string): Promise<PptPriceBandAvailability[]> {
     return http.get(`${base}/runs/${runId}/plan-availability`)
   },

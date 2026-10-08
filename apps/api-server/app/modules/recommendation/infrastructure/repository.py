@@ -483,7 +483,7 @@ class RecommendationRepository:
             filters.append(Product.discount_rate >= requirement.discount_rate_min)
         if requirement.discount_rate_max is not None:
             filters.append(Product.discount_rate <= requirement.discount_rate_max)
-        if requirement.requirement_version in {"v7", "v8"}:
+        if requirement.requirement_version in {"v7", "v8", "ppt-v8"}:
             # V7/V8 use only server-issued category nodes supplied separately.
             category_terms: Sequence[str] = ()
         elif requirement.requirement_version in {"v5", "v6"}:

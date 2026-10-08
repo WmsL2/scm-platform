@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
+from app.integrations.deepseek.client import DeepSeekStructuredOutputError
 from app.modules.recommendation.application.agent_runner import (
     RecommendationAgentContractError,
     StructuredProvider,
@@ -14,6 +16,8 @@ from app.modules.recommendation.application.ppt_catalog_service import PptCatalo
 from app.modules.recommendation.application.ppt_selection_runner import PptCatalogTools
 from app.modules.recommendation.application.ppt_service import PptSolutionService
 from app.modules.recommendation.schemas import CategoryCatalogSnapshot, ParsedRequirement
+
+logger = logging.getLogger(__name__)
 
 
 class PptSelectionServiceTools(PptCatalogTools):
@@ -87,6 +91,20 @@ class PptSelectionJobPort:
         try:
             await PptSolutionService(self.service.session).create_ai_generated_plans(
                 run_id, self.provider
+            )
+        except DeepSeekStructuredOutputError as exc:
+            logger.warning(
+                "ppt plan structured output failed run_id=%s stage=%s error_kind=%s "
+                "validation=%s",
+                run_id,
+                exc.response_model_name,
+                exc.error_kind,
+                exc.safe_validation_summary,
+            )
+            await self.service.record_plan_failure(
+                run_id,
+                "类型 5 AI 方案编排返回格式异常，自动重试后仍失败"
+                f"（{exc.error_kind}），请重新生成。",
             )
         except Exception as exc:
             # Candidate recall remains usable and auditable even if plan composition fails.

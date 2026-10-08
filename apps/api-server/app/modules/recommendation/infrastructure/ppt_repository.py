@@ -224,6 +224,12 @@ class PptSolutionRepository:
             ).all()
         )
 
+    async def plan(self, plan_id: uuid.UUID, *, lock: bool = False) -> PptSolutionPlan | None:
+        statement = select(PptSolutionPlan).where(PptSolutionPlan.id == plan_id)
+        if lock:
+            statement = statement.with_for_update()
+        return cast(PptSolutionPlan | None, await self.session.scalar(statement))
+
     async def packages(self, run_id: uuid.UUID) -> list[PptSolutionPackage]:
         return list(
             (
