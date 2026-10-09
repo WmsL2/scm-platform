@@ -77,6 +77,12 @@ class BidProject(Base):
             "project_type IN ('FILTER_RECOMMENDATION', 'FREE_RECOMMENDATION', 'PPT_SOLUTION')",
             name="ck_scm_bid_project_project_type",
         ),
+        CheckConstraint(
+            "recommendation_type IS NULL OR recommendation_type IN "
+            "('TYPE_1_SPECIFICATION', 'TYPE_2_IDENTIFIED_PRODUCT', 'TYPE_3_CATEGORY', "
+            "'TYPE_4_FREE', 'TYPE_5_PPT')",
+            name="ck_scm_bid_project_recommendation_type",
+        ),
         Index("ix_scm_bid_project_status", "status"),
         Index("ix_scm_bid_project_created_at", "created_at"),
         Index("ix_scm_bid_project_buyer_name", "buyer_name"),
@@ -97,6 +103,7 @@ class BidProject(Base):
     project_type: Mapped[str] = mapped_column(
         String(32), nullable=False, default="FILTER_RECOMMENDATION"
     )
+    recommendation_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
     import_status: Mapped[str] = mapped_column(String(32), nullable=False)
     import_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     total_item_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")

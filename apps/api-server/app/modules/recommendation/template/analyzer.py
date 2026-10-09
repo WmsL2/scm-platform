@@ -10,10 +10,17 @@ from app.modules.catalog.application.product_export_columns import PRODUCT_EXPOR
 
 _EXACT_AUTO_MAPPING = {column.header: column.key for column in PRODUCT_EXPORT_COLUMNS}
 _SAFE_ALIASES = {
+    "sku": "sku",
     "一级类目": "category_level1_name",
     "二级类目": "category_level2_name",
     "三级类目": "category_level3_name",
     "品牌": "brand",
+    "商品名称": "product_name",
+    "规格型号": "model",
+    "普惠到手": "market_price",
+    "VIP价格": "agreement_price",
+    "税编": "tax_code",
+    "69码": "barcode_text",
     "SKU": "sku",
     "名称": "product_name",
     "京东价": "jd_price",
@@ -51,14 +58,23 @@ class TemplateStructure:
     columns: list[TemplateColumn]
 
 
-def analyze_template(file_bytes: bytes) -> TemplateAnalysis:
+def analyze_template(
+    file_bytes: bytes,
+    *,
+    exclude_sheet_title_terms: tuple[str, ...] = (),
+) -> TemplateAnalysis:
     """Read only deterministic workbook structure; never infers business semantics from style."""
     try:
         workbook = load_workbook(BytesIO(file_bytes), read_only=False, data_only=False)
     except Exception as exc:
         raise AppError("RECOMMENDATION_TEMPLATE_INVALID", "推荐模板无法读取", 422) from exc
     try:
-        for sheet in workbook.worksheets:
+        preferred_sheets = [
+            sheet
+            for sheet in workbook.worksheets
+            if not any(term in sheet.title for term in exclude_sheet_title_terms)
+        ]
+        for sheet in preferred_sheets or workbook.worksheets:
             for row_number, row in enumerate(sheet.iter_rows(max_row=min(sheet.max_row, 50)), 1):
                 headers = [
                     str(cell.value).strip() if cell.value is not None else "" for cell in row

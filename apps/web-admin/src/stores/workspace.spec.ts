@@ -52,4 +52,13 @@ describe("workspace store tab order", () => {
     workspace.openRoute(route("/products", "商品主数据"))
     expect(workspace.tabs.map((tab) => tab.path)).toEqual(["/products", "/dashboard"])
   })
+
+  it("renames an existing dynamic workspace tab", () => {
+    const workspace = useWorkspaceStore()
+    workspace.openRoute(route("/bid-projects/p1/recommendation", "推品工作台"))
+
+    workspace.renameRoute("/bid-projects/p1/recommendation", "指定类目推品")
+
+    expect(workspace.tabs.at(-1)?.title).toBe("指定类目推品")
+  })
 })

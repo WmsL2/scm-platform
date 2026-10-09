@@ -10,6 +10,7 @@ from app.modules.bid.domain.lifecycle import (
     BidItemStatus,
     BidProjectStatus,
     BidProjectType,
+    BidRecommendationType,
 )
 
 
@@ -45,6 +46,7 @@ class BidProjectListItem(BaseModel):
     status: BidProjectStatus
     import_status: BidImportStatus
     project_type: BidProjectType
+    recommendation_type: BidRecommendationType | None = None
     total_item_count: int
     processed_item_count: int
     created_at: datetime
@@ -66,6 +68,7 @@ class BidProjectCreateResponse(BaseModel):
     status: BidProjectStatus
     import_status: BidImportStatus
     project_type: BidProjectType
+    recommendation_type: BidRecommendationType | None = None
     import_error: str | None
     template_id: UUID | None
     template_version: int | None

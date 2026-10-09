@@ -18,6 +18,7 @@ from app.infrastructure.adapters import ObjectStorage, get_object_storage
 from app.modules.bid.domain.lifecycle import (
     BidFileType,
     BidProjectStatus,
+    BidRecommendationType,
 )
 from app.modules.bid.domain.lifecycle import (
     ensure_transition as ensure_bid_project_transition,
@@ -117,6 +118,10 @@ class RecommendationExportService:
                     mapping.data_start_row,
                     mapping.mapping_json,
                     rows,
+                    preserve_unmapped_cells=(
+                        project.recommendation_type
+                        == BidRecommendationType.TYPE_3_CATEGORY.value
+                    ),
                 )
                 version = await self.repository.next_export_version(project.id)
                 filename = f"{project.project_code}-自由推品结果-R{str(run.id)[:8]}-V{version}.xlsx"
@@ -196,6 +201,8 @@ class RecommendationExportService:
         data_start_row: int,
         mapping_json: dict[str, object],
         rows: list[tuple[RecommendationCandidate, RecommendationConfirmation]],
+        *,
+        preserve_unmapped_cells: bool = False,
     ) -> bytes:
         workbook = load_workbook(BytesIO(source), data_only=False)
         try:
@@ -221,7 +228,16 @@ class RecommendationExportService:
             for offset, (candidate, confirmation) in enumerate(rows):
                 target_row = data_start_row + offset
                 if target_row > data_start_row:
-                    cls._copy_template_row(sheet, data_start_row, target_row)
+                    cls._copy_template_row(
+                        sheet,
+                        data_start_row,
+                        target_row,
+                        columns=(
+                            tuple(column for _field, column in columns)
+                            if preserve_unmapped_cells
+                            else None
+                        ),
+                    )
                 for field, column in columns:
                     sheet.cell(target_row, column).value = cast(
                         Any, cls._value(field, candidate, confirmation)
@@ -243,8 +259,14 @@ class RecommendationExportService:
             row += 1
 
     @staticmethod
-    def _copy_template_row(sheet: Any, source_row: int, target_row: int) -> None:
-        for column in range(1, sheet.max_column + 1):
+    def _copy_template_row(
+        sheet: Any,
+        source_row: int,
+        target_row: int,
+        *,
+        columns: tuple[int, ...] | None = None,
+    ) -> None:
+        for column in columns or tuple(range(1, sheet.max_column + 1)):
             source = sheet.cell(source_row, column)
             target = sheet.cell(target_row, column)
             if isinstance(source.value, str) and source.value.startswith("="):

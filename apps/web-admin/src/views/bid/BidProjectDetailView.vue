@@ -12,6 +12,8 @@ import {
   IMPORT_STATUS_LABELS,
   PROJECT_STATUS_LABELS,
   PROJECT_STATUS_TAG_TYPES,
+  PROJECT_TYPE_LABELS,
+  RECOMMENDATION_TYPE_LABELS,
   type BidProjectDetail,
   type BidProjectStatus,
 } from "../../types/bid"
@@ -42,7 +44,13 @@ const form = reactive({
 const editableStatuses = ["IMPORTED", "MATCHING", "SELECTING", "READY", "EXPORTED"]
 const canEdit = computed(() => auth.hasPermission("bid:update") && editableStatuses.includes(project.value?.status ?? ""))
 const canVoid = computed(() => auth.hasPermission("bid:void") && editableStatuses.includes(project.value?.status ?? ""))
-const canStartMatching = computed(() => project.value?.status === "IMPORTED" && project.value.import_status === "PARSED" && auth.hasPermission("bid:match"))
+const isType2 = computed(() => project.value?.recommendation_type === "TYPE_2_IDENTIFIED_PRODUCT")
+const canStartMatching = computed(() => {
+  const status = project.value?.status ?? ""
+  return project.value?.import_status === "PARSED"
+    && auth.hasPermission("bid:match")
+    && (status === "IMPORTED" || (isType2.value && status === "SELECTING"))
+})
 const canExport = computed(() => ["READY", "EXPORTED"].includes(project.value?.status ?? "") && auth.hasPermission("bid:export"))
 const canSubmit = computed(() => project.value?.status === "EXPORTED" && auth.hasPermission("bid:submit"))
 const canRecordResult = computed(() => project.value?.status === "SUBMITTED" && auth.hasPermission("bid:result"))
@@ -127,11 +135,17 @@ async function voidProject() {
 
 async function startMatching() {
   try {
-    await ElMessageBox.confirm("将对已解析需求行启动商品匹配，是否继续？", "开始商品匹配")
+    await ElMessageBox.confirm(
+      isType2.value
+        ? "将按 SKU 或品牌型号匹配商品，并自动选择当前成本价最低且不超过限价的商品。是否继续？"
+        : "将对已解析需求行启动商品匹配，是否继续？",
+      isType2.value ? "执行指定商品比价" : "开始商品匹配",
+    )
     saving.value = true
     await bidApi.startMatching(id)
-    ElMessage.success("商品匹配完成")
+    ElMessage.success(isType2.value ? "指定商品比价完成，已自动选择最低报价" : "商品匹配完成")
     await load()
+    if (isType2.value) await router.push(`/bid-projects/${id}/workbench`)
   } catch (error) {
     if (error !== "cancel" && error !== "close") ElMessage.error(messageFor(error, "启动匹配失败"))
   } finally {
@@ -202,7 +216,7 @@ onMounted(() => void load())
       <el-button type="primary" @click="router.push(`/bid-projects/${id}/workbench`)">进入匹配工作台</el-button>
       <el-button v-if="canEdit" @click="openEdit">编辑项目信息</el-button>
       <el-button v-if="canVoid" type="danger" @click="voidReason = ''; voidVisible = true">作废项目</el-button>
-      <el-button v-if="canStartMatching" :loading="saving" @click="startMatching">开始匹配</el-button>
+      <el-button v-if="canStartMatching" :loading="saving" @click="startMatching">{{ isType2 ? "执行最低价匹配" : "开始匹配" }}</el-button>
       <el-button v-if="canExport" :loading="saving" @click="exportFile">导出报价文件</el-button>
       <el-button v-if="canSubmit" type="primary" @click="submitFile = ''; submitNote = ''; submitVisible = true">提交投标</el-button>
       <el-button v-if="canRecordResult" type="success" @click="recordResult(true)">标记中标</el-button>
@@ -214,6 +228,7 @@ onMounted(() => void load())
       <el-descriptions-item label="项目编号">{{ project.project_code }}</el-descriptions-item>
       <el-descriptions-item label="项目名称">{{ project.project_name }}</el-descriptions-item>
       <el-descriptions-item label="需求商">{{ project.buyer_name }}</el-descriptions-item>
+      <el-descriptions-item label="业务类型">{{ project.recommendation_type ? RECOMMENDATION_TYPE_LABELS[project.recommendation_type] : PROJECT_TYPE_LABELS[project.project_type] }}</el-descriptions-item>
       <el-descriptions-item label="项目状态"><el-tag :type="statusTagType(project.status)" effect="plain">{{ PROJECT_STATUS_LABELS[project.status] }}</el-tag></el-descriptions-item>
       <el-descriptions-item label="导入状态">{{ IMPORT_STATUS_LABELS[project.import_status] }}</el-descriptions-item>
       <el-descriptions-item label="开始时间">{{ project.start_at ?? "-" }}</el-descriptions-item>

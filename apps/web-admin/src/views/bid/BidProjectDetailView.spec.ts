@@ -3,12 +3,18 @@ import source from "./BidProjectDetailView.vue?raw"
 
 describe("BidProjectDetailView", () => {
   it("gates each lifecycle action by its state and permission", () => {
-    expect(source).toContain('project.value?.status === "IMPORTED"')
-    expect(source).toContain('project.value.import_status === "PARSED"')
+    expect(source).toContain('status === "IMPORTED"')
+    expect(source).toContain('project.value?.import_status === "PARSED"')
     expect(source).toContain('auth.hasPermission("bid:match")')
     expect(source).toContain('auth.hasPermission("bid:export")')
     expect(source).toContain('auth.hasPermission("bid:submit")')
     expect(source).toContain('auth.hasPermission("bid:result")')
+  })
+
+  it("allows an old Type 2 review-state project to rerun automatic lowest-price matching", () => {
+    expect(source).toContain('project.value?.recommendation_type === "TYPE_2_IDENTIFIED_PRODUCT"')
+    expect(source).toContain('isType2.value && status === "SELECTING"')
+    expect(source).toContain('"执行最低价匹配"')
   })
 
   it("keeps edit and void permissions while terminal projects expose no lifecycle controls", () => {

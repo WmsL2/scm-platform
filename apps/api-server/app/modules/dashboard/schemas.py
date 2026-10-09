@@ -9,6 +9,7 @@ class DashboardRecentProjectResponse(BaseModel):
     project_code: str
     project_name: str
     project_type: str
+    recommendation_type: str | None = None
     status: str
     updated_at: datetime
 

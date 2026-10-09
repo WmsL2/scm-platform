@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from openpyxl import Workbook
+from sqlalchemy import select
 
 from app.common.contracts import AppError, PageParams
 from app.core.database import SessionLocal
@@ -13,10 +14,11 @@ from app.infrastructure.adapters import LocalFileStorage
 from app.modules.bid.application.service import MAX_PROJECT_ITEMS, BidProjectService
 from app.modules.bid.domain.lifecycle import (
     BidImportStatus,
+    BidItemStatus,
     BidProjectStatus,
     ensure_transition,
 )
-from app.modules.bid.infrastructure.models import BidTemplate
+from app.modules.bid.infrastructure.models import BidProject, BidProjectItem, BidTemplate
 from app.modules.bid.infrastructure.repository import BidProjectRepository
 
 
@@ -89,6 +91,56 @@ async def test_project_creation_parses_frozen_template(tmp_path: Path) -> None:
         rows = await service.items(response.id, page_params=PageParams(), status=None)
         assert rows.total == 1
         assert rows.items[0].product_name == "测试商品"
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_quote_export_loads_database_timestamp_before_building_response(
+    tmp_path: Path,
+) -> None:
+    file_bytes, headers = _workbook_bytes()
+    actor_id = uuid.uuid4()
+    storage = LocalFileStorage(tmp_path)
+    async with SessionLocal() as session:
+        service = BidProjectService(session, storage)
+        template = BidTemplate(
+            template_code=f"export-{uuid.uuid4()}",
+            template_name="导出响应测试模板",
+            version=1,
+            sheet_name="需求明细",
+            header_row=1,
+            data_start_row=2,
+            import_mapping={"product_name": "商品名称"},
+            export_mapping={"selected_unit_price": "报价"},
+            fingerprint=service._fingerprint("需求明细", 1, headers),
+        )
+        session.add(template)
+        await session.flush()
+        created = await service.create(
+            project_name="导出响应测试",
+            buyer_name="测试需求商",
+            start_at=None,
+            deadline_at=None,
+            remark=None,
+            filename="需求.xlsx",
+            file_bytes=file_bytes,
+            actor_id=actor_id,
+        )
+        project = await session.get(BidProject, created.id)
+        item = await session.scalar(
+            select(BidProjectItem).where(BidProjectItem.project_id == created.id)
+        )
+        assert project is not None
+        assert item is not None
+        project.status = BidProjectStatus.READY.value
+        item.status = BidItemStatus.NO_QUOTE.value
+        await session.flush()
+
+        exported = await service.export(created.id, actor_id)
+
+        assert exported.file_type == "QUOTED_EXPORT"
+        assert exported.created_at is not None
+        assert exported.original_filename.endswith(".xlsx")
         await session.rollback()
 
 

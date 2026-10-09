@@ -9,7 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.contracts import AppError
 from app.core.transaction import transaction_scope
 from app.infrastructure.adapters import InlineTaskQueue, TaskQueue
-from app.modules.bid.domain.lifecycle import BidImportStatus, BidItemStatus, BidProjectStatus
+from app.modules.bid.domain.lifecycle import (
+    BidImportStatus,
+    BidItemStatus,
+    BidProjectStatus,
+    BidRecommendationType,
+)
 from app.modules.bid.infrastructure.models import (
     BidItemSelection,
     BidProject,
@@ -22,6 +27,7 @@ from app.modules.catalog.infrastructure.models import Product
 from app.modules.matching.domain.rules import (
     CanonicalRequirement,
     MatchableProduct,
+    decide_identified_product_matches,
     decide_product_matches,
     is_eligible_matching_product,
     normalize_match_text,
@@ -62,8 +68,18 @@ class MatchingService:
             project = await self._project_or_404(project_id)
             if project.import_status != BidImportStatus.PARSED.value:
                 raise AppError("BID_PROJECT_NOT_PARSED", "项目尚未完成需求行解析", 409)
-            if project.status != BidProjectStatus.IMPORTED.value:
+            is_type2 = (
+                project.recommendation_type
+                == BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value
+            )
+            allowed_statuses = {BidProjectStatus.IMPORTED.value}
+            if is_type2:
+                # Allows projects created before Type 2 automatic lowest-price matching
+                # to be upgraded by running matching once more from their old review state.
+                allowed_statuses.add(BidProjectStatus.SELECTING.value)
+            if project.status not in allowed_statuses:
                 raise AppError("BID_MATCHING_NOT_ALLOWED", "当前项目状态不能开始匹配", 409)
+            previous_status = project.status
             task = MatchTask(
                 project_id=project_id,
                 status="RUNNING",
@@ -74,36 +90,122 @@ class MatchingService:
             project.status = BidProjectStatus.MATCHING.value
             project.updated_by = actor_id
             self.session.add(task)
-            self._event(project_id, actor_id, "MATCH_STARTED", "IMPORTED", "MATCHING", None)
+            self._event(
+                project_id,
+                actor_id,
+                "MATCH_STARTED",
+                previous_status,
+                "MATCHING",
+                None,
+            )
             await self.session.flush()
 
             items = await self.repository.items(project_id)
             product_rows = await self.repository.eligible_products()
             candidates = [self._matchable(product, supplier) for product, supplier in product_rows]
+            allow_brand_substitution = (
+                project.recommendation_type
+                == BidRecommendationType.TYPE_1_SPECIFICATION.value
+            )
+            product_rows_by_id = {
+                product.id: (product, supplier) for product, supplier in product_rows
+            }
+            auto_selected_count = 0
+            auto_selection_plans: list[
+                tuple[BidProjectItem, MatchCandidate, Product, Supplier]
+            ] = []
             for item in items:
-                decision = decide_product_matches(self._requirement(item), candidates)
-                item.status = decision.status.value
-                for candidate in decision.candidates:
-                    self.session.add(
-                        MatchCandidate(
-                            match_task_id=task.id,
-                            project_item_id=item.id,
-                            product_id=candidate.product_id,
-                            supplier_id=candidate.supplier_id,
-                            score=Decimal(candidate.score),
-                            rank=candidate.rank,
-                            match_method=candidate.recall_stage.value,
-                            match_reason=candidate.match_reason(),
-                        )
+                requirement = self._requirement(item)
+                decision = (
+                    decide_identified_product_matches(requirement, candidates)
+                    if is_type2
+                    else decide_product_matches(
+                        requirement,
+                        candidates,
+                        allow_brand_substitution=allow_brand_substitution,
                     )
+                )
+                item.status = decision.status.value
+                item.current_selection_id = None
+                item.no_quote_reason = None
+                candidate_models: dict[uuid.UUID, MatchCandidate] = {}
+                for candidate in decision.candidates:
+                    candidate_model = MatchCandidate(
+                        id=uuid.uuid4(),
+                        match_task_id=task.id,
+                        project_item_id=item.id,
+                        product_id=candidate.product_id,
+                        supplier_id=candidate.supplier_id,
+                        score=Decimal(candidate.score),
+                        rank=candidate.rank,
+                        match_method=candidate.recall_stage.value,
+                        match_reason=candidate.match_reason(),
+                    )
+                    candidate_models[candidate.product_id] = candidate_model
+                    self.session.add(candidate_model)
+                if is_type2:
+                    chosen = next(
+                        (
+                            candidate
+                            for candidate in decision.candidates
+                            if self._is_quotable_type2_product(
+                                product_rows_by_id[candidate.product_id][0], item.max_price
+                            )
+                        ),
+                        None,
+                    )
+                    if chosen is None:
+                        item.status = BidItemStatus.NO_MATCH.value
+                        continue
+                    product, supplier = product_rows_by_id[chosen.product_id]
+                    assert product.cost_price is not None
+                    auto_selection_plans.append(
+                        (item, candidate_models[chosen.product_id], product, supplier)
+                    )
+                    item.status = BidItemStatus.SELECTED.value
+                    auto_selected_count += 1
+            if is_type2:
+                # Candidate rows must exist before their selection FK rows are inserted.
+                await self.session.flush()
+                for item, candidate_model, product, supplier in auto_selection_plans:
+                    selection_id = uuid.uuid4()
+                    assert product.cost_price is not None
+                    selection = BidItemSelection(
+                        id=selection_id,
+                        project_item_id=item.id,
+                        candidate_id=candidate_model.id,
+                        product_id=product.id,
+                        supplier_id=supplier.id,
+                        selected_unit_price=product.cost_price,
+                        requirement_snapshot=self._requirement_snapshot(item),
+                        product_snapshot=self._product_snapshot(product),
+                        supplier_snapshot=self._supplier_snapshot(supplier),
+                        price_snapshot=self._price_snapshot(product, product.cost_price),
+                        note="类型2按当前成本价自动选择最低报价",
+                        created_by=actor_id,
+                    )
+                    self.session.add(selection)
+                    item.current_selection_id = selection_id
             task.status = "COMPLETED"
             task.processed_item_count = len(items)
             project.processed_item_count = len(items)
             project.status = BidProjectStatus.SELECTING.value
             self._event(project_id, actor_id, "MATCH_COMPLETED", "MATCHING", "SELECTING", None)
-            if not items:
+            if is_type2 or not items:
                 project.status = BidProjectStatus.READY.value
-                self._event(project_id, actor_id, "PROJECT_READY", "SELECTING", "READY", None)
+                self._event(
+                    project_id,
+                    actor_id,
+                    "PROJECT_READY",
+                    "SELECTING",
+                    "READY",
+                    (
+                        f"类型2自动选择最低报价 {auto_selected_count} 条，"
+                        f"未匹配 {len(items) - auto_selected_count} 条"
+                        if is_type2
+                        else None
+                    ),
+                )
             await self.session.flush()
         return StartMatchingResponse(
             task_id=task.id,
@@ -263,6 +365,7 @@ class MatchingService:
             supplier_archive_status=supplier.archive_status,
             supplier_cooperation_status=supplier.cooperation_status,
             supplier_is_deleted=supplier.is_deleted,
+            cost_price=product.cost_price,
             sku=product.sku,
             item_number=product.item_number,
             barcode_text=product.barcode_text,
@@ -275,6 +378,11 @@ class MatchingService:
             category_level3_name=product.category_level3_name,
             product_specification=product.product_specification,
         )
+
+    @staticmethod
+    def _is_quotable_type2_product(product: Product, max_price: Decimal | None) -> bool:
+        price = product.cost_price
+        return price is not None and price > 0 and (max_price is None or price <= max_price)
 
     def _event(
         self,
