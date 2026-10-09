@@ -191,7 +191,8 @@ class PptPlanAgentRunner:
                 key_map[key].rank,
             ),
         )
-        finalists = self._finalist_rows(ranked_keys, key_map, assessments, item_count)
+        diversified_keys = self._category_diversified_keys(ranked_keys, key_map)
+        finalists = self._finalist_rows(diversified_keys, key_map, assessments, item_count)
         if len(finalists) >= item_count:
             proposal = await self._select_finalists(
                 index=index,
@@ -202,8 +203,9 @@ class PptPlanAgentRunner:
             selected_keys = proposal.candidate_keys
         else:
             # The final comparison itself cannot fit the safe input budget.  Every
-            # candidate was still AI-assessed, so preserve the score order rather
-            # than silently introducing a deterministic filler product.
+            # candidate was still AI-assessed. Keep the strongest representative
+            # from each third-level category ahead of same-category repetitions,
+            # rather than silently producing a one-category deterministic filler.
             logger.warning(
                 "type5 final selection fallback band=%s requested=%s finalists=%s "
                 "reason=input_budget",
@@ -211,7 +213,7 @@ class PptPlanAgentRunner:
                 item_count,
                 len(finalists),
             )
-            selected_keys = ranked_keys[:item_count]
+            selected_keys = diversified_keys[:item_count]
 
         if len(selected_keys) != item_count or len(selected_keys) != len(set(selected_keys)):
             raise RecommendationAgentContractError("类型 5 AI 未按要求返回精确且不重复的商品数量")
@@ -348,6 +350,10 @@ class PptPlanAgentRunner:
                             "从 candidates 返回恰好 required_item_count 件最相关、"
                             "综合性价比最高的商品。"
                             "优先场景适配，再综合规格卖点、品牌和价格价值；"
+                            "若客户需求未明确限定单一类目，应在场景相关的候选中尽量覆盖多个"
+                            "三级类目；当不同三级类目的商品相关性和性价比接近时，优先选择"
+                            "尚未覆盖的三级类目。不得为了凑类目数量选择明显不相关的商品；"
+                            "当需求明确限定单一类目或相关类目候选不足时，允许选择同一三级类目的多件商品。"
                             "不能把最低价格或最高折扣机械等同于性价比。"
                             "只能返回服务端给出的短编号，不能重复、遗漏数量或生成清单外商品。"
                             "严格返回 JSON。"
@@ -471,6 +477,31 @@ class PptPlanAgentRunner:
             finalists.append(row)
             current_size += row_size
         return finalists
+
+    @staticmethod
+    def _category_diversified_keys(
+        ranked_keys: list[str], key_map: dict[str, RecommendationCandidate]
+    ) -> list[str]:
+        """Interleave score-ranked third-level categories for the final AI shortlist.
+
+        The first item in each bucket remains that category's highest-scoring item.
+        This preserves the first-pass AI ranking while giving the final Type-5-only
+        selection call a chance to cover different customer-relevant categories.
+        """
+        buckets: dict[str, deque[str]] = {}
+        for key in ranked_keys:
+            category = str(
+                key_map[key].product_snapshot.get("category_level3_name") or "未分类"
+            ).strip() or "未分类"
+            buckets.setdefault(category, deque()).append(key)
+        ordered_categories = deque(buckets)
+        diversified: list[str] = []
+        while ordered_categories:
+            category = ordered_categories.popleft()
+            diversified.append(buckets[category].popleft())
+            if buckets[category]:
+                ordered_categories.append(category)
+        return diversified
 
     @staticmethod
     def _assessment_row(key: str, candidate: RecommendationCandidate) -> dict[str, object]:
