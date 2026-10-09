@@ -150,7 +150,7 @@ async function create() {
   submitting.value = true
   importNavigationLock.start()
   try {
-    const result = await operationTimer.measure("项目创建与模板分析", () => bidApi.create({
+    const result = await operationTimer.measure("投标 Excel 导入", () => bidApi.create({
       ...form,
       project_name: form.project_name.trim(),
       buyer_name: form.buyer_name.trim(),
