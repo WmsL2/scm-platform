@@ -82,9 +82,9 @@ const router = createRouter({
         },
         { path: "bid-projects", name: "bid-project-list", component: () => import("../views/bid/BidProjectListView.vue"), meta: { title: "投标项目", requiresAuth: true, permission: "bid:list" } },
         { path: "bid-projects/:id", name: "bid-project-detail", component: () => import("../views/bid/BidProjectDetailView.vue"), meta: { title: "投标项目详情", requiresAuth: true, permission: "bid:detail" } },
-        { path: "bid-projects/:id/recommendation", name: "free-recommendation-workspace", component: () => import("../views/bid/RecommendationWorkspaceView.vue"), meta: { title: "自由推品 Agent", requiresAuth: true, permission: "recommendation:detail" } },
+        { path: "bid-projects/:id/recommendation", name: "free-recommendation-workspace", component: () => import("../views/bid/RecommendationWorkspaceView.vue"), meta: { title: "推品工作台", requiresAuth: true, permission: "recommendation:detail" } },
         { path: "bid-projects/:id/ppt-solution", name: "ppt-solution-workspace", component: () => import("../views/bid/PptSolutionWorkspaceView.vue"), meta: { title: "PPT 方案", requiresAuth: true, permission: "recommendation:detail" } },
-        { path: "bid-projects/:id/workbench", name: "bid-project-workbench", component: () => import("../views/bid/BidMatchingWorkbenchView.vue"), meta: { title: "匹配工作台", requiresAuth: true, permission: "bid:detail" } },
+        { path: "bid-projects/:id/workbench", name: "bid-project-workbench", component: () => import("../views/bid/BidMatchingWorkbenchView.vue"), meta: { title: "报价工作台", requiresAuth: true, permission: "bid:detail" } },
       ],
     },
     {

@@ -67,6 +67,7 @@ class MatchableProduct:
     supplier_archive_status: ArchiveStatus | str
     supplier_cooperation_status: CooperationStatus | str
     supplier_is_deleted: bool
+    cost_price: Decimal | None = None
     sku: str | None = None
     item_number: str | None = None
     barcode_text: str | None = None
@@ -139,6 +140,8 @@ def is_eligible_matching_product(candidate: MatchableProduct) -> bool:
 def decide_product_matches(
     requirement: CanonicalRequirement,
     candidates: Sequence[MatchableProduct],
+    *,
+    allow_brand_substitution: bool = False,
 ) -> MatchDecision:
     """Recall and rank candidates without selecting or writing any business record."""
     if not _has_match_evidence(requirement):
@@ -157,7 +160,11 @@ def decide_product_matches(
     if brand_model_matches:
         return _build_decision(requirement, brand_model_matches, RecallStage.BRAND_MODEL)
 
-    fallback_matches = _fallback_matches(requirement, eligible)
+    fallback_matches = _fallback_matches(
+        requirement,
+        eligible,
+        allow_brand_substitution=allow_brand_substitution,
+    )
     if not fallback_matches:
         return MatchDecision(
             status=BidItemMatchStatus.NO_MATCH,
@@ -165,6 +172,35 @@ def decide_product_matches(
             reason="未找到符合商品状态和供应商资格的候选商品。",
         )
     return _build_decision(requirement, fallback_matches, RecallStage.FALLBACK)
+
+
+def decide_identified_product_matches(
+    requirement: CanonicalRequirement,
+    candidates: Sequence[MatchableProduct],
+) -> MatchDecision:
+    """Type 2 only accepts an exact SKU/code or exact brand and model match.
+
+    Matching products are ordered by the current supplier quote (`cost_price`) so the
+    application service can deterministically select the cheapest quotable product.
+    """
+    eligible = [candidate for candidate in candidates if is_eligible_matching_product(candidate)]
+    matches = _identifier_matches(requirement, eligible)
+    recall_stage = RecallStage.EXACT_IDENTIFIER
+    if not matches:
+        matches = _brand_model_matches(requirement, eligible)
+        recall_stage = RecallStage.BRAND_MODEL
+    if not matches:
+        return MatchDecision(
+            status=BidItemMatchStatus.NO_MATCH,
+            candidates=(),
+            reason="未找到 SKU 或品牌型号完全一致的可用商品。",
+        )
+    return _build_decision(
+        requirement,
+        matches,
+        recall_stage,
+        prefer_lowest_price=True,
+    )
 
 
 def _has_match_evidence(requirement: CanonicalRequirement) -> bool:
@@ -212,10 +248,16 @@ def _brand_model_matches(
 def _fallback_matches(
     requirement: CanonicalRequirement,
     candidates: Sequence[MatchableProduct],
+    *,
+    allow_brand_substitution: bool = False,
 ) -> list[MatchableProduct]:
     matches: list[MatchableProduct] = []
     for candidate in candidates:
-        if _has_hard_conflict(requirement, candidate):
+        if _has_hard_conflict(
+            requirement,
+            candidate,
+            allow_brand_substitution=allow_brand_substitution,
+        ):
             continue
         signals = _score_signals(requirement, candidate)
         if signals and _is_sufficient_fallback_evidence(signals):
@@ -232,10 +274,20 @@ def _is_sufficient_fallback_evidence(signals: Sequence[MatchSignal]) -> bool:
     ) and bool(fields - {MatchSignalField.BRAND})
 
 
-def _has_hard_conflict(requirement: CanonicalRequirement, candidate: MatchableProduct) -> bool:
+def _has_hard_conflict(
+    requirement: CanonicalRequirement,
+    candidate: MatchableProduct,
+    *,
+    allow_brand_substitution: bool = False,
+) -> bool:
     requirement_brand = normalize_match_text(requirement.brand)
     candidate_brand = normalize_match_text(candidate.brand)
-    if requirement_brand and candidate_brand and requirement_brand != candidate_brand:
+    if (
+        not allow_brand_substitution
+        and requirement_brand
+        and candidate_brand
+        and requirement_brand != candidate_brand
+    ):
         return True
 
     requirement_model = normalize_match_text(requirement.model)
@@ -247,9 +299,25 @@ def _build_decision(
     requirement: CanonicalRequirement,
     matches: Sequence[MatchableProduct],
     recall_stage: RecallStage,
+    *,
+    prefer_lowest_price: bool = False,
 ) -> MatchDecision:
-    scored = [_score_candidate(requirement, candidate, recall_stage) for candidate in matches]
-    ranked = sorted(scored, key=lambda candidate: (-candidate.score, str(candidate.product_id)))
+    scored = [
+        (_score_candidate(requirement, candidate, recall_stage), candidate.cost_price)
+        for candidate in matches
+    ]
+    if prefer_lowest_price:
+        ranked = sorted(
+            scored,
+            key=lambda item: (
+                item[1] is None,
+                item[1] if item[1] is not None else Decimal("0"),
+                -item[0].score,
+                str(item[0].product_id),
+            ),
+        )
+    else:
+        ranked = sorted(scored, key=lambda item: (-item[0].score, str(item[0].product_id)))
     top_candidates = tuple(
         ScoredCandidate(
             product_id=candidate.product_id,
@@ -259,7 +327,7 @@ def _build_decision(
             recall_stage=candidate.recall_stage,
             signals=candidate.signals,
         )
-        for index, candidate in enumerate(ranked[:_MAX_CANDIDATES], start=1)
+        for index, (candidate, _) in enumerate(ranked[:_MAX_CANDIDATES], start=1)
     )
     if len(top_candidates) == 1 and recall_stage is not RecallStage.FALLBACK:
         return MatchDecision(status=BidItemMatchStatus.UNIQUE_MATCH, candidates=top_candidates)

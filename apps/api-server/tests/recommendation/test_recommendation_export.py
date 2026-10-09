@@ -144,6 +144,56 @@ def test_export_column_mapping_writes_repeated_field_to_duplicate_headers() -> N
     result.close()
 
 
+def test_type3_export_preserves_customer_category_cells_outside_mapped_columns() -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "家用电器"
+    sheet.append(["客户三级类目", "sku", "商品名称"])
+    sheet.append(["炊具电器", None, None])
+    sheet.append(["饮水电器", None, None])
+    output = BytesIO()
+    workbook.save(output)
+    workbook.close()
+
+    confirmation = cast(Any, SimpleNamespace())
+    rows = [
+        (
+            cast(
+                Any,
+                SimpleNamespace(
+                    product_snapshot={"sku": f"SKU-{index}", "product_name": f"商品{index}"},
+                    supplier_snapshot={},
+                    price_snapshot={},
+                ),
+            ),
+            confirmation,
+        )
+        for index in (1, 2)
+    ]
+    exported = RecommendationExportService._build_workbook(
+        output.getvalue(),
+        "家用电器",
+        1,
+        2,
+        {
+            "version": 2,
+            "columns": [
+                {"column_index": 2, "field_key": "sku"},
+                {"column_index": 3, "field_key": "product_name"},
+            ],
+        },
+        rows,
+        preserve_unmapped_cells=True,
+    )
+
+    result = load_workbook(BytesIO(exported), data_only=False)
+    result_sheet = result["家用电器"]
+    assert result_sheet["A2"].value == "炊具电器"
+    assert result_sheet["A3"].value == "饮水电器"
+    assert result_sheet["B3"].value == "SKU-2"
+    result.close()
+
+
 @pytest.mark.asyncio
 async def test_export_confirmed_candidates_preserves_template_and_versions() -> None:
     actor_id = uuid.uuid4()

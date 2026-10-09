@@ -25,6 +25,7 @@ class DashboardService:
                     project_code=project.project_code,
                     project_name=project.project_name,
                     project_type=project.project_type,
+                    recommendation_type=project.recommendation_type,
                     status=project.status,
                     updated_at=project.updated_at,
                 )
