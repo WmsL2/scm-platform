@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     # Token counts are conservative character estimates (Chinese/token ratios vary).
     ppt_ai_input_token_budget: int = 12000
     ppt_ai_output_token_budget: int = 2048
+    # Concurrent Type-5 scoring requests. Keep this deliberately bounded to
+    # avoid turning a large frozen pool into a provider rate-limit burst.
+    ppt_ai_assessment_concurrency: int = 4
     ppt_ai_seed_count_per_plan: int = 12
 
     @field_validator("cors_origins", mode="before")
@@ -78,6 +81,7 @@ class Settings(BaseSettings):
         "deepseek_max_tokens",
         "ppt_ai_input_token_budget",
         "ppt_ai_output_token_budget",
+        "ppt_ai_assessment_concurrency",
         "ppt_ai_seed_count_per_plan",
     )
     @classmethod

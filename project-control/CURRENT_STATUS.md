@@ -5,6 +5,19 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-09
 
+> 2026-10-09：类型 5 直接选品新增场景与性价比两阶段 AI 评估。后端保持与类型 4 相同的
+> 受控冻结召回；每个价格档的全部冻结候选按预算分批进行场景、价值和综合评分，高分候选再由
+> AI 精确选出配置数量，不再用未评估商品补数。Run 返回并展示冻结候选总数、各档数量和最终
+> AI 匹配数量。类型 4 不变；无 Migration，新增可选 Run 统计字段（ADR-0053）。首轮评分默认
+> 4 路受控并发且压缩规格/卖点，高分最终精选保留完整字段；每批记录候选数、输入长度、重试、
+> 耗时和 Token 用量。新 Run 先返回 `QUEUED`，服务端后台执行、前端每 3 秒轮询。
+>
+> 2026-10-09：修复类型 5 直接选品在 AI 处理期间短暂展示完整冻结池的问题。冻结完成后 Run
+> 继续处于 `RANKING`，候选表保持隐藏；AI 删除未入选候选、落库最终指定数量后才进入
+> `WAITING_CONFIRMATION`。冻结总数仍仅作统计展示，不能提前被勾选或全选。推荐模块 72 项、
+> Type 5 MySQL HTTP 专项 2 项、Ruff、Mypy、前端类型检查、165 项 Vitest 和生产构建通过；
+> 真实 DeepSeek 新 Run 与浏览器端到端验收待执行。
+
 > 2026-10-09：类型 1–3 已新增独立业务类型并接入各自内部引擎：类型 1/2 为逐行匹配和
 > 原表回填，类型 3 为批量推荐；创建页现可独立选择类型 1–5。首批真实模板支持中信特钢、
 > 北京烟草、光明商业和建投类目表；类型 3 无模板时使用商品大表标准导出模板。Revision

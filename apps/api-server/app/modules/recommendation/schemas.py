@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.common.contracts import PageResult
+from app.modules.recommendation.ppt_schemas import PptFrozenPoolStatistics
 from app.modules.recommendation.template.schemas import RecommendationRunStatus
 
 
@@ -122,6 +123,7 @@ class RecommendationRunResponse(BaseModel):
     raw_requirement_snapshot: str
     parsed_requirement: ParsedRequirement | None
     category_catalog_snapshot: CategoryCatalogSnapshot | None = None
+    ppt_frozen_pool_statistics: PptFrozenPoolStatistics | None = None
     provider: str | None
     model: str | None
     prompt_version: str | None

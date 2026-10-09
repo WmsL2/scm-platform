@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue"
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { Setting } from "@element-plus/icons-vue"
 import { useRoute, useRouter } from "vue-router"
@@ -36,6 +36,7 @@ const excludedCandidateIds = ref<Set<string>>(new Set())
 const selectAllCandidates = ref(false)
 const candidatePage = ref(1)
 const candidatePageSize = ref(50)
+let runPollTimer: ReturnType<typeof window.setInterval> | undefined
 const candidateColumnStorageKey = "scm.ppt-direct-candidates.visible-columns.v1"
 const selectedCandidateOptionalColumns = ref<RecommendationCandidateOptionalColumnKey[]>(restoreRecommendationCandidateOptionalColumns(localStorage.getItem(candidateColumnStorageKey)))
 const packageVisible = ref(false)
@@ -46,8 +47,10 @@ const recommendationConfig = reactive({ recommendation_mode: "SINGLE" as PptReco
 const candidates = computed(() => run.value?.candidates ?? [])
 const candidateTotal = computed(() => run.value?.candidate_page?.total ?? 0)
 const unconfirmedTotal = computed(() => run.value?.candidate_page?.unconfirmed_total ?? 0)
+const frozenPoolStatistics = computed(() => run.value?.ppt_frozen_pool_statistics ?? null)
 const confirmed = computed(() => candidates.value.filter((item) => item.confirmation))
 const selectionEditable = computed(() => project.value?.status === "SELECTING" && auth.hasPermission("recommendation:review"))
+const isRunProcessing = computed(() => ["QUEUED", "ANALYZING", "RETRIEVING", "RANKING"].includes(run.value?.status ?? ""))
 const canComplete = computed(() => selectionEditable.value && (run.value?.candidate_page?.confirmed_total ?? 0) > 0)
 const canGenerate = computed(() => Boolean(run.value && ["READY", "EXPORTED"].includes(project.value?.status ?? "") && ["CONFIRMED", "EXPORTED"].includes(run.value.status)))
 const selectedCandidateCount = computed(() => selectAllCandidates.value
@@ -64,6 +67,7 @@ function productValue(candidate: RecommendationCandidate, key: string): string {
 function candidateImageUrl(candidate: RecommendationCandidate): string | undefined { const reference = candidate.product_snapshot.image_reference; if (typeof reference !== "string" || !reference) return undefined; if (/^https?:\/\//i.test(reference)) return reference; return `${(import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")}/${reference.replace(/^\//, "")}` }
 function candidateColumnValue(candidate: RecommendationCandidate, column: RecommendationCandidateOptionalColumn): string { const value = column.key === "supplier_name" ? candidate.supplier_snapshot.supplier_name : candidate.product_snapshot[column.key] ?? candidate.price_snapshot[column.key]; if (value === null || value === undefined || value === "") return "-"; if (column.format === "money") return formatMoney(value); if (column.format === "percent") { const ratio = Number(value); return Number.isFinite(ratio) ? `${(ratio * 100).toFixed(2)}%` : String(value) }; return String(value) }
 function bandLabel(index: number): string { const band = recommendationConfig.price_bands[index]; return `${band.min_price ?? 0}–${band.max_price} 元 · AI 匹配 ${band.item_count} 件` }
+function frozenBandCount(index: number): number | null { return frozenPoolStatistics.value?.price_bands.find((item) => item.price_band_index === index + 1)?.frozen_candidate_count ?? null }
 
 async function load(): Promise<void> {
   loading.value = true
@@ -87,8 +91,19 @@ async function load(): Promise<void> {
 }
 
 async function refreshRun(): Promise<void> { if (run.value) { run.value = await recommendationApi.run(run.value.id, candidatePage.value, candidatePageSize.value); packages.value = await pptSolutionApi.packages(run.value.id) } }
+function stopRunPolling(): void { if (runPollTimer !== undefined) { window.clearInterval(runPollTimer); runPollTimer = undefined } }
+function startRunPolling(): void {
+  if (runPollTimer !== undefined) return
+  runPollTimer = window.setInterval(() => {
+    void refreshRun().catch((error: unknown) => {
+      stopRunPolling()
+      ElMessage.error(messageFor(error, "刷新 AI 匹配状态失败"))
+    })
+  }, 3000)
+}
+watch(isRunProcessing, (processing) => { if (processing) startRunPolling(); else stopRunPolling() }, { immediate: true })
 function validatePriceBands(): boolean { const errors: string[] = []; const bands = recommendationConfig.price_bands.map((band, index) => { const max = Number(band.max_price); const min = band.min_price === null || band.min_price === "" ? null : Number(band.min_price); if (!String(band.max_price).trim()) errors[index] = `第 ${index + 1} 档：最高价必填`; else if (!Number.isFinite(max) || max <= 0) errors[index] = `第 ${index + 1} 档：最高价必须大于 0`; else if (min !== null && (!Number.isFinite(min) || min < 0)) errors[index] = `第 ${index + 1} 档：最低价不能小于 0`; else if (min !== null && min > max) errors[index] = `第 ${index + 1} 档：最低价不能大于最高价`; else if (!Number.isInteger(band.item_count) || band.item_count < 1 || band.item_count > 500) errors[index] = `第 ${index + 1} 档：商品数量必须在 1 到 500 之间`; return { index, min: min ?? 0, max } }); if (!errors.length) { const ordered = [...bands].sort((left, right) => left.min - right.min); for (let index = 1; index < ordered.length; index += 1) { if (ordered[index].min <= ordered[index - 1].max) { errors[ordered[index].index] = `第 ${ordered[index].index + 1} 档：价格区间与第 ${ordered[index - 1].index + 1} 档重叠`; break } } } priceBandErrors.value = errors; return errors.length === 0 }
-async function startRun(): Promise<void> { if (!validatePriceBands()) { ElMessage.error(priceBandErrors.value.find(Boolean) ?? "请完善价格档配置"); return }; acting.value = true; try { await pptSolutionApi.saveConfig(projectId, recommendationConfig); run.value = await recommendationApi.start(projectId); candidatePage.value = 1; resetCandidateSelection(); await load(); if (run.value?.status === "FAILED") ElMessage.error(run.value.error ?? "AI 商品匹配失败"); else ElMessage.success("AI 已按各价格档匹配商品，请勾选确认") } catch (error) { ElMessage.error(messageFor(error, "生成推品失败")) } finally { acting.value = false } }
+async function startRun(): Promise<void> { if (!validatePriceBands()) { ElMessage.error(priceBandErrors.value.find(Boolean) ?? "请完善价格档配置"); return }; acting.value = true; try { await pptSolutionApi.saveConfig(projectId, recommendationConfig); run.value = await recommendationApi.start(projectId); candidatePage.value = 1; resetCandidateSelection(); await load(); if (run.value?.status === "FAILED") ElMessage.error(run.value.error ?? "AI 商品匹配失败"); else ElMessage.info("AI 正在后台按场景和性价比匹配商品，可留在此页等待结果") } catch (error) { ElMessage.error(messageFor(error, "生成推品失败")) } finally { acting.value = false } }
 function addPriceBand(): void { priceBandErrors.value = []; recommendationConfig.price_bands.push({ min_price: null, max_price: "", item_count: 10 }) }
 function removePriceBand(index: number): void { if (recommendationConfig.price_bands.length > 1) recommendationConfig.price_bands.splice(index, 1) }
 function resetCandidateSelection(): void { selectedCandidateIds.value = new Set(); excludedCandidateIds.value = new Set(); selectAllCandidates.value = false }
@@ -109,14 +124,16 @@ function isColumnSelected(key: RecommendationCandidateOptionalColumnKey): boolea
 function updateColumnSelection(key: RecommendationCandidateOptionalColumnKey, checked: unknown): void { selectedCandidateOptionalColumns.value = updateRecommendationCandidateOptionalColumns(selectedCandidateOptionalColumns.value, key, Boolean(checked)); localStorage.setItem(candidateColumnStorageKey, JSON.stringify(selectedCandidateOptionalColumns.value)) }
 async function download(task: PptGenerationTask): Promise<void> { if (!task.output_file_id) return; const blob = await pptSolutionApi.download(task.id, task.output_file_id); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `${project.value?.project_name ?? "PPT方案"}.pptx`; link.click(); URL.revokeObjectURL(link.href) }
 onMounted(() => void load())
+onBeforeUnmount(stopRunPolling)
 </script>
 
 <template>
   <div v-loading="loading" class="workspace">
-    <header><div><p>TYPE 5 · PPT SOLUTION</p><h1>{{ project?.project_name ?? "PPT 方案" }}</h1><span>{{ project?.remark }}</span></div><div class="actions"><el-button @click="router.push('/bid-projects')">返回项目</el-button><el-button v-if="!run || project?.status === 'SELECTING'" type="primary" :loading="acting" @click="startRun">{{ run ? '重新生成推品' : '生成推品' }}</el-button><el-button v-if="project?.status === 'SELECTING'" type="success" :disabled="!canComplete" :loading="acting" @click="completeSelection">完成选品</el-button><el-button v-else-if="['READY', 'EXPORTED'].includes(project?.status ?? '')" :loading="acting" @click="reopenSelection">返回调整选品</el-button></div></header>
+    <header><div><p>TYPE 5 · PPT SOLUTION</p><h1>{{ project?.project_name ?? "PPT 方案" }}</h1><span>{{ project?.remark }}</span></div><div class="actions"><el-button @click="router.push('/bid-projects')">返回项目</el-button><el-button v-if="!run || project?.status === 'SELECTING'" type="primary" :loading="acting || isRunProcessing" :disabled="isRunProcessing" @click="startRun">{{ isRunProcessing ? 'AI 匹配中' : (run ? '重新生成推品' : '生成推品') }}</el-button><el-button v-if="project?.status === 'SELECTING'" type="success" :disabled="!canComplete" :loading="acting" @click="completeSelection">完成选品</el-button><el-button v-else-if="['READY', 'EXPORTED'].includes(project?.status ?? '')" :loading="acting" @click="reopenSelection">返回调整选品</el-button></div></header>
     <el-alert v-if="run?.error" :title="run.error" type="warning" :closable="false" />
+    <el-alert v-if="run && isRunProcessing" title="AI 正在后台匹配商品" type="info" :closable="false" show-icon description="正在完成受控筛选、全量候选评分和高分商品精确选择；页面会自动刷新结果。" />
     <el-card v-if="!run || project?.status === 'SELECTING'"><template #header><div class="card-header"><strong>推品配置</strong><span class="muted">每个价格档单独填写 AI 需要匹配的商品数量。</span></div></template><el-form label-position="top" class="recommendation-config"><el-form-item label="推品方式"><el-radio-group v-model="recommendationConfig.recommendation_mode"><el-radio-button value="SINGLE">单品推品</el-radio-button><el-radio-button value="COMBINATION">组合推品</el-radio-button></el-radio-group></el-form-item><el-form-item label="价格档 / AI 匹配商品数量"><div class="price-bands"><div v-for="(band, index) in recommendationConfig.price_bands" :key="index" class="price-band"><el-input v-model="band.min_price" type="number" min="0" placeholder="最低价（可空）" /><span>至</span><el-input v-model="band.max_price" type="number" min="0.01" placeholder="最高价 *" /><el-input-number v-model="band.item_count" :min="1" :max="500" /><span>件商品</span><el-button link type="danger" :disabled="recommendationConfig.price_bands.length === 1" @click="removePriceBand(index)">删除</el-button><div v-if="priceBandErrors[index]" class="band-error">{{ priceBandErrors[index] }}</div></div><el-button @click="addPriceBand">新增价格档</el-button></div></el-form-item><el-form-item label="履约截止日"><el-date-picker v-model="recommendationConfig.fulfillment_deadline" type="date" value-format="YYYY-MM-DD" /></el-form-item><el-alert title="每个价格档按商品协议价筛选。AI 每档只匹配该档指定数量的商品，多个价格档不能重叠；匹配结果统一在下方表格中人工勾选确认。" type="info" :closable="false" /></el-form></el-card>
-    <el-card v-if="run">
+    <el-card v-if="run && !run.error && !isRunProcessing">
       <template #header>
         <div class="card-header">
           <div><strong>AI 匹配商品与人工确认</strong><span class="muted">AI 已按每档数量匹配商品；最终商品由人工勾选确认。</span></div>
@@ -131,7 +148,7 @@ onMounted(() => void load())
           </div>
         </div>
       </template>
-      <div class="band-tags"><el-tag v-for="(_, index) in recommendationConfig.price_bands" :key="index" type="success">{{ bandLabel(index) }}</el-tag><span class="muted">共匹配 {{ candidateTotal }} 件，已确认 {{ run.candidate_page?.confirmed_total ?? 0 }} 件</span></div>
+      <div class="band-tags"><el-tag v-for="(_, index) in recommendationConfig.price_bands" :key="index" type="success">{{ bandLabel(index) }}<template v-if="frozenBandCount(index) !== null"> · 冻结候选 {{ frozenBandCount(index) }} 件</template></el-tag><span class="muted">本次冻结候选池 {{ frozenPoolStatistics?.frozen_candidate_count ?? "-" }} 件；AI 最终匹配 {{ candidateTotal }} 件，已确认 {{ run.candidate_page?.confirmed_total ?? 0 }} 件</span></div>
       <el-table :data="candidates">
         <el-table-column width="52">
           <template #header><el-checkbox :model-value="pageAllSelected" :indeterminate="pagePartiallySelected" :disabled="!selectionEditable || selectableOnPage.length === 0" @change="(value: string | number | boolean) => setCurrentPageSelected(Boolean(value))" /></template>
@@ -146,8 +163,8 @@ onMounted(() => void load())
       </el-table>
       <el-pagination v-model:current-page="candidatePage" v-model:page-size="candidatePageSize" :page-sizes="[50, 100, 200]" :total="candidateTotal" layout="total, sizes, prev, pager, next, jumper" @current-change="changeCandidatePage" @size-change="changeCandidatePageSize" />
     </el-card>
-    <el-card v-if="run"><template #header><div class="card-header"><strong>单品与组合套装</strong><el-button :disabled="!selectionEditable" @click="openPackage">组成套装</el-button></div></template><el-alert title="人工确认的单品会直接生成 PPT 页；套装用于将多件商品合成一页。" type="info" :closable="false" /><div class="package-grid"><article v-for="item in packages" :key="item.id" class="package-card"><b>{{ item.name }}</b><span>{{ item.items.length }} 种商品 · 总价 {{ formatMoney(item.total_price) }}</span></article><el-empty v-if="packages.length === 0" description="暂未组成套装" /></div></el-card>
-    <el-card v-if="run"><template #header><div class="card-header"><strong>生成可编辑 PPT</strong><el-button type="primary" :disabled="!canGenerate" :loading="acting" @click="generatePpt">生成 PPT</el-button></div></template><div class="template-gallery"><button v-for="item in templates" :key="item.template_code" type="button" class="template-card" :class="{ selected: selectedTemplateCode === item.template_code }" :disabled="!item.is_available" @click="selectedTemplateCode = item.template_code"><img v-if="item.preview_url" :src="item.preview_url" :alt="`${item.name} 预览`" /><div v-else class="template-preview" :class="item.template_code.toLowerCase()">{{ item.name }}</div><b>{{ item.name }}</b><span>{{ item.description }}</span></button></div><el-table :data="generations"><el-table-column prop="created_at" label="生成时间" min-width="180" /><el-table-column label="模板" min-width="150"><template #default="{ row }">{{ generationTemplateName(row.template_code) }}</template></el-table-column><el-table-column prop="status" label="状态" width="120" /><el-table-column prop="error" label="结果说明" min-width="260" /><el-table-column label="文件" width="110"><template #default="{ row }"><el-button v-if="row.status === 'SUCCEEDED'" link type="primary" @click="download(row)">下载 PPTX</el-button></template></el-table-column></el-table></el-card>
+    <el-card v-if="run && !isRunProcessing"><template #header><div class="card-header"><strong>单品与组合套装</strong><el-button :disabled="!selectionEditable" @click="openPackage">组成套装</el-button></div></template><el-alert title="人工确认的单品会直接生成 PPT 页；套装用于将多件商品合成一页。" type="info" :closable="false" /><div class="package-grid"><article v-for="item in packages" :key="item.id" class="package-card"><b>{{ item.name }}</b><span>{{ item.items.length }} 种商品 · 总价 {{ formatMoney(item.total_price) }}</span></article><el-empty v-if="packages.length === 0" description="暂未组成套装" /></div></el-card>
+    <el-card v-if="run && !isRunProcessing"><template #header><div class="card-header"><strong>生成可编辑 PPT</strong><el-button type="primary" :disabled="!canGenerate" :loading="acting" @click="generatePpt">生成 PPT</el-button></div></template><div class="template-gallery"><button v-for="item in templates" :key="item.template_code" type="button" class="template-card" :class="{ selected: selectedTemplateCode === item.template_code }" :disabled="!item.is_available" @click="selectedTemplateCode = item.template_code"><img v-if="item.preview_url" :src="item.preview_url" :alt="`${item.name} 预览`" /><div v-else class="template-preview" :class="item.template_code.toLowerCase()">{{ item.name }}</div><b>{{ item.name }}</b><span>{{ item.description }}</span></button></div><el-table :data="generations"><el-table-column prop="created_at" label="生成时间" min-width="180" /><el-table-column label="模板" min-width="150"><template #default="{ row }">{{ generationTemplateName(row.template_code) }}</template></el-table-column><el-table-column prop="status" label="状态" width="120" /><el-table-column prop="error" label="结果说明" min-width="260" /><el-table-column label="文件" width="110"><template #default="{ row }"><el-button v-if="row.status === 'SUCCEEDED'" link type="primary" @click="download(row)">下载 PPTX</el-button></template></el-table-column></el-table></el-card>
     <el-dialog v-model="packageVisible" title="组合商品套装" width="min(720px, 94vw)"><el-form label-position="top"><el-form-item label="套装名称 *"><el-input v-model="packageForm.name" /></el-form-item><el-form-item label="价格档位"><el-input v-model="packageForm.price_tier" type="number" /></el-form-item><el-form-item label="组套说明"><el-input v-model="packageForm.reason" type="textarea" /></el-form-item><el-form-item label="选择商品及数量"><div class="quantity-list"><div v-for="item in confirmed" :key="item.id"><span>{{ productValue(item, 'product_name') }}</span><el-input-number v-model="packageForm.quantities[item.id]" :min="0" :max="9999" /></div></div></el-form-item></el-form><template #footer><el-button @click="packageVisible = false">取消</el-button><el-button type="primary" :loading="acting" @click="createPackage">保存套装</el-button></template></el-dialog>
   </div>
 </template>

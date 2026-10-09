@@ -30,6 +30,9 @@ from app.modules.recommendation.application.ppt_template_registry import (
     list_ppt_templates,
 )
 from app.modules.recommendation.application.service import RecommendationService
+from app.modules.recommendation.domain.lifecycle import (
+    ensure_transition as ensure_recommendation_transition,
+)
 from app.modules.recommendation.infrastructure.models import (
     PptGenerationTask,
     PptPlanGenerationStatus,
@@ -284,9 +287,11 @@ class PptSolutionService:
                 context_session
             ).ppt_recommendation_config_for_run(run_id)
             candidates = await context_service.repository.candidates(run_id)
+            scene_context = self._direct_selection_scene_context(run)
 
         runner = PptPlanAgentRunner(provider)
         selected_ids: list[uuid.UUID] = []
+        selected_scores: dict[uuid.UUID, int] = {}
         for band_index, band in enumerate(config.price_bands, start=1):
             permitted = runner.band_candidates(band, candidates)
             if len(permitted) < band.item_count:
@@ -295,24 +300,15 @@ class PptSolutionService:
                     f"第 {band_index} 个价格档候选商品不足，无法匹配 {band.item_count} 件商品",
                     422,
                 )
-            proposals = await runner.run_band(
+            selected = await runner.select_direct_candidates(
                 band_index,
                 band,
-                config,
                 candidates,
                 item_count=band.item_count,
-                plan_count=1,
+                scene_context=scene_context,
             )
-            proposal = proposals.plans[0]
-            key_map = runner.window_key_map(permitted)
-            selected_ids.extend(
-                self._complete_ai_plan(
-                    [key_map[key] for key in proposal.candidate_keys],
-                    permitted,
-                    band.item_count,
-                    1,
-                )
-            )
+            selected_ids.extend(item.candidate.id for item in selected)
+            selected_scores.update({item.candidate.id: item.overall_score for item in selected})
 
         if len(selected_ids) != len(set(selected_ids)):
             raise AppError(
@@ -324,7 +320,8 @@ class PptSolutionService:
         async with SessionLocal() as persist_session:
             service = PptSolutionService(persist_session)
             async with persist_session.begin():
-                if await service.repository.run_for_update(run_id) is None:
+                run_for_update = await service.repository.run_for_update(run_id)
+                if run_for_update is None:
                     raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
                 persisted = await service.repository.candidates(run_id)
                 by_id = {candidate.id: candidate for candidate in persisted}
@@ -341,10 +338,43 @@ class PptSolutionService:
                 for candidate in persisted:
                     if candidate.id in selected_order:
                         candidate.rank = selected_order[candidate.id]
+                        candidate.score = Decimal(selected_scores[candidate.id])
+                        candidate.reason = "AI 按客户场景与综合性价比排序推荐"
                     else:
                         await persist_session.delete(candidate)
                 await persist_session.flush()
+                if run_for_update.status != RecommendationRunStatus.RANKING.value:
+                    raise AppError(
+                        "PPT_DIRECT_SELECTION_STATE_INVALID",
+                        "当前类型 5 任务不处于 AI 匹配阶段"
+                        f"（当前状态：{run_for_update.status}）",
+                        409,
+                    )
+                ensure_recommendation_transition(
+                    run_for_update.status, RecommendationRunStatus.CANDIDATES_READY
+                )
+                run_for_update.status = RecommendationRunStatus.CANDIDATES_READY.value
+                ensure_recommendation_transition(
+                    run_for_update.status, RecommendationRunStatus.WAITING_CONFIRMATION
+                )
+                run_for_update.status = RecommendationRunStatus.WAITING_CONFIRMATION.value
         return len(selected_ids)
+
+    @staticmethod
+    def _direct_selection_scene_context(run: object) -> str:
+        """Keep the customer scenario available to the Type-5-only product judge."""
+        raw_requirement = str(getattr(run, "raw_requirement_snapshot", "")).strip()
+        parsed_requirement = getattr(run, "parsed_requirement", None)
+        parsed_text = ""
+        if isinstance(parsed_requirement, dict):
+            scenario_values = parsed_requirement.get("scenarios") or parsed_requirement.get(
+                "scenario_keywords"
+            )
+            if isinstance(scenario_values, list):
+                parsed_text = "；解析场景：" + "、".join(
+                    str(value).strip() for value in scenario_values if str(value).strip()
+                )
+        return f"客户原始需求：{raw_requirement[:3000]}{parsed_text}"[:3600]
 
     async def _persist_ai_band(
         self,

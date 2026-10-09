@@ -26,7 +26,6 @@ from app.modules.bid.infrastructure.models import BidProject, BidProjectEvent
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.recommendation.application.agent_schemas import RequirementAnalysis
-from app.modules.recommendation.application.ppt_plan_runner import PptPlanAgentRunner
 from app.modules.recommendation.infrastructure.models import (
     PptPlanGenerationStatus,
     PptRecommendationConfig,
@@ -37,6 +36,9 @@ from app.modules.recommendation.infrastructure.models import (
     RecommendationRun,
 )
 from app.modules.recommendation.ppt_schemas import (
+    PptCandidateAssessment,
+    PptCandidateAssessmentList,
+    PptDirectSelectionProposal,
     PptFrozenRecommendationConfig,
     PptPlanProposal,
     PptPlanProposalList,
@@ -84,6 +86,25 @@ class MockProvider:
         payload = json.loads(str(kwargs["user_prompt"]))
         assert isinstance(payload, dict)
         self.plan_payloads.append(payload)
+        if response_model is PptCandidateAssessmentList:
+            return PptCandidateAssessmentList(
+                assessments=[
+                    PptCandidateAssessment(
+                        candidate_key=str(item["id"]),
+                        scene_score=90,
+                        value_score=80,
+                        overall_score=85,
+                    )
+                    for item in payload["candidates"]
+                ]
+            )
+        if response_model is PptDirectSelectionProposal:
+            return PptDirectSelectionProposal(
+                candidate_keys=[
+                    str(item["id"])
+                    for item in payload["candidates"][: int(payload["required_item_count"])]
+                ]
+            )
         band = int(payload["price_band_index"])
         if self.gate_band == band:
             type(self).gate_calls += 1
@@ -490,6 +511,9 @@ async def test_type5_http_direct_candidates_use_each_band_requested_quantity(
             assert response.status_code == 200, response.text
             run_id = uuid.UUID(response.json()["data"]["id"])
         async with SessionLocal() as session:
+            run = await session.get(RecommendationRun, run_id)
+            assert run is not None
+            assert run.status == "WAITING_CONFIRMATION", run.error
             candidates = list(
                 (
                     await session.scalars(
@@ -513,21 +537,35 @@ async def test_type5_http_direct_candidates_use_each_band_requested_quantity(
                 else None
             )
             assert frozen_config is not None
-            config = PptFrozenRecommendationConfig.model_validate(frozen_config)
-            permitted = PptPlanAgentRunner(MockProvider()).band_candidates(
-                config.price_bands[0], candidates
-            )
-            core_id = PptPlanAgentRunner(MockProvider()).window_key_map(permitted)["c1"].id
+            PptFrozenRecommendationConfig.model_validate(frozen_config)
             assert any(
-                payload["candidates"][0]["id"] == "c1" for payload in MockProvider.plan_payloads
+                payload.get("stage") == "scene_value_assessment"
+                and payload["candidates"][0]["id"] == "c1"
+                for payload in MockProvider.plan_payloads
             )
-            assert candidates[0].id == core_id
-            assert core_id in by_id
+            assert all(item.score == Decimal("85") for item in candidates)
+            assert all(item.reason == "AI 按客户场景与综合性价比排序推荐" for item in candidates)
             assert extra_ids[0] not in by_id
             assert extra_ids[1] not in by_id
             assert await session.scalar(
                 select(PptSolutionPlan.id).where(PptSolutionPlan.run_id == run_id)
             ) is None
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            run_response = await client.get(
+                f"/api/v1/recommendation-projects/runs/{run_id}", headers=headers
+            )
+            assert run_response.status_code == 200
+            statistics = run_response.json()["data"]["ppt_frozen_pool_statistics"]
+            assert statistics["frozen_candidate_count"] >= 500
+            assert statistics["price_bands"] == [
+                {
+                    "price_band_index": 1,
+                    "min_price": "910000",
+                    "max_price": "911000",
+                    "frozen_candidate_count": 500,
+                    "requested_item_count": 500,
+                }
+            ]
     finally:
         await _cleanup(
             project_id=project_id,

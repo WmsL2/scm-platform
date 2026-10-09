@@ -32,7 +32,11 @@ from app.modules.recommendation.infrastructure.models import (
     RecommendationRun,
 )
 from app.modules.recommendation.infrastructure.ppt_repository import PptSolutionRepository
-from app.modules.recommendation.ppt_schemas import PptFrozenRecommendationConfig
+from app.modules.recommendation.ppt_schemas import (
+    PptFrozenPoolPriceBandStatistics,
+    PptFrozenPoolStatistics,
+    PptFrozenRecommendationConfig,
+)
 from app.modules.recommendation.schemas import (
     CategoryCatalogItem,
     CategoryCatalogSnapshot,
@@ -206,7 +210,7 @@ class PptCatalogService:
                 raise AppError(
                     "PPT_RECOMMENDATION_CANDIDATES_ALREADY_PERSISTED", "类型 5 候选已冻结", 409
                 )
-            await self.config_for_run(run.id)
+            config = await self.config_for_run(run.id)
             choices = await self.repository.category_choices(run.id)
             requirement = self._parsed_requirement(run)
             if requirement.explicit_category_keywords and not choices:
@@ -232,15 +236,53 @@ class PptCatalogService:
                     for rank, (product, supplier) in enumerate(rows, 1)
                 ]
             )
-            self._transition(run, RecommendationRunStatus.CANDIDATES_READY)
-            self._transition(run, RecommendationRunStatus.WAITING_CONFIRMATION)
+            pool_statistics = PptFrozenPoolStatistics(
+                frozen_candidate_count=len(rows),
+                price_bands=[
+                    PptFrozenPoolPriceBandStatistics(
+                        price_band_index=index,
+                        min_price=band.min_price,
+                        max_price=band.max_price,
+                        frozen_candidate_count=sum(
+                            1
+                            for product, _supplier in rows
+                            if self._matches_price_band(
+                                product.agreement_price, band.min_price, band.max_price
+                            )
+                        ),
+                        requested_item_count=band.item_count,
+                    )
+                    for index, band in enumerate(config.price_bands, start=1)
+                ],
+            )
+            run.ppt_config_snapshot = config.model_copy(
+                update={"frozen_pool_statistics": pool_statistics}
+            ).model_dump(mode="json")
+            direct_selection = (
+                isinstance(run.ppt_config_snapshot, dict)
+                and run.ppt_config_snapshot.get("selection_mode") == "DIRECT"
+            )
             project = self._ensure_ppt_project(
                 await self.repository.project_for_update(run.project_id)
             )
             self._set_project_status(
                 project, BidProjectStatus.SELECTING, run.created_by, "PPT_RECOMMENDATION_POOL_READY"
             )
+            # Direct selection must not expose the frozen pool as a human-selectable
+            # result while the AI is still scoring it. Historical multi-plan Runs
+            # retain their original ready-for-selection timing.
+            if direct_selection:
+                self._transition(run, RecommendationRunStatus.RANKING)
+            else:
+                self._transition(run, RecommendationRunStatus.CANDIDATES_READY)
+                self._transition(run, RecommendationRunStatus.WAITING_CONFIRMATION)
         return len(rows)
+
+    @staticmethod
+    def _matches_price_band(
+        price: Decimal | None, minimum: Decimal | None, maximum: Decimal
+    ) -> bool:
+        return price is not None and price <= maximum and (minimum is None or price >= minimum)
 
     async def mark_needs_input(self, run_id: uuid.UUID, error: str) -> None:
         await self._mark_terminal(
@@ -258,9 +300,14 @@ class PptCatalogService:
         )
 
     async def record_plan_failure(self, run_id: uuid.UUID, error: str) -> None:
-        """Keep the frozen pool selectable when only AI plan composition fails."""
+        """Record a safe Type-5 composition failure without exposing direct pool rows."""
         async with transaction_scope(self.session):
             run = await self._run_or_404_for_update(run_id)
+            if run.status == RecommendationRunStatus.RANKING.value:
+                self._transition(run, RecommendationRunStatus.FAILED)
+                run.error = error.strip()[:4000] or "类型 5 AI 商品匹配失败"
+                await self._restore_project(run, "PPT_DIRECT_SELECTION_FAILED")
+                return
             if run.status not in {
                 RecommendationRunStatus.CANDIDATES_READY.value,
                 RecommendationRunStatus.WAITING_CONFIRMATION.value,

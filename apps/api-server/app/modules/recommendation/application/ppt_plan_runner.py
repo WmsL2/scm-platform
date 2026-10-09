@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections import defaultdict, deque
+from collections.abc import Sequence
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from time import perf_counter
 
 from app.core.config import Settings, get_settings
 from app.integrations.deepseek.client import (
     DeepSeekConfigurationError,
+    DeepSeekRequestTelemetry,
     DeepSeekStructuredOutputError,
+    capture_deepseek_request_telemetry,
 )
 from app.modules.recommendation.application.agent_runner import (
     RecommendationAgentContractError,
@@ -18,6 +24,9 @@ from app.modules.recommendation.application.agent_runner import (
 )
 from app.modules.recommendation.infrastructure.models import RecommendationCandidate
 from app.modules.recommendation.ppt_schemas import (
+    PptCandidateAssessment,
+    PptCandidateAssessmentList,
+    PptDirectSelectionProposal,
     PptFrozenRecommendationConfig,
     PptPlanProposalList,
     PptPriceBandInput,
@@ -26,12 +35,19 @@ from app.modules.recommendation.ppt_schemas import (
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class PptDirectSelectedCandidate:
+    candidate: RecommendationCandidate
+    overall_score: int
+
+
 class PptPlanAgentRunner:
-    """Let AI choose seeds from a bounded window; never transmit real UUIDs.
+    """Run Type-5 selection through bounded short-ID model requests.
 
     Character/token conversion deliberately overestimates (four characters per
     token) because no provider tokenizer is available in the local-first runtime.
-    The complete pool remains frozen in MySQL and fills the remaining positions.
+    The complete pool remains frozen in MySQL; direct selection never fills a
+    result with a candidate the AI did not assess.
     """
 
     MAX_PROVIDER_ATTEMPTS = 2
@@ -118,6 +134,427 @@ class PptPlanAgentRunner:
                 )
                 continue
         raise RecommendationAgentContractError("类型 5 AI 未返回可用方案")
+
+    async def select_direct_candidates(
+        self,
+        index: int,
+        band: PptPriceBandInput,
+        candidates: list[RecommendationCandidate],
+        *,
+        item_count: int,
+        scene_context: str,
+    ) -> list[PptDirectSelectedCandidate]:
+        """Score every frozen candidate before selecting one exact direct-result list.
+
+        A complete frozen price-band pool can be much larger than one provider request.
+        Every candidate is therefore sent once in a bounded assessment batch.  A final
+        selection call refines the highest-scoring subset when that subset fits the
+        configured input budget; otherwise the complete AI assessment ranking is the
+        final selection.  The server never fills direct results with unassessed items.
+        """
+        permitted = self.band_candidates(band, candidates)
+        if len(permitted) < item_count:
+            raise RecommendationAgentContractError("价格档冻结候选不足，无法生成指定数量商品")
+        key_map = self._direct_key_map(permitted)
+        # First-pass rows intentionally keep lengthy specification and selling-point
+        # text compact. Every frozen candidate still receives a model assessment.
+        rows = [self._assessment_row(key, candidate) for key, candidate in key_map.items()]
+        batches = self._assessment_batches(rows)
+        semaphore = asyncio.Semaphore(self.settings.ppt_ai_assessment_concurrency)
+
+        async def assess(
+            batch_no: int, batch: list[dict[str, object]]
+        ) -> PptCandidateAssessmentList:
+            async with semaphore:
+                return await self._assess_batch(
+                    index=index,
+                    batch_no=batch_no,
+                    scene_context=scene_context,
+                    rows=batch,
+                )
+
+        results = await asyncio.gather(
+            *(assess(batch_no, batch) for batch_no, batch in enumerate(batches, start=1))
+        )
+        assessments = {
+            item.candidate_key: item for result in results for item in result.assessments
+        }
+
+        if set(assessments) != set(key_map):
+            raise RecommendationAgentContractError("类型 5 AI 未完成全部冻结候选的评分")
+        ranked_keys = sorted(
+            assessments,
+            key=lambda key: (
+                -assessments[key].overall_score,
+                -assessments[key].scene_score,
+                -assessments[key].value_score,
+                key_map[key].rank,
+            ),
+        )
+        finalists = self._finalist_rows(ranked_keys, key_map, assessments, item_count)
+        if len(finalists) >= item_count:
+            proposal = await self._select_finalists(
+                index=index,
+                item_count=item_count,
+                scene_context=scene_context,
+                finalists=finalists,
+            )
+            selected_keys = proposal.candidate_keys
+        else:
+            # The final comparison itself cannot fit the safe input budget.  Every
+            # candidate was still AI-assessed, so preserve the score order rather
+            # than silently introducing a deterministic filler product.
+            logger.warning(
+                "type5 final selection fallback band=%s requested=%s finalists=%s "
+                "reason=input_budget",
+                index,
+                item_count,
+                len(finalists),
+            )
+            selected_keys = ranked_keys[:item_count]
+
+        if len(selected_keys) != item_count or len(selected_keys) != len(set(selected_keys)):
+            raise RecommendationAgentContractError("类型 5 AI 未按要求返回精确且不重复的商品数量")
+        if any(key not in key_map for key in selected_keys):
+            raise RecommendationAgentContractError("类型 5 AI 返回了清单外商品")
+        return [
+            PptDirectSelectedCandidate(
+                candidate=key_map[key], overall_score=assessments[key].overall_score
+            )
+            for key in selected_keys
+        ]
+
+    async def _assess_batch(
+        self,
+        *,
+        index: int,
+        batch_no: int,
+        scene_context: str,
+        rows: list[dict[str, object]],
+    ) -> PptCandidateAssessmentList:
+        payload = json.dumps(
+            {
+                "stage": "scene_value_assessment",
+                "price_band_index": index,
+                "batch_no": batch_no,
+                "scene_context": scene_context,
+                "candidates": rows,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        retry_note = ""
+        expected_keys = {str(row["id"]) for row in rows}
+        input_characters = len(payload)
+        for attempt in range(self.MAX_PROVIDER_ATTEMPTS):
+            telemetry = DeepSeekRequestTelemetry(
+                label=f"type5_scene_value:band={index}:batch={batch_no}:attempt={attempt + 1}"
+            )
+            started = perf_counter()
+            try:
+                with capture_deepseek_request_telemetry(telemetry):
+                    result = await self.provider.structured_completion(
+                        system_prompt=(
+                            "你是类型 5 商品场景与性价比评估助手。"
+                            "只评估 candidates 中服务端给出的短编号。"
+                            "必须为每一件候选商品返回一次评估，不能遗漏、重复或生成清单外编号。"
+                            "scene_score 衡量其与客户场景、用途、明确类目和品牌要求的匹配程度；"
+                            "value_score 衡量同类商品的规格、卖点、品牌、协议价、京东价、"
+                            "折扣率、销量和好评率"
+                            "所体现的综合性价比。不能把最低价格或最高折扣机械等同于高性价比。"
+                            "overall_score 由你综合前两项自主判断。"
+                            "只能依据输入商品信息，不得编造质量、库存或外部评价。"
+                            "严格返回 JSON。"
+                        ),
+                        user_prompt=f"{payload}{retry_note}",
+                        response_model=PptCandidateAssessmentList,
+                        max_tokens=min(
+                            self.settings.ppt_ai_output_token_budget,
+                            self.settings.deepseek_max_tokens,
+                        ),
+                    )
+                self._validate_assessments(result, expected_keys)
+                self._log_batch_telemetry(
+                    index=index,
+                    batch_no=batch_no,
+                    candidate_count=len(rows),
+                    input_characters=input_characters,
+                    retry_count=attempt,
+                    elapsed_ms=round((perf_counter() - started) * 1000),
+                    telemetry=telemetry,
+                    outcome="succeeded",
+                )
+                return result
+            except DeepSeekConfigurationError:
+                raise
+            except (DeepSeekStructuredOutputError, RecommendationAgentContractError) as exc:
+                self._log_batch_telemetry(
+                    index=index,
+                    batch_no=batch_no,
+                    candidate_count=len(rows),
+                    input_characters=input_characters,
+                    retry_count=attempt,
+                    elapsed_ms=round((perf_counter() - started) * 1000),
+                    telemetry=telemetry,
+                    outcome=f"failed:{type(exc).__name__}",
+                )
+                if attempt + 1 == self.MAX_PROVIDER_ATTEMPTS:
+                    raise
+                detail = (
+                    exc.safe_validation_summary
+                    if isinstance(exc, DeepSeekStructuredOutputError)
+                    else str(exc)
+                )
+                logger.warning(
+                    "ppt scene-value assessment retry band=%s batch=%s validation=%s",
+                    index,
+                    batch_no,
+                    detail,
+                )
+                retry_note = f"\n上一次输出无效。请仅返回完整合法 JSON；脱敏错误：{detail}"
+        raise RecommendationAgentContractError("类型 5 AI 未返回完整商品评分")
+
+    async def _select_finalists(
+        self,
+        *,
+        index: int,
+        item_count: int,
+        scene_context: str,
+        finalists: list[dict[str, object]],
+    ) -> PptDirectSelectionProposal:
+        payload = json.dumps(
+            {
+                "stage": "final_direct_selection",
+                "price_band_index": index,
+                "required_item_count": item_count,
+                "scene_context": scene_context,
+                "candidates": finalists,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        retry_note = ""
+        allowed_keys = {str(row["id"]) for row in finalists}
+        for attempt in range(self.MAX_PROVIDER_ATTEMPTS):
+            telemetry = DeepSeekRequestTelemetry(
+                label=f"type5_final_selection:band={index}:attempt={attempt + 1}"
+            )
+            started = perf_counter()
+            try:
+                with capture_deepseek_request_telemetry(telemetry):
+                    result = await self.provider.structured_completion(
+                        system_prompt=(
+                            "你是类型 5 最终商品选择助手。根据客户场景和候选中的初评得分，"
+                            "从 candidates 返回恰好 required_item_count 件最相关、"
+                            "综合性价比最高的商品。"
+                            "优先场景适配，再综合规格卖点、品牌和价格价值；"
+                            "不能把最低价格或最高折扣机械等同于性价比。"
+                            "只能返回服务端给出的短编号，不能重复、遗漏数量或生成清单外商品。"
+                            "严格返回 JSON。"
+                        ),
+                        user_prompt=f"{payload}{retry_note}",
+                        response_model=PptDirectSelectionProposal,
+                        max_tokens=min(
+                            self.settings.ppt_ai_output_token_budget,
+                            self.settings.deepseek_max_tokens,
+                        ),
+                    )
+                if len(result.candidate_keys) != item_count:
+                    raise RecommendationAgentContractError("类型 5 AI 未返回指定数量的最终商品")
+                if any(key not in allowed_keys for key in result.candidate_keys):
+                    raise RecommendationAgentContractError("类型 5 AI 返回了清单外商品")
+                logger.info(
+                    "type5 final selection band=%s finalists=%s input_chars=%s retry_count=%s "
+                    "elapsed_ms=%s provider_elapsed_ms=%s prompt_tokens=%s completion_tokens=%s "
+                    "total_tokens=%s outcome=succeeded",
+                    index,
+                    len(finalists),
+                    len(payload),
+                    attempt,
+                    round((perf_counter() - started) * 1000),
+                    telemetry.provider_duration_ms,
+                    telemetry.prompt_tokens,
+                    telemetry.completion_tokens,
+                    telemetry.total_tokens,
+                )
+                return result
+            except DeepSeekConfigurationError:
+                raise
+            except (DeepSeekStructuredOutputError, RecommendationAgentContractError) as exc:
+                logger.warning(
+                    "type5 final selection band=%s finalists=%s input_chars=%s retry_count=%s "
+                    "elapsed_ms=%s provider_elapsed_ms=%s prompt_tokens=%s completion_tokens=%s "
+                    "total_tokens=%s outcome=failed:%s",
+                    index,
+                    len(finalists),
+                    len(payload),
+                    attempt,
+                    round((perf_counter() - started) * 1000),
+                    telemetry.provider_duration_ms,
+                    telemetry.prompt_tokens,
+                    telemetry.completion_tokens,
+                    telemetry.total_tokens,
+                    type(exc).__name__,
+                )
+                if attempt + 1 == self.MAX_PROVIDER_ATTEMPTS:
+                    raise
+                detail = (
+                    exc.safe_validation_summary
+                    if isinstance(exc, DeepSeekStructuredOutputError)
+                    else str(exc)
+                )
+                logger.warning(
+                    "ppt final direct selection retry band=%s validation=%s", index, detail
+                )
+                retry_note = f"\n上一次输出无效。请仅返回完整合法 JSON；脱敏错误：{detail}"
+        raise RecommendationAgentContractError("类型 5 AI 未返回最终商品选择")
+
+    @staticmethod
+    def _validate_assessments(
+        result: PptCandidateAssessmentList, expected_keys: set[str]
+    ) -> None:
+        keys = [item.candidate_key for item in result.assessments]
+        if len(keys) != len(set(keys)) or set(keys) != expected_keys:
+            raise RecommendationAgentContractError("类型 5 AI 商品评分未覆盖完整候选批次")
+
+    @staticmethod
+    def _direct_key_map(
+        candidates: Sequence[RecommendationCandidate],
+    ) -> dict[str, RecommendationCandidate]:
+        buckets: dict[tuple[str, str], deque[RecommendationCandidate]] = defaultdict(deque)
+        for candidate in candidates:
+            product = candidate.product_snapshot
+            buckets[
+                (str(product.get("category_level3_name") or ""), str(product.get("brand") or ""))
+            ].append(candidate)
+        ordered = deque(sorted(buckets))
+        selected: list[RecommendationCandidate] = []
+        while ordered:
+            bucket = ordered.popleft()
+            selected.append(buckets[bucket].popleft())
+            if buckets[bucket]:
+                ordered.append(bucket)
+        return {f"c{index}": candidate for index, candidate in enumerate(selected, 1)}
+
+    def _assessment_batches(self, rows: list[dict[str, object]]) -> list[list[dict[str, object]]]:
+        max_chars = max(4000, int(self.settings.ppt_ai_input_token_budget * 4 * 0.40))
+        batches: list[list[dict[str, object]]] = []
+        current: list[dict[str, object]] = []
+        current_size = 2
+        for row in rows:
+            row_size = len(json.dumps(row, ensure_ascii=False, separators=(",", ":"))) + 1
+            if current and (len(current) >= 80 or current_size + row_size > max_chars):
+                batches.append(current)
+                current, current_size = [], 2
+            current.append(row)
+            current_size += row_size
+        if current:
+            batches.append(current)
+        return batches
+
+    def _finalist_rows(
+        self,
+        ranked_keys: list[str],
+        key_map: dict[str, RecommendationCandidate],
+        assessments: dict[str, PptCandidateAssessment],
+        item_count: int,
+    ) -> list[dict[str, object]]:
+        desired_count = min(len(ranked_keys), max(item_count * 3, 80))
+        max_chars = max(4000, int(self.settings.ppt_ai_input_token_budget * 4 * 0.45))
+        finalists: list[dict[str, object]] = []
+        current_size = 2
+        for key in ranked_keys[:desired_count]:
+            row = self._finalist_row(key, key_map[key], assessments[key])
+            row_size = len(json.dumps(row, ensure_ascii=False, separators=(",", ":"))) + 1
+            if finalists and current_size + row_size > max_chars:
+                break
+            finalists.append(row)
+            current_size += row_size
+        return finalists
+
+    @staticmethod
+    def _assessment_row(key: str, candidate: RecommendationCandidate) -> dict[str, object]:
+        """Compact first-pass evidence so full-pool scoring can be parallelized safely."""
+        product = candidate.product_snapshot
+        price = candidate.price_snapshot
+        return {
+            "id": key,
+            "name": PptPlanAgentRunner._short_text(product.get("product_name"), 100),
+            "brand": PptPlanAgentRunner._short_text(product.get("brand"), 48),
+            "model": PptPlanAgentRunner._short_text(product.get("model"), 64),
+            "category": PptPlanAgentRunner._short_text(product.get("category_level3_name"), 64),
+            "specification": PptPlanAgentRunner._short_text(
+                product.get("product_specification"), 60
+            ),
+            "selling_points": PptPlanAgentRunner._short_text(product.get("selling_points"), 72),
+            "agreement_price": price.get("agreement_price"),
+            "jd_price": price.get("jd_price"),
+            "discount_rate": price.get("discount_rate"),
+            "sales_volume": product.get("sales_volume"),
+            "positive_rating": price.get("positive_rating"),
+        }
+
+    @staticmethod
+    def _finalist_row(
+        key: str, candidate: RecommendationCandidate, assessment: PptCandidateAssessment
+    ) -> dict[str, object]:
+        # Finalists are few, so retain their complete relevant product evidence.
+        product = candidate.product_snapshot
+        price = candidate.price_snapshot
+        row: dict[str, object] = {
+            "id": key,
+            "name": product.get("product_name"),
+            "brand": product.get("brand"),
+            "model": product.get("model"),
+            "category": product.get("category_level3_name"),
+            "specification": product.get("product_specification"),
+            "selling_points": product.get("selling_points"),
+            "agreement_price": price.get("agreement_price"),
+            "jd_price": price.get("jd_price"),
+            "discount_rate": price.get("discount_rate"),
+            "sales_volume": product.get("sales_volume"),
+            "positive_rating": price.get("positive_rating"),
+        }
+        row["assessment"] = {
+            "scene_score": assessment.scene_score,
+            "value_score": assessment.value_score,
+            "overall_score": assessment.overall_score,
+        }
+        return row
+
+    @staticmethod
+    def _log_batch_telemetry(
+        *,
+        index: int,
+        batch_no: int,
+        candidate_count: int,
+        input_characters: int,
+        retry_count: int,
+        elapsed_ms: int,
+        telemetry: DeepSeekRequestTelemetry,
+        outcome: str,
+    ) -> None:
+        logger.info(
+            "type5 scene-value batch band=%s batch=%s candidates=%s input_chars=%s "
+            "retry_count=%s elapsed_ms=%s provider_elapsed_ms=%s prompt_tokens=%s "
+            "completion_tokens=%s total_tokens=%s outcome=%s",
+            index,
+            batch_no,
+            candidate_count,
+            input_characters,
+            retry_count,
+            elapsed_ms,
+            telemetry.provider_duration_ms,
+            telemetry.prompt_tokens,
+            telemetry.completion_tokens,
+            telemetry.total_tokens,
+            outcome,
+        )
+
+    @staticmethod
+    def _short_text(value: object, max_length: int) -> str | None:
+        text = str(value).strip() if value is not None else ""
+        return text[:max_length] if text else None
 
     @staticmethod
     def _validate_provider_result(
