@@ -91,13 +91,16 @@ class PptSolutionService:
                 raise AppError("PPT_CONFIG_NOT_EDITABLE", "当前项目状态不能调整推品配置", 409)
             config = await self.repository.config(project_id, lock=True)
             values = [item.model_dump(mode="json") for item in payload.price_bands]
+            # The two old columns remain for historic rows and schema compatibility.
+            # New Type-5 behaviour reads the explicit quantity on every price band.
+            legacy_item_count = max(item.item_count for item in payload.price_bands)
             if config is None:
                 config = PptRecommendationConfig(
                     project_id=project_id,
                     recommendation_mode=payload.recommendation_mode.value,
                     price_bands=values,
-                    candidate_count_per_band=payload.candidate_count_per_band,
-                    plan_count_per_band=payload.plan_count_per_band,
+                    candidate_count_per_band=legacy_item_count,
+                    plan_count_per_band=1,
                     fulfillment_deadline=payload.fulfillment_deadline,
                     created_by=actor_id,
                     updated_by=actor_id,
@@ -106,8 +109,8 @@ class PptSolutionService:
             else:
                 config.recommendation_mode = payload.recommendation_mode.value
                 config.price_bands = values
-                config.candidate_count_per_band = payload.candidate_count_per_band
-                config.plan_count_per_band = payload.plan_count_per_band
+                config.candidate_count_per_band = legacy_item_count
+                config.plan_count_per_band = 1
                 config.fulfillment_deadline = payload.fulfillment_deadline
                 config.updated_by = actor_id
             await self.session.flush()
@@ -257,6 +260,86 @@ class PptSolutionService:
             )
         async with SessionLocal() as result_session:
             return await PptSolutionService(result_session).list_plans(run_id)
+
+    async def retain_ai_matched_candidates(
+        self, run_id: uuid.UUID, provider: StructuredProvider
+    ) -> int:
+        """Keep one exact AI-matched product list per configured price band.
+
+        The former Type-5 flow persisted several alternative plan cards.  Direct
+        selection keeps just the one AI-selected list for each band, so the normal
+        candidate confirmation table can be reused without a plan-choice step.
+        """
+        async with SessionLocal() as context_session:
+            context_service = PptSolutionService(context_session)
+            run = await context_service.repository.run(run_id)
+            if run is None:
+                raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
+            config = await RecommendationService(
+                context_session
+            ).ppt_recommendation_config_for_run(run_id)
+            candidates = await context_service.repository.candidates(run_id)
+
+        runner = PptPlanAgentRunner(provider)
+        selected_ids: list[uuid.UUID] = []
+        for band_index, band in enumerate(config.price_bands, start=1):
+            permitted = runner.band_candidates(band, candidates)
+            if len(permitted) < band.item_count:
+                raise AppError(
+                    "PPT_DIRECT_SELECTION_POOL_INSUFFICIENT",
+                    f"第 {band_index} 个价格档候选商品不足，无法匹配 {band.item_count} 件商品",
+                    422,
+                )
+            proposals = await runner.run_band(
+                band_index,
+                band,
+                config,
+                candidates,
+                item_count=band.item_count,
+                plan_count=1,
+            )
+            proposal = proposals.plans[0]
+            key_map = runner.window_key_map(permitted)
+            selected_ids.extend(
+                self._complete_ai_plan(
+                    [key_map[key] for key in proposal.candidate_keys],
+                    permitted,
+                    band.item_count,
+                    1,
+                )
+            )
+
+        if len(selected_ids) != len(set(selected_ids)):
+            raise AppError(
+                "PPT_DIRECT_SELECTION_BAND_OVERLAP",
+                "价格档商品存在重叠，无法生成唯一的直接选品清单",
+                422,
+            )
+
+        async with SessionLocal() as persist_session:
+            service = PptSolutionService(persist_session)
+            async with persist_session.begin():
+                if await service.repository.run_for_update(run_id) is None:
+                    raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
+                persisted = await service.repository.candidates(run_id)
+                by_id = {candidate.id: candidate for candidate in persisted}
+                if any(candidate_id not in by_id for candidate_id in selected_ids):
+                    raise AppError(
+                        "PPT_DIRECT_SELECTION_CANDIDATE_INVALID",
+                        "AI 返回的商品不在冻结候选池中",
+                        422,
+                    )
+                selected_order = {
+                    candidate_id: index
+                    for index, candidate_id in enumerate(selected_ids, 1)
+                }
+                for candidate in persisted:
+                    if candidate.id in selected_order:
+                        candidate.rank = selected_order[candidate.id]
+                    else:
+                        await persist_session.delete(candidate)
+                await persist_session.flush()
+        return len(selected_ids)
 
     async def _persist_ai_band(
         self,
@@ -935,14 +1018,21 @@ class PptSolutionService:
 
     @staticmethod
     def _config_response(config: PptRecommendationConfig) -> PptRecommendationConfigResponse:
-        return PptRecommendationConfigResponse.model_validate(
+        frozen = PptFrozenRecommendationConfig.model_validate(
             {
-                "project_id": config.project_id,
                 "recommendation_mode": config.recommendation_mode,
                 "price_bands": config.price_bands,
                 "candidate_count_per_band": config.candidate_count_per_band,
                 "plan_count_per_band": config.plan_count_per_band,
                 "fulfillment_deadline": config.fulfillment_deadline,
+            }
+        )
+        return PptRecommendationConfigResponse.model_validate(
+            {
+                "project_id": config.project_id,
+                "recommendation_mode": frozen.recommendation_mode,
+                "price_bands": [item.model_dump(mode="json") for item in frozen.price_bands],
+                "fulfillment_deadline": frozen.fulfillment_deadline,
                 "created_at": config.created_at,
                 "updated_at": config.updated_at,
             }

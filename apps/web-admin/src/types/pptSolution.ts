@@ -1,12 +1,10 @@
 export type PptGenerationStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED"
 export type PptRecommendationMode = "SINGLE" | "COMBINATION" | "MIXED"
-export interface PptPriceBand { min_price: string | null; max_price: string }
+export interface PptPriceBand { min_price: string | null; max_price: string; item_count: number }
 export interface PptRecommendationConfig {
   project_id: string
   recommendation_mode: PptRecommendationMode
   price_bands: PptPriceBand[]
-  candidate_count_per_band: number
-  plan_count_per_band: number
   fulfillment_deadline: string | null
   created_at: string
   updated_at: string

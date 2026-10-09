@@ -141,7 +141,7 @@ async def _user() -> tuple[uuid.UUID, uuid.UUID, dict[str, str]]:
 
 
 async def _fixture(
-    actor_id: uuid.UUID, *, quantities: int, bands: list[dict[str, str]]
+    actor_id: uuid.UUID, *, quantities: int, bands: list[dict[str, object]]
 ) -> tuple[uuid.UUID, uuid.UUID, list[uuid.UUID]]:
     token = uuid.uuid4().hex
     project_id, supplier_id = uuid.uuid4(), uuid.uuid4()
@@ -443,14 +443,16 @@ async def test_type5_http_partial_failure_retry_snapshot_and_concurrency(
 
 
 @pytest.mark.asyncio
-async def test_type5_http_five_hundred_item_plan_uses_real_frozen_candidates(
+async def test_type5_http_direct_candidates_use_each_band_requested_quantity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(recommendation_agent, "DeepSeekClient", MockProvider)
     MockProvider.reset()
     user_id, role_id, headers = await _user()
     project_id, supplier_id, product_ids = await _fixture(
-        user_id, quantities=500, bands=[{"min_price": "910000", "max_price": "911000"}]
+        user_id,
+        quantities=500,
+        bands=[{"min_price": "910000", "max_price": "911000", "item_count": 500}],
     )
     try:
         extra_ids = [uuid.uuid4(), uuid.uuid4()]
@@ -488,11 +490,6 @@ async def test_type5_http_five_hundred_item_plan_uses_real_frozen_candidates(
             assert response.status_code == 200, response.text
             run_id = uuid.UUID(response.json()["data"]["id"])
         async with SessionLocal() as session:
-            plan = await session.scalar(
-                select(PptSolutionPlan).where(PptSolutionPlan.run_id == run_id)
-            )
-            assert plan is not None and len(plan.candidate_ids) == 500
-            assert len(set(plan.candidate_ids)) == 500
             candidates = list(
                 (
                     await session.scalars(
@@ -503,12 +500,12 @@ async def test_type5_http_five_hundred_item_plan_uses_real_frozen_candidates(
                 ).all()
             )
             by_id = {item.id: item for item in candidates}
-            assert {uuid.UUID(value) for value in plan.candidate_ids}.issubset(set(by_id))
+            assert len(candidates) == 500
             assert all(
                 Decimal("910000")
-                <= Decimal(str(by_id[uuid.UUID(item)].price_snapshot["agreement_price"]))
+                <= Decimal(str(item.price_snapshot["agreement_price"]))
                 <= Decimal("911000")
-                for item in plan.candidate_ids
+                for item in candidates
             )
             frozen_config = (
                 run.ppt_config_snapshot
@@ -524,10 +521,13 @@ async def test_type5_http_five_hundred_item_plan_uses_real_frozen_candidates(
             assert any(
                 payload["candidates"][0]["id"] == "c1" for payload in MockProvider.plan_payloads
             )
-            assert plan.candidate_ids[0] == str(core_id)
-            assert str(core_id) in plan.candidate_ids
-            assert str(extra_ids[0]) not in plan.candidate_ids
-            assert str(extra_ids[1]) not in plan.candidate_ids
+            assert candidates[0].id == core_id
+            assert core_id in by_id
+            assert extra_ids[0] not in by_id
+            assert extra_ids[1] not in by_id
+            assert await session.scalar(
+                select(PptSolutionPlan.id).where(PptSolutionPlan.run_id == run_id)
+            ) is None
     finally:
         await _cleanup(
             project_id=project_id,
