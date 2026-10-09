@@ -185,6 +185,9 @@ class RecommendationService:
     @staticmethod
     def _frozen_ppt_config_snapshot(config: PptRecommendationConfig) -> dict[str, object]:
         """Validate ORM values at the persistence boundary before serialising JSON."""
+        direct_selection = all(
+            isinstance(band, dict) and "item_count" in band for band in config.price_bands
+        )
         frozen_config = PptFrozenRecommendationConfig.model_validate(
             {
                 "recommendation_mode": config.recommendation_mode,
@@ -192,6 +195,7 @@ class RecommendationService:
                 "candidate_count_per_band": config.candidate_count_per_band,
                 "plan_count_per_band": config.plan_count_per_band,
                 "fulfillment_deadline": config.fulfillment_deadline,
+                "selection_mode": "DIRECT" if direct_selection else "PLANS",
             }
         )
         return frozen_config.model_dump(mode="json")

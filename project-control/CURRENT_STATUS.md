@@ -3,7 +3,14 @@
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
-日期：2026-10-08
+日期：2026-10-09
+
+> 2026-10-09：类型 5 已从“每档多方案卡”调整为“每个价格档直接 AI 匹配指定数量商品”。配置将
+> 商品数量放入每条价格档；Agent 完成受控类目选择后，每档仅保留一次 AI 匹配并从同档冻结候选
+> 补齐，多个价格档的商品统一在类型 4 风格候选表中由人工复选确认。历史 Run 仍按冻结模式保留
+> 原方案卡读取能力。候选表支持分页、服务端全选全部待确认和跨页排除，配置不展示混合推品。
+> 无 Migration、权限变化；推荐模块 70 项测试、MySQL HTTP 2 项、Ruff、Mypy、
+> 前端类型检查、165 项 Vitest 和生产构建通过（ADR-0050）。
 
 > 2026-10-08：类型 5 已新增可审计的方案选择持久化。方案选择与方案内商品确认在同一事务
 > 完成，刷新、重新进入及完成选品后仍显示绿色高亮和“已选方案”；允许累计选择多张方案。

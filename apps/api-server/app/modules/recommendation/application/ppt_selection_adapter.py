@@ -6,10 +6,7 @@ from uuid import UUID
 from app.common.contracts import AppError
 from app.core.database import SessionLocal
 from app.integrations.deepseek.client import DeepSeekStructuredOutputError
-from app.modules.recommendation.application.agent_runner import (
-    RecommendationAgentContractError,
-    StructuredProvider,
-)
+from app.modules.recommendation.application.agent_runner import StructuredProvider
 from app.modules.recommendation.application.agent_schemas import (
     AgentRecommendationResult,
     RequirementAnalysis,
@@ -103,7 +100,18 @@ class PptSelectionJobPort:
             return
         try:
             async with SessionLocal() as session:
-                await PptSolutionService(session).create_ai_generated_plans(run_id, self.provider)
+                service = PptSolutionService(session)
+                run = await service.repository.run(run_id)
+                direct_selection = bool(
+                    run
+                    and isinstance(run.ppt_config_snapshot, dict)
+                    and run.ppt_config_snapshot.get("selection_mode") == "DIRECT"
+                )
+                if direct_selection:
+                    await service.retain_ai_matched_candidates(run_id, self.provider)
+                else:
+                    # Historical Runs keep their persisted plan cards available.
+                    await service.create_ai_generated_plans(run_id, self.provider)
         except DeepSeekStructuredOutputError as exc:
             logger.warning(
                 "ppt plan structured output failed run_id=%s stage=%s error_kind=%s "
@@ -116,24 +124,20 @@ class PptSelectionJobPort:
             async with SessionLocal() as session:
                 await PptCatalogService(session).record_plan_failure(
                     run_id,
-                    "类型 5 AI 方案编排返回格式异常，自动重试后仍失败"
+                    "类型 5 AI 商品匹配返回格式异常，自动重试后仍失败"
                     f"（{exc.error_kind}），请重新生成。",
                 )
         except AppError as exc:
             async with SessionLocal() as session:
                 await PptCatalogService(session).record_plan_failure(
-                    run_id, f"类型 5 AI 方案编排失败：{exc.message}，请重新生成。"
+                    run_id, f"类型 5 AI 商品匹配失败：{exc.message}，请重新生成。"
                 )
         except Exception as exc:
-            # Candidate recall remains usable and auditable even if plan composition fails.
-            detail = (
-                f"：{exc}"
-                if isinstance(exc, RecommendationAgentContractError)
-                else f"（{type(exc).__name__}）"
-            )
+            # Candidate recall remains usable and auditable even if direct matching fails.
+            detail = f"（{type(exc).__name__}）"
             async with SessionLocal() as session:
                 await PptCatalogService(session).record_plan_failure(
-                    run_id, f"类型 5 AI 方案编排失败{detail}，请调整配置后重新生成。"
+                    run_id, f"类型 5 AI 商品匹配失败{detail}，请调整配置后重新生成。"
                 )
 
     async def fail(self, run_id: UUID, safe_error: str) -> None:

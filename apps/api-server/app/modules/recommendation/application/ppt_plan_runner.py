@@ -55,18 +55,23 @@ class PptPlanAgentRunner:
         band: PptPriceBandInput,
         config: PptFrozenRecommendationConfig,
         candidates: list[RecommendationCandidate],
+        *,
+        item_count: int | None = None,
+        plan_count: int | None = None,
     ) -> PptPlanProposalList:
         eligible = self.band_candidates(band, candidates)
-        if len(eligible) < config.candidate_count_per_band:
+        quantity = item_count or band.item_count
+        requested_plans = plan_count or config.plan_count_per_band
+        if len(eligible) < quantity:
             return PptPlanProposalList()
         window, key_map = self._window(eligible)
-        seed_count = min(config.candidate_count_per_band, self.settings.ppt_ai_seed_count_per_plan)
+        seed_count = min(quantity, self.settings.ppt_ai_seed_count_per_plan)
         payload = json.dumps(
             {
                 "price_band_index": index,
                 "recommendation_mode": config.recommendation_mode,
-                "items_per_plan": config.candidate_count_per_band,
-                "plans_per_band": config.plan_count_per_band,
+                "items_per_plan": quantity,
+                "plans_per_band": requested_plans,
                 "seed_count_limit": seed_count,
                 "candidate_window_count": len(window),
                 "candidates": window,
@@ -90,7 +95,7 @@ class PptPlanAgentRunner:
                         self.settings.ppt_ai_output_token_budget, self.settings.deepseek_max_tokens
                     ),
                 )
-                self._validate_provider_result(result, index, config.plan_count_per_band, key_map)
+                self._validate_provider_result(result, index, requested_plans, key_map)
                 return result
             except DeepSeekConfigurationError:
                 raise

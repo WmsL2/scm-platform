@@ -24,6 +24,7 @@ class PptPriceBandInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     min_price: Decimal | None = Field(default=None, ge=0)
     max_price: Decimal = Field(gt=0)
+    item_count: int = Field(ge=1, le=500)
 
     @model_validator(mode="after")
     def valid_range(self) -> "PptPriceBandInput":
@@ -36,9 +37,15 @@ class PptRecommendationConfigUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     recommendation_mode: PptRecommendationMode
     price_bands: list[PptPriceBandInput] = Field(min_length=1, max_length=12)
-    candidate_count_per_band: int = Field(ge=1, le=500)
-    plan_count_per_band: int = Field(ge=1, le=20)
     fulfillment_deadline: date | None = None
+
+    @model_validator(mode="after")
+    def require_non_overlapping_price_bands(self) -> "PptRecommendationConfigUpdateRequest":
+        ordered = sorted(self.price_bands, key=lambda item: item.min_price or Decimal("0"))
+        for previous, current in zip(ordered, ordered[1:], strict=False):
+            if (current.min_price or Decimal("0")) <= previous.max_price:
+                raise ValueError("price bands must not overlap")
+        return self
 
 
 class PptRecommendationConfigResponse(PptRecommendationConfigUpdateRequest):
@@ -49,6 +56,29 @@ class PptRecommendationConfigResponse(PptRecommendationConfigUpdateRequest):
 
 class PptFrozenRecommendationConfig(PptRecommendationConfigUpdateRequest):
     """Immutable Type-5 generation inputs stored with one RecommendationRun."""
+
+    # Legacy snapshots retain the former global fields. New direct-selection Runs
+    # always use each price band's item_count and a single internal selection pass.
+    candidate_count_per_band: int = Field(default=1, ge=1, le=500)
+    plan_count_per_band: int = Field(default=1, ge=1, le=20)
+    selection_mode: Literal["PLANS", "DIRECT"] = "PLANS"
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_band_quantities(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        result = dict(value)
+        legacy_count = result.get("candidate_count_per_band")
+        raw_bands = result.get("price_bands")
+        if isinstance(raw_bands, list):
+            result["price_bands"] = [
+                {**band, "item_count": band.get("item_count", legacy_count)}
+                if isinstance(band, dict)
+                else band
+                for band in raw_bands
+            ]
+        return result
 
 
 class PptPriceBandAvailabilityResponse(BaseModel):
