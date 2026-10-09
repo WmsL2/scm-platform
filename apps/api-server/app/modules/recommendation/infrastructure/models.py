@@ -355,6 +355,10 @@ class PptGenerationTask(Base):
     template_file_id: Mapped[uuid.UUID | None] = mapped_column(
         UUIDChar36(), ForeignKey("scm_bid_project_file.id", ondelete="RESTRICT"), nullable=True
     )
+    template_code: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default="SYSTEM_DEFAULT"
+    )
+    template_version: Mapped[str] = mapped_column(String(32), nullable=False, server_default="1")
     output_file_id: Mapped[uuid.UUID | None] = mapped_column(
         UUIDChar36(), ForeignKey("scm_bid_project_file.id", ondelete="RESTRICT"), nullable=True
     )
