@@ -74,6 +74,8 @@ export interface PptGenerationTask {
   project_id: string
   run_id: string
   template_file_id: string | null
+  template_code: string
+  template_version: string
   output_file_id: string | null
   status: PptGenerationStatus
   provider: string
@@ -82,4 +84,12 @@ export interface PptGenerationTask {
   error: string | null
   created_at: string
   updated_at: string
+}
+export interface PptTemplate {
+  template_code: string
+  name: string
+  description: string
+  preview_url: string | null
+  version: string
+  is_available: boolean
 }

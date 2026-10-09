@@ -219,6 +219,8 @@ class PptGenerationTaskResponse(BaseModel):
     project_id: UUID
     run_id: UUID
     template_file_id: UUID | None
+    template_code: str
+    template_version: str
     output_file_id: UUID | None
     status: PptGenerationStatus
     provider: str
@@ -233,3 +235,13 @@ class PptGenerationCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     use_default_template: bool = False
+    template_code: str | None = None
+
+
+class PptTemplateResponse(BaseModel):
+    template_code: str
+    name: str
+    description: str
+    preview_url: str | None
+    version: str
+    is_available: bool = True
