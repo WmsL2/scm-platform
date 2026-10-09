@@ -5,6 +5,7 @@ from pathlib import Path
 from pptx import Presentation
 
 from app.modules.recommendation.application.ppt_renderer import PptRenderer
+from app.modules.recommendation.application.ppt_template_registry import list_ppt_templates
 
 _PNG = b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9J7VIAAAAASUVORK5CYII="
@@ -45,6 +46,15 @@ def _source() -> dict[str, object]:
                             "product_name": "家用小家电",
                         },
                     },
+                    {
+                        "quantity": 1,
+                        "unit_price": "0.00",
+                        "line_total": "0.00",
+                        "product_snapshot": {
+                            "id": "package-product-3",
+                            "product_name": "第三件虚构商品",
+                        },
+                    },
                 ],
             }
         ],
@@ -55,9 +65,21 @@ def _source() -> dict[str, object]:
                     "product_name": "不锈钢保温杯",
                     "brand": "示例品牌",
                     "model": "C-200",
+                "product_specification": "450ml，食品级不锈钢",
+                "selling_points": "虚构测试卖点",
+                "shipping_courier": "测试快递",
+                "warranty_period": "一年",
                 },
-                "prices": {"agreement_price": "99.00"},
-                "manual": {"delivery_status": "一件代发", "evidence": "人工确认可供货"},
+                "prices": {
+                    "market_price": "129.00",
+                    "jd_price": "109.00",
+                    "agreement_price": "99.00",
+                },
+                "manual": {
+                    "campaign_price": "89.00",
+                    "delivery_status": "一件代发",
+                    "evidence": "人工确认可供货",
+                },
             }
         ],
     }
@@ -94,3 +116,65 @@ def test_renderer_preserves_customer_template_and_appends_editable_pages(tmp_pat
     assert len(deck.slides) == 3
     assert "甲方模板封面" in _all_text(deck)
     assert "商品名称：500 元节日套装" in _all_text(deck)
+
+
+def test_each_builtin_template_creates_an_editable_valid_pptx_with_three_package_images() -> None:
+    renderer = PptRenderer()
+    images = {
+        "single-product": _PNG,
+        "package-product-1": _PNG,
+        "package-product-2": _PNG,
+        "package-product-3": _PNG,
+    }
+    for template in list_ppt_templates():
+        deck = Presentation(
+            BytesIO(renderer.render(_source(), template_code=template.code, product_images=images))
+        )
+        expected_slide_count = 2 if template.code == "SYSTEM_DEFAULT" else 3
+        assert len(deck.slides) == expected_slide_count
+        text = _all_text(deck)
+        assert "不锈钢保温杯" in text
+        assert "89.00" in text
+        assert "109.00" in text
+        assert "虚构测试卖点" in text
+        package_slide = deck.slides[-2]
+        assert sum(shape.shape_type == 13 for shape in package_slide.shapes) == 3
+        for slide in deck.slides:
+            for shape in slide.shapes:
+                assert shape.left >= 0 and shape.top >= 0
+                assert shape.left + shape.width <= deck.slide_width
+                assert shape.top + shape.height <= deck.slide_height
+
+
+def test_long_details_use_continuation_pages_without_dropping_prices_or_name() -> None:
+    source = _source()
+    product = source["single_products"][0]["product"]  # type: ignore[index]
+    product["product_name"] = "超长虚构商品名称" * 16  # type: ignore[index]
+    product["product_specification"] = "长规格" * 220  # type: ignore[index]
+    product["selling_points"] = "长卖点" * 220  # type: ignore[index]
+
+    rendered = PptRenderer().render(source, product_images={"single-product": _PNG})
+    deck = Presentation(BytesIO(rendered))
+    text = _all_text(deck)
+    assert "详情续页" in text
+    assert "¥ 89.00" in text
+    assert "¥ 109.00" in text
+    assert "长规格" * 20 in text
+
+
+def test_invalid_builtin_template_is_rejected() -> None:
+    try:
+        PptRenderer().render(_source(), template_code="../../not-a-template")
+    except Exception as exc:
+        assert getattr(exc, "code", None) == "PPT_TEMPLATE_INVALID"
+    else:
+        raise AssertionError("an unknown template code must be rejected")
+
+
+def test_renderer_rejects_a_task_with_a_frozen_unavailable_template_version() -> None:
+    try:
+        PptRenderer().render(_source(), template_code="SYSTEM_DEFAULT", template_version="2")
+    except Exception as exc:
+        assert getattr(exc, "code", None) == "PPT_TEMPLATE_VERSION_UNAVAILABLE"
+    else:
+        raise AssertionError("an unavailable frozen version must be rejected")
