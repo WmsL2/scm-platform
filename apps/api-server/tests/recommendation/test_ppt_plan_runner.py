@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -15,6 +16,7 @@ from app.modules.recommendation.infrastructure.models import RecommendationCandi
 from app.modules.recommendation.ppt_schemas import (
     PptCandidateAssessment,
     PptCandidateAssessmentList,
+    PptCombinationSelectionProposal,
     PptDirectSelectionProposal,
     PptFrozenRecommendationConfig,
     PptPlanProposal,
@@ -90,6 +92,21 @@ class ConcurrentDirectProvider(DirectProvider):
             finally:
                 self.active_assessments -= 1
         return await super().structured_completion(**kwargs)
+
+
+class CombinationProvider(DirectProvider):
+    async def structured_completion(self, **kwargs: Any) -> object:
+        if kwargs["response_model"] is PptCandidateAssessmentList:
+            return await super().structured_completion(**kwargs)
+        assert kwargs["response_model"] is PptCombinationSelectionProposal
+        self.calls.append(kwargs)
+        payload = json.loads(kwargs["user_prompt"])
+        return PptCombinationSelectionProposal(
+            combination_keys=[
+                row["id"]
+                for row in payload["combinations"][: payload["required_combination_count"]]
+            ]
+        )
 
 
 def _candidate(
@@ -296,6 +313,88 @@ async def test_type5_direct_runner_scores_every_frozen_candidate_then_selects_ex
     final_call = json.loads(provider.calls[1]["user_prompt"])
     assert final_call["stage"] == "final_direct_selection"
     assert final_call["required_item_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_type5_combination_runner_selects_exact_price_valid_two_to_four_item_groups() -> None:
+    candidates = [
+        _candidate("60", rank=1, category="保温杯"),
+        _candidate("70", rank=2, category="厨房用品"),
+        _candidate("80", rank=3, category="户外用品"),
+        _candidate("90", rank=4, category="个护用品"),
+    ]
+    provider = CombinationProvider()
+    band = PptFrozenRecommendationConfig.model_validate(
+        {
+            "recommendation_mode": "COMBINATION",
+            "price_bands": [{"min_price": "120", "max_price": "180", "item_count": 2}],
+            "selection_mode": "COMBINATIONS",
+        }
+    ).price_bands[0]
+
+    selected = await PptPlanAgentRunner(provider).select_combination_candidates(
+        1,
+        band,
+        candidates,
+        combination_count=2,
+        scene_context="客户原始需求：员工活动实用礼品",
+    )
+
+    assert len(selected) == 2
+    assert all(2 <= len(group.candidates) <= 4 for group in selected)
+    assert all(Decimal("120") <= group.total_price <= Decimal("180") for group in selected)
+    final_call = next(
+        call for call in provider.calls if call["response_model"] is PptCombinationSelectionProposal
+    )
+    final_payload = json.loads(final_call["user_prompt"])
+    assert final_payload["stage"] == "final_combination_selection"
+    assert final_payload["items_per_combination"] == "2-4"
+
+
+@pytest.mark.asyncio
+async def test_type5_combination_runner_reuses_one_shared_assessment_for_multiple_bands() -> None:
+    candidates = [
+        _candidate(str(price), rank=index)
+        for index, price in enumerate((60, 70, 80, 90), 1)
+    ]
+    provider = CombinationProvider()
+    runner = PptPlanAgentRunner(provider)
+    scored = await runner.score_combination_candidates(
+        candidates, scene_context="客户原始需求：员工活动礼品"
+    )
+    first_band, second_band = PptFrozenRecommendationConfig.model_validate(
+        {
+            "recommendation_mode": "COMBINATION",
+            "price_bands": [
+                    {"min_price": "120", "max_price": "149", "item_count": 1},
+                {"min_price": "150", "max_price": "180", "item_count": 1},
+            ],
+            "selection_mode": "COMBINATIONS",
+        }
+    ).price_bands
+
+    await runner.select_combination_from_scored(
+        index=1,
+        band=first_band,
+        scored_candidates=scored,
+        combination_count=1,
+        scene_context="客户原始需求：员工活动礼品",
+    )
+    await runner.select_combination_from_scored(
+        index=2,
+        band=second_band,
+        scored_candidates=scored,
+        combination_count=1,
+        scene_context="客户原始需求：员工活动礼品",
+    )
+
+    assessment_calls = [
+        call for call in provider.calls if call["response_model"] is PptCandidateAssessmentList
+    ]
+    assert len(assessment_calls) == 1
+    assert sum(
+        call["response_model"] is PptCombinationSelectionProposal for call in provider.calls
+    ) == 2
 
 
 @pytest.mark.asyncio

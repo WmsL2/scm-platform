@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-09
 
+> 2026-10-09：类型 5 `COMBINATION` 模式改为“组合总价 + 每档组合数量”。每组后端强制 2--4 件不同商品且总协议价在该档范围内；全部组合价格档共享一次场景/性价比评分，之后分别以受限组合搜索生成合规组，AI 仅从签发的组合短 ID 精确选择配置组数。组合评分并发最多两路；提供方失败改为记录安全、可区分的限流/超时/服务异常提示。工作台展示组合和组内商品，人工确认沿用既有方案选择审计；PPT 渲染、套餐创建、类型 5 单品模式和类型 1--4 不变。无 Migration、无新增权限（ADR-0055）；单元测试、Ruff、Mypy、类型 5 前端 Vitest 和类型检查已通过，真实 DeepSeek/浏览器端到端验收待执行。
+
 > 2026-10-09：类型 5 最终 AI 选品新增相关三级类目覆盖策略。客户未明确限定单一类目时，已评分
 > 高分短名单先轮换保留各三级类目的最高分商品，最终 AI 在场景相关候选中尽量覆盖多个类目；
 > 不会为了凑类目选择无关商品，单类目需求或候选不足时仍可同类目多选。无逐件理由输出、无额外

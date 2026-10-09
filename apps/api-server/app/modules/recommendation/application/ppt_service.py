@@ -360,6 +360,146 @@ class PptSolutionService:
                 run_for_update.status = RecommendationRunStatus.WAITING_CONFIRMATION.value
         return len(selected_ids)
 
+    async def retain_ai_matched_combinations(
+        self, run_id: uuid.UUID, provider: StructuredProvider
+    ) -> int:
+        """Persist exact Type-5 combination groups without changing PPT rendering.
+
+        Each persisted plan is one human-selectable group.  Its 2--4 product
+        membership and total agreement price were validated before the model was
+        allowed to choose it.  Individual frozen products outside all final groups
+        are discarded so the UI can never fall back to exposing the whole pool.
+        """
+        async with SessionLocal() as context_session:
+            context_service = PptSolutionService(context_session)
+            run = await context_service.repository.run(run_id)
+            if run is None:
+                raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
+            config = await RecommendationService(
+                context_session
+            ).ppt_recommendation_config_for_run(run_id)
+            if config.recommendation_mode != "COMBINATION":
+                raise AppError("PPT_COMBINATION_MODE_REQUIRED", "当前任务不是组合推品模式", 409)
+            candidates = await context_service.repository.candidates(run_id)
+            scene_context = self._direct_selection_scene_context(run)
+
+        runner = PptPlanAgentRunner(provider)
+        selected_plans: list[tuple[int, object]] = []
+        # Scenario/value assessment does not depend on a combination's final
+        # total-price band.  Score the shared, price-possible source pool once,
+        # then let every band construct and compare only its own valid groups.
+        highest_band_price = max(band.max_price for band in config.price_bands)
+        combination_sources = [
+            candidate
+            for candidate in candidates
+            if 0 < self._candidate_agreement_price(candidate) <= highest_band_price
+        ]
+        scored_candidates = await runner.score_combination_candidates(
+            combination_sources, scene_context=scene_context
+        )
+        for band_index, band in enumerate(config.price_bands, start=1):
+            groups = await runner.select_combination_from_scored(
+                index=band_index,
+                band=band,
+                scored_candidates=scored_candidates,
+                combination_count=band.item_count,
+                scene_context=scene_context,
+            )
+            selected_plans.extend((band_index, group) for group in groups)
+
+        async with SessionLocal() as persist_session:
+            service = PptSolutionService(persist_session)
+            async with persist_session.begin():
+                run_for_update = await service.repository.run_for_update(run_id)
+                if run_for_update is None:
+                    raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
+                if run_for_update.status != RecommendationRunStatus.RANKING.value:
+                    raise AppError(
+                        "PPT_COMBINATION_SELECTION_STATE_INVALID",
+                        "当前类型 5 任务不处于 AI 组合匹配阶段",
+                        409,
+                    )
+                persisted = await service.repository.candidates(run_id)
+                by_id = {candidate.id: candidate for candidate in persisted}
+                retained_ids: set[uuid.UUID] = set()
+                candidate_scores: dict[uuid.UUID, int] = {}
+                band_plan_counts: dict[int, int] = {}
+                for band_index, group in selected_plans:
+                    # PptCombinationCandidate is deliberately kept inside the
+                    # runner module; structural access here avoids exposing it as
+                    # an API DTO before the group is persisted.
+                    members = tuple(getattr(group, "candidates"))
+                    total_price = Decimal(str(getattr(group, "total_price")))
+                    candidate_ids = [item.candidate.id for item in members]
+                    if not 2 <= len(candidate_ids) <= 4 or len(candidate_ids) != len(
+                        set(candidate_ids)
+                    ):
+                        raise AppError("PPT_COMBINATION_INVALID", "AI 组合商品数量无效", 422)
+                    if any(candidate_id not in by_id for candidate_id in candidate_ids):
+                        raise AppError(
+                            "PPT_COMBINATION_CANDIDATE_INVALID", "AI 组合包含非冻结商品", 422
+                        )
+                    band = config.price_bands[band_index - 1]
+                    if not self._combination_total_in_band(
+                        [by_id[candidate_id] for candidate_id in candidate_ids],
+                        band.min_price,
+                        band.max_price,
+                    ):
+                        raise AppError(
+                            "PPT_COMBINATION_PRICE_INVALID", "AI 组合总价不符合价格档", 422
+                        )
+                    plan_no = band_plan_counts.get(band_index, 0) + 1
+                    band_plan_counts[band_index] = plan_no
+                    label = self._price_band_label(band.min_price, band.max_price)
+                    persist_session.add(
+                        PptSolutionPlan(
+                            run_id=run_id,
+                            price_band_index=band_index,
+                            plan_no=plan_no,
+                            plan_type="COMBINATION",
+                            name=f"{label} · 组合 {plan_no}",
+                            summary=(
+                                f"{len(candidate_ids)} 件商品 · 组合总协议价 {total_price:.2f} 元"
+                            ),
+                            candidate_ids=[str(candidate_id) for candidate_id in candidate_ids],
+                            selection_source="AI",
+                            selection_provider=provider.provider,
+                            selection_model=provider.model,
+                            selection_prompt_version=f"{provider.prompt_version}:ppt-combination-v1",
+                        )
+                    )
+                    retained_ids.update(candidate_ids)
+                    for item in members:
+                        candidate_scores[item.candidate.id] = max(
+                            candidate_scores.get(item.candidate.id, 0), item.overall_score
+                        )
+                for rank, candidate_id in enumerate(
+                    sorted(
+                        retained_ids,
+                        key=lambda candidate_id: (
+                            -candidate_scores[candidate_id],
+                            str(candidate_id),
+                        ),
+                    ),
+                    start=1,
+                ):
+                    by_id[candidate_id].rank = rank
+                    by_id[candidate_id].score = Decimal(candidate_scores[candidate_id])
+                    by_id[candidate_id].reason = "AI 按客户场景与综合性价比组成推荐组合"
+                for candidate in persisted:
+                    if candidate.id not in retained_ids:
+                        await persist_session.delete(candidate)
+                await persist_session.flush()
+                ensure_recommendation_transition(
+                    run_for_update.status, RecommendationRunStatus.CANDIDATES_READY
+                )
+                run_for_update.status = RecommendationRunStatus.CANDIDATES_READY.value
+                ensure_recommendation_transition(
+                    run_for_update.status, RecommendationRunStatus.WAITING_CONFIRMATION
+                )
+                run_for_update.status = RecommendationRunStatus.WAITING_CONFIRMATION.value
+        return len(selected_plans)
+
     @staticmethod
     def _direct_selection_scene_context(run: object) -> str:
         """Keep the customer scenario available to the Type-5-only product judge."""
@@ -983,6 +1123,18 @@ class PptSolutionService:
     def _candidate_agreement_price(cls, candidate: RecommendationCandidate) -> Decimal:
         value = cls._decimal_value(candidate.price_snapshot.get("agreement_price"))
         return value if value is not None and value >= 0 else Decimal(0)
+
+    @classmethod
+    def _combination_total_in_band(
+        cls,
+        candidates: Sequence[RecommendationCandidate],
+        minimum: Decimal | None,
+        maximum: Decimal,
+    ) -> bool:
+        total = sum(
+            (cls._candidate_agreement_price(candidate) for candidate in candidates), Decimal(0)
+        )
+        return total > 0 and total <= maximum and (minimum is None or total >= minimum)
 
     @staticmethod
     def _price_band_label(minimum: Decimal | None, maximum: Decimal) -> str:

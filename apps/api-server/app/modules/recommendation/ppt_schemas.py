@@ -41,6 +41,10 @@ class PptRecommendationConfigUpdateRequest(BaseModel):
 
     @model_validator(mode="after")
     def require_non_overlapping_price_bands(self) -> "PptRecommendationConfigUpdateRequest":
+        if self.recommendation_mode == PptRecommendationMode.COMBINATION and any(
+            item.item_count > 100 for item in self.price_bands
+        ):
+            raise ValueError("combination count per price band must not exceed 100")
         ordered = sorted(self.price_bands, key=lambda item: item.min_price or Decimal("0"))
         for previous, current in zip(ordered, ordered[1:], strict=False):
             if (current.min_price or Decimal("0")) <= previous.max_price:
@@ -61,7 +65,7 @@ class PptFrozenRecommendationConfig(PptRecommendationConfigUpdateRequest):
     # always use each price band's item_count and a single internal selection pass.
     candidate_count_per_band: int = Field(default=1, ge=1, le=500)
     plan_count_per_band: int = Field(default=1, ge=1, le=20)
-    selection_mode: Literal["PLANS", "DIRECT"] = "PLANS"
+    selection_mode: Literal["PLANS", "DIRECT", "COMBINATIONS"] = "PLANS"
     frozen_pool_statistics: "PptFrozenPoolStatistics | None" = None
 
     @model_validator(mode="before")
@@ -200,6 +204,25 @@ class PptDirectSelectionProposal(BaseModel):
             for value in self.candidate_keys
         ):
             raise ValueError("candidate_keys must be server-issued short keys")
+        return self
+
+
+class PptCombinationSelectionProposal(BaseModel):
+    """Final Type-5 combination selection using server-issued group keys only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    combination_keys: list[str] = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def unique_combinations(self) -> "PptCombinationSelectionProposal":
+        if len(self.combination_keys) != len(set(self.combination_keys)):
+            raise ValueError("combination_keys must be unique")
+        if any(
+            not value.startswith("g") or not value[1:].isdigit()
+            for value in self.combination_keys
+        ):
+            raise ValueError("combination_keys must be server-issued short keys")
         return self
 
 

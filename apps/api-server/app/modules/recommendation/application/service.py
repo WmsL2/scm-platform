@@ -195,7 +195,13 @@ class RecommendationService:
                 "candidate_count_per_band": config.candidate_count_per_band,
                 "plan_count_per_band": config.plan_count_per_band,
                 "fulfillment_deadline": config.fulfillment_deadline,
-                "selection_mode": "DIRECT" if direct_selection else "PLANS",
+                "selection_mode": (
+                    "COMBINATIONS"
+                    if direct_selection and config.recommendation_mode == "COMBINATION"
+                    else "DIRECT"
+                    if direct_selection
+                    else "PLANS"
+                ),
             }
         )
         return frozen_config.model_dump(mode="json")

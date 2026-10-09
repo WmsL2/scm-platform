@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import source from "./PptSolutionWorkspaceView.vue?raw"
 
 describe("PptSolutionWorkspaceView", () => {
-  it("uses one AI-matched candidate table with per-band quantities", () => {
+  it("keeps direct candidate matching while rendering combination groups separately", () => {
     expect(source).toContain("价格档 / AI 匹配商品数量")
     expect(source).toContain("item_count")
     expect(source).toContain("AI 匹配商品与人工确认")
@@ -19,7 +19,11 @@ describe("PptSolutionWorkspaceView", () => {
     expect(source).toContain("每档只匹配该档指定数量的商品")
     expect(source).not.toContain("确认本方案商品")
     expect(source).not.toContain("plan-card--selected")
-    expect(source).not.toContain("pptSolutionApi.selectPlan")
+    expect(source).toContain("组合总价 / AI 生成组合数量")
+    expect(source).toContain("每组固定 2～4 件")
+    expect(source).toContain("AI 组合推品与人工确认")
+    expect(source).toContain("pptSolutionApi.selectPlan")
+    expect(source).toContain("confirmCombination")
     expect(source).not.toContain("重试未完成方案")
     expect(source).not.toContain(">混合推品<")
     expect(source).toContain("重新生成推品")
@@ -39,7 +43,8 @@ describe("PptSolutionWorkspaceView", () => {
     expect(source).toContain("最高价必填")
     expect(source).toContain("最低价不能大于最高价")
     expect(source).toContain("价格区间与第")
-    expect(source).toContain("商品数量必须在 1 到 500 之间")
+    expect(source).toContain("countLabel")
+    expect(source).toContain("maxCount")
     expect(source).toContain("priceBandErrors[index]")
     expect(source).toContain("if (!validatePriceBands())")
   })

@@ -26,6 +26,7 @@ from app.modules.recommendation.infrastructure.models import RecommendationCandi
 from app.modules.recommendation.ppt_schemas import (
     PptCandidateAssessment,
     PptCandidateAssessmentList,
+    PptCombinationSelectionProposal,
     PptDirectSelectionProposal,
     PptFrozenRecommendationConfig,
     PptPlanProposalList,
@@ -39,6 +40,15 @@ logger = logging.getLogger(__name__)
 class PptDirectSelectedCandidate:
     candidate: RecommendationCandidate
     overall_score: int
+
+
+@dataclass(frozen=True)
+class PptCombinationCandidate:
+    """One server-validated 2--4 item combination ready for the final AI choice."""
+
+    key: str
+    candidates: tuple[PptDirectSelectedCandidate, ...]
+    total_price: Decimal
 
 
 class PptPlanAgentRunner:
@@ -155,41 +165,8 @@ class PptPlanAgentRunner:
         permitted = self.band_candidates(band, candidates)
         if len(permitted) < item_count:
             raise RecommendationAgentContractError("价格档冻结候选不足，无法生成指定数量商品")
-        key_map = self._direct_key_map(permitted)
-        # First-pass rows intentionally keep lengthy specification and selling-point
-        # text compact. Every frozen candidate still receives a model assessment.
-        rows = [self._assessment_row(key, candidate) for key, candidate in key_map.items()]
-        batches = self._assessment_batches(rows)
-        semaphore = asyncio.Semaphore(self.settings.ppt_ai_assessment_concurrency)
-
-        async def assess(
-            batch_no: int, batch: list[dict[str, object]]
-        ) -> PptCandidateAssessmentList:
-            async with semaphore:
-                return await self._assess_batch(
-                    index=index,
-                    batch_no=batch_no,
-                    scene_context=scene_context,
-                    rows=batch,
-                )
-
-        results = await asyncio.gather(
-            *(assess(batch_no, batch) for batch_no, batch in enumerate(batches, start=1))
-        )
-        assessments = {
-            item.candidate_key: item for result in results for item in result.assessments
-        }
-
-        if set(assessments) != set(key_map):
-            raise RecommendationAgentContractError("类型 5 AI 未完成全部冻结候选的评分")
-        ranked_keys = sorted(
-            assessments,
-            key=lambda key: (
-                -assessments[key].overall_score,
-                -assessments[key].scene_score,
-                -assessments[key].value_score,
-                key_map[key].rank,
-            ),
+        key_map, assessments, ranked_keys = await self._score_candidates(
+            index=index, candidates=permitted, scene_context=scene_context
         )
         diversified_keys = self._category_diversified_keys(ranked_keys, key_map)
         finalists = self._finalist_rows(diversified_keys, key_map, assessments, item_count)
@@ -225,6 +202,145 @@ class PptPlanAgentRunner:
             )
             for key in selected_keys
         ]
+
+    async def select_combination_candidates(
+        self,
+        index: int,
+        band: PptPriceBandInput,
+        candidates: list[RecommendationCandidate],
+        *,
+        combination_count: int,
+        scene_context: str,
+    ) -> list[PptCombinationCandidate]:
+        """Return exact AI-selected groups whose **total** agreement price fits a band.
+
+        Individual products are first scored over the complete frozen pool.  The
+        backend then constructs a bounded set of price-valid 2--4 item groups;
+        the model can only choose among those server-issued group keys.  This
+        keeps money arithmetic and item-count constraints deterministic while
+        retaining the Type-5 scene/value judgement for the final choice.
+        """
+        scored = await self.score_combination_candidates(candidates, scene_context=scene_context)
+        return await self.select_combination_from_scored(
+            index=index,
+            band=band,
+            scored_candidates=scored,
+            combination_count=combination_count,
+            scene_context=scene_context,
+        )
+
+    async def score_combination_candidates(
+        self,
+        candidates: Sequence[RecommendationCandidate],
+        *,
+        scene_context: str,
+    ) -> list[PptDirectSelectedCandidate]:
+        """Score a combination source pool once so all price bands can reuse it."""
+        if len(candidates) < 2:
+            raise RecommendationAgentContractError("组合来源候选不足，无法组成至少两件商品")
+        key_map, assessments, ranked_keys = await self._score_candidates(
+            index=0,
+            candidates=candidates,
+            scene_context=scene_context,
+            assessment_concurrency=min(2, self.settings.ppt_ai_assessment_concurrency),
+        )
+        diversified_keys = self._category_diversified_keys(ranked_keys, key_map)
+        return [
+            PptDirectSelectedCandidate(
+                candidate=key_map[key], overall_score=assessments[key].overall_score
+            )
+            for key in diversified_keys
+        ]
+
+    async def select_combination_from_scored(
+        self,
+        *,
+        index: int,
+        band: PptPriceBandInput,
+        scored_candidates: Sequence[PptDirectSelectedCandidate],
+        combination_count: int,
+        scene_context: str,
+    ) -> list[PptCombinationCandidate]:
+        """Choose one band's groups from a previously AI-scored source pool."""
+        permitted = [
+            item
+            for item in scored_candidates
+            if self._candidate_price_value(item.candidate) <= band.max_price
+        ]
+        if len(permitted) < 2:
+            raise RecommendationAgentContractError("价格档冻结候选不足，无法组成至少两件商品")
+        combinations = self._combination_candidates(
+            band,
+            permitted,
+            requested_count=combination_count,
+        )
+        if len(combinations) < combination_count:
+            raise RecommendationAgentContractError(
+                f"价格档无法组成 {combination_count} 组 2～4 件且总价合规的组合"
+            )
+        finalists = self._combination_finalist_rows(combinations, combination_count)
+        if len(finalists) < combination_count:
+            raise RecommendationAgentContractError("类型 5 组合候选无法放入 AI 安全输入预算")
+        proposal = await self._select_combination_finalists(
+            index=index,
+            combination_count=combination_count,
+            scene_context=scene_context,
+            finalists=finalists,
+        )
+        by_key = {item.key: item for item in combinations}
+        if len(proposal.combination_keys) != combination_count:
+            raise RecommendationAgentContractError("类型 5 AI 未返回指定数量的组合")
+        if any(key not in by_key for key in proposal.combination_keys):
+            raise RecommendationAgentContractError("类型 5 AI 返回了清单外组合")
+        return [by_key[key] for key in proposal.combination_keys]
+
+    async def _score_candidates(
+        self,
+        *,
+        index: int,
+        candidates: Sequence[RecommendationCandidate],
+        scene_context: str,
+        assessment_concurrency: int | None = None,
+    ) -> tuple[
+        dict[str, RecommendationCandidate], dict[str, PptCandidateAssessment], list[str]
+    ]:
+        """Score every supplied frozen candidate once with compact batch payloads."""
+        key_map = self._direct_key_map(candidates)
+        rows = [self._assessment_row(key, candidate) for key, candidate in key_map.items()]
+        batches = self._assessment_batches(rows)
+        semaphore = asyncio.Semaphore(
+            assessment_concurrency or self.settings.ppt_ai_assessment_concurrency
+        )
+
+        async def assess(
+            batch_no: int, batch: list[dict[str, object]]
+        ) -> PptCandidateAssessmentList:
+            async with semaphore:
+                return await self._assess_batch(
+                    index=index,
+                    batch_no=batch_no,
+                    scene_context=scene_context,
+                    rows=batch,
+                )
+
+        results = await asyncio.gather(
+            *(assess(batch_no, batch) for batch_no, batch in enumerate(batches, start=1))
+        )
+        assessments = {
+            item.candidate_key: item for result in results for item in result.assessments
+        }
+        if set(assessments) != set(key_map):
+            raise RecommendationAgentContractError("类型 5 AI 未完成全部冻结候选的评分")
+        ranked_keys = sorted(
+            assessments,
+            key=lambda key: (
+                -assessments[key].overall_score,
+                -assessments[key].scene_score,
+                -assessments[key].value_score,
+                key_map[key].rank,
+            ),
+        )
+        return key_map, assessments, ranked_keys
 
     async def _assess_batch(
         self,
@@ -415,6 +531,225 @@ class PptPlanAgentRunner:
                 retry_note = f"\n上一次输出无效。请仅返回完整合法 JSON；脱敏错误：{detail}"
         raise RecommendationAgentContractError("类型 5 AI 未返回最终商品选择")
 
+    def _combination_candidates(
+        self,
+        band: PptPriceBandInput,
+        ranked: Sequence[PptDirectSelectedCandidate],
+        *,
+        requested_count: int,
+    ) -> list[PptCombinationCandidate]:
+        """Use a bounded beam search; never enumerate a full product power set."""
+        # Start with high-scoring category-diversified products, and retain cheap
+        # products too: a good low-price complement must not disappear merely
+        # because an expensive product scored higher on its own.
+        options: list[PptDirectSelectedCandidate] = []
+        seen: set[object] = set()
+        for item in list(ranked[:160]) + sorted(
+            ranked,
+            key=lambda value: (self._candidate_price_value(value.candidate), -value.overall_score),
+        )[:80]:
+            if item.candidate.id not in seen:
+                seen.add(item.candidate.id)
+                options.append(item)
+        options = options[:220]
+        if len(options) < 2:
+            return []
+        prices = [self._candidate_price_value(item.candidate) for item in options]
+        minimum = band.min_price or Decimal(0)
+        maximum = band.max_price
+        midpoint = (minimum + maximum) / Decimal(2)
+        # (member indexes, total, summed score, category names, largest index)
+        states: list[tuple[tuple[int, ...], Decimal, int, frozenset[str], int]] = [
+            (
+                (index,),
+                prices[index],
+                options[index].overall_score,
+                frozenset(
+                    {
+                        str(
+                            options[index].candidate.product_snapshot.get("category_level3_name")
+                            or "未分类"
+                        )
+                    }
+                ),
+                index,
+            )
+            for index in range(len(options))
+        ]
+        completed: dict[tuple[int, ...], tuple[Decimal, int, frozenset[str]]] = {}
+        for size in range(2, 5):
+            next_states: list[tuple[tuple[int, ...], Decimal, int, frozenset[str], int]] = []
+            for member_indexes, total, score_sum, categories, last_index in states:
+                for next_index in range(last_index + 1, len(options)):
+                    next_total = total + prices[next_index]
+                    if next_total > maximum:
+                        continue
+                    next_members = (*member_indexes, next_index)
+                    next_categories = categories | {
+                        str(
+                            options[next_index].candidate.product_snapshot.get(
+                                "category_level3_name"
+                            )
+                            or "未分类"
+                        )
+                    }
+                    next_score = score_sum + options[next_index].overall_score
+                    if next_total >= minimum:
+                        completed[next_members] = (next_total, next_score, next_categories)
+                    if size < 4:
+                        next_states.append(
+                            (next_members, next_total, next_score, next_categories, next_index)
+                        )
+            # Preserve alternatives close to the price target and with strong,
+            # category-diverse member scores.  600 states keeps the worst case
+            # bounded even for thousands of frozen products.
+            next_states.sort(
+                key=lambda state: self._combination_sort_key(
+                    state[1], state[2], len(state[0]), len(state[3]), midpoint, maximum
+                )
+            )
+            states = next_states[:600]
+            if not states and size < 4:
+                break
+        ranked_groups = sorted(
+            completed.items(),
+            key=lambda value: self._combination_sort_key(
+                value[1][0],
+                value[1][1],
+                len(value[0]),
+                len(value[1][2]),
+                midpoint,
+                maximum,
+            ),
+        )
+        # Keep enough alternatives for the final AI call while bounding its input.
+        limit = min(120, max(requested_count * 8, 48))
+        return [
+            PptCombinationCandidate(
+                key=f"g{index}",
+                candidates=tuple(options[position] for position in positions),
+                total_price=values[0],
+            )
+            for index, (positions, values) in enumerate(ranked_groups[:limit], start=1)
+        ]
+
+    @staticmethod
+    def _combination_sort_key(
+        total: Decimal,
+        score_sum: int,
+        item_count: int,
+        category_count: int,
+        midpoint: Decimal,
+        maximum: Decimal,
+    ) -> tuple[Decimal, int, Decimal, int]:
+        average_score = Decimal(score_sum) / Decimal(max(1, item_count))
+        closeness = abs(total - midpoint) / maximum if maximum else Decimal(0)
+        # sort ascending: higher score and more category variety first, then a
+        # sensible total inside the requested budget.
+        return (-average_score, -category_count, closeness, item_count)
+
+    def _combination_finalist_rows(
+        self,
+        combinations: Sequence[PptCombinationCandidate],
+        requested_count: int,
+    ) -> list[dict[str, object]]:
+        max_chars = max(4000, int(self.settings.ppt_ai_input_token_budget * 4 * 0.55))
+        rows: list[dict[str, object]] = []
+        used = 2
+        for combination in combinations:
+            row = {
+                "id": combination.key,
+                "total_agreement_price": str(combination.total_price),
+                "item_count": len(combination.candidates),
+                "items": [
+                    {
+                        "name": self._short_text(
+                            item.candidate.product_snapshot.get("product_name"), 120
+                        ),
+                        "brand": self._short_text(
+                            item.candidate.product_snapshot.get("brand"), 48
+                        ),
+                        "category": self._short_text(
+                            item.candidate.product_snapshot.get("category_level3_name"), 64
+                        ),
+                        "specification": self._short_text(
+                            item.candidate.product_snapshot.get("product_specification"), 100
+                        ),
+                        "selling_points": self._short_text(
+                            item.candidate.product_snapshot.get("selling_points"), 120
+                        ),
+                        "agreement_price": item.candidate.price_snapshot.get("agreement_price"),
+                        "overall_score": item.overall_score,
+                    }
+                    for item in combination.candidates
+                ],
+            }
+            row_size = len(json.dumps(row, ensure_ascii=False, separators=(",", ":"))) + 1
+            if len(rows) >= requested_count and used + row_size > max_chars:
+                break
+            rows.append(row)
+            used += row_size
+        return rows
+
+    async def _select_combination_finalists(
+        self,
+        *,
+        index: int,
+        combination_count: int,
+        scene_context: str,
+        finalists: list[dict[str, object]],
+    ) -> PptCombinationSelectionProposal:
+        payload = json.dumps(
+            {
+                "stage": "final_combination_selection",
+                "price_band_index": index,
+                "required_combination_count": combination_count,
+                "items_per_combination": "2-4",
+                "scene_context": scene_context,
+                "combinations": finalists,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        allowed_keys = {str(row["id"]) for row in finalists}
+        retry_note = ""
+        for attempt in range(self.MAX_PROVIDER_ATTEMPTS):
+            try:
+                result = await self.provider.structured_completion(
+                    system_prompt=(
+                        "你是类型 5 组合推品最终选择助手。每个 combinations 条目已经由后端保证"
+                        "为 2 到 4 件商品且组合协议价总和符合价格档。"
+                        "根据客户场景、商品相关性、组合的互补性以及各商品综合性价比，"
+                        "返回恰好 required_combination_count 个最优组合。"
+                        "客户没有明确限定单一类目时，优先让不同组合覆盖多个相关三级类目，"
+                        "但不得为凑类目选择明显不相关商品。"
+                        "只返回服务端给出的组合短编号，不能重复、遗漏数量或编造理由。"
+                        "严格返回 JSON。"
+                    ),
+                    user_prompt=f"{payload}{retry_note}",
+                    response_model=PptCombinationSelectionProposal,
+                    max_tokens=min(
+                        self.settings.ppt_ai_output_token_budget, self.settings.deepseek_max_tokens
+                    ),
+                )
+                if len(result.combination_keys) != combination_count:
+                    raise RecommendationAgentContractError("类型 5 AI 未返回指定数量的组合")
+                if any(key not in allowed_keys for key in result.combination_keys):
+                    raise RecommendationAgentContractError("类型 5 AI 返回了清单外组合")
+                return result
+            except DeepSeekConfigurationError:
+                raise
+            except (DeepSeekStructuredOutputError, RecommendationAgentContractError) as exc:
+                if attempt + 1 == self.MAX_PROVIDER_ATTEMPTS:
+                    raise
+                detail = (
+                    exc.safe_validation_summary
+                    if isinstance(exc, DeepSeekStructuredOutputError)
+                    else str(exc)
+                )
+                retry_note = f"\n上一次输出无效。请仅返回完整合法 JSON；脱敏错误：{detail}"
+        raise RecommendationAgentContractError("类型 5 AI 未返回最终组合")
+
     @staticmethod
     def _validate_assessments(
         result: PptCandidateAssessmentList, expected_keys: set[str]
@@ -587,6 +922,13 @@ class PptPlanAgentRunner:
         text = str(value).strip() if value is not None else ""
         return text[:max_length] if text else None
 
+    @classmethod
+    def _candidate_price_value(cls, candidate: RecommendationCandidate) -> Decimal:
+        value = cls._decimal(candidate.price_snapshot.get("agreement_price"))
+        if value is None or value <= 0:
+            raise RecommendationAgentContractError("组合候选缺少有效协议价")
+        return value
+
     @staticmethod
     def _validate_provider_result(
         result: PptPlanProposalList,
@@ -672,6 +1014,24 @@ class PptPlanAgentRunner:
             if (price := cls._decimal(candidate.price_snapshot.get("agreement_price"))) is not None
             and price <= maximum
             and (minimum is None or price >= minimum)
+        ]
+
+    @classmethod
+    def combination_band_candidates(
+        cls, band: PptPriceBandInput, candidates: Sequence[RecommendationCandidate]
+    ) -> list[RecommendationCandidate]:
+        """Candidates that can participate in a group whose total fits the band.
+
+        The lower bound applies to the *group total*, not an individual product.
+        A product costing more than the upper bound can never be part of a valid
+        positive-price group, so it is excluded deterministically here.
+        """
+        return [
+            candidate
+            for candidate in candidates
+            if (price := cls._decimal(candidate.price_snapshot.get("agreement_price"))) is not None
+            and price > 0
+            and price <= band.max_price
         ]
 
     @staticmethod
