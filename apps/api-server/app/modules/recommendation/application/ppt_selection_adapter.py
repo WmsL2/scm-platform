@@ -94,8 +94,17 @@ class PptSelectionJobPort:
                     run_id, "；".join(result.analysis.questions)
                 )
             return
-        async with SessionLocal() as session:
-            count = await PptCatalogService(session).persist_eligible_candidates(run_id)
+        try:
+            async with SessionLocal() as session:
+                count = await PptCatalogService(session).persist_eligible_candidates(run_id)
+        except AppError as exc:
+            logger.warning(
+                "ppt candidate freeze failed run_id=%s code=%s message=%s",
+                run_id,
+                exc.code,
+                exc.message,
+            )
+            raise
         if not count:
             return
         try:
@@ -128,6 +137,12 @@ class PptSelectionJobPort:
                     f"（{exc.error_kind}），请重新生成。",
                 )
         except AppError as exc:
+            logger.warning(
+                "ppt direct selection failed run_id=%s code=%s message=%s",
+                run_id,
+                exc.code,
+                exc.message,
+            )
             async with SessionLocal() as session:
                 await PptCatalogService(session).record_plan_failure(
                     run_id, f"类型 5 AI 商品匹配失败：{exc.message}，请重新生成。"

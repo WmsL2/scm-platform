@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from io import BytesIO
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import ApiResponse, PageParams, success
 from app.core.database import FunctionSessionDep, SessionLocal, get_db_session
+from app.infrastructure.adapters import get_task_queue
 from app.jobs.recommendation_agent import (
     execute_ppt_recommendation_agent_inline,
     execute_recommendation_agent_inline,
@@ -32,6 +34,7 @@ from app.modules.recommendation.schemas import (
 
 router = APIRouter(prefix="/recommendation-projects", tags=["free-recommendation"])
 SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
+logger = logging.getLogger(__name__)
 
 
 def _attachment_headers(filename: str) -> dict[str, str]:
@@ -49,10 +52,11 @@ async def create_run(
     project_id: uuid.UUID,
     current: Annotated[CurrentUser, Depends(require_permission("recommendation:run"))],
     session: SessionDep,
+    background_tasks: BackgroundTasks,
 ) -> ApiResponse[RecommendationRunResponse]:
-    # Type 5 calls an external AI provider inline. Keep it out of the request-owned
-    # transaction so Run creation, candidate freezing and every plan band can commit
-    # independently. Type 4 continues to use the established request transaction.
+    # Type 5 persists its Run before the external model work begins. FastAPI's local
+    # background task returns the browser response immediately; a deployed task queue
+    # can later replace the same abstraction without changing the request contract.
     async with SessionLocal() as lookup_session:
         is_ppt_solution = await PptSolutionRepository(lookup_session).project(project_id)
     if is_ppt_solution is not None:
@@ -60,13 +64,26 @@ async def create_run(
             run = await RecommendationService(create_session).create_run(
                 project_id, current.user_id
             )
-        await execute_ppt_recommendation_agent_inline(run.id)
+        background_tasks.add_task(_dispatch_ppt_recommendation_agent, run.id)
         async with SessionLocal() as result_session:
             return success(await RecommendationService(result_session).get_run(run.id))
     service = RecommendationService(session)
     run = await service.create_run(project_id, current.user_id)
     await execute_recommendation_agent_inline(run.id, session)
     return success(await service.get_run(run.id))
+
+
+async def _dispatch_ppt_recommendation_agent(run_id: uuid.UUID) -> None:
+    """Execute after the HTTP response, with a safe terminal failure on dispatch errors."""
+    try:
+        await get_task_queue().enqueue(execute_ppt_recommendation_agent_inline, run_id)
+    except Exception as exc:
+        logger.exception("type5 recommendation dispatch failed: run_id=%s", run_id)
+        async with SessionLocal() as session:
+            await RecommendationService(session).mark_failed(
+                run_id,
+                f"类型 5 AI 后台任务派发失败（{type(exc).__name__}），请检查任务配置后重新生成。",
+            )
 
 
 @router.get("/{project_id}/runs", response_model=ApiResponse[list[RecommendationRunResponse]])

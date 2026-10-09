@@ -1,7 +1,11 @@
 import json
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from time import perf_counter
 from typing import Any, TypeVar
 
 import httpx
@@ -12,6 +16,31 @@ from app.core.config import Settings, get_settings
 StructuredResult = TypeVar("StructuredResult", bound=BaseModel)
 _FENCED_JSON = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL | re.IGNORECASE)
 logger = logging.getLogger(__name__)
+_request_telemetry: ContextVar["DeepSeekRequestTelemetry | None"] = ContextVar(
+    "deepseek_request_telemetry", default=None
+)
+
+
+@dataclass
+class DeepSeekRequestTelemetry:
+    """Per-request usage data, isolated across concurrent asyncio tasks."""
+
+    label: str
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    provider_duration_ms: int | None = None
+
+
+@contextmanager
+def capture_deepseek_request_telemetry(
+    telemetry: DeepSeekRequestTelemetry,
+) -> Iterator[DeepSeekRequestTelemetry]:
+    token = _request_telemetry.set(telemetry)
+    try:
+        yield telemetry
+    finally:
+        _request_telemetry.reset(token)
 
 
 class DeepSeekConfigurationError(RuntimeError):
@@ -99,6 +128,7 @@ class DeepSeekClient:
             "max_tokens": max_tokens or self.settings.deepseek_max_tokens,
         }
         url = f"{self.settings.deepseek_base_url.rstrip('/')}/chat/completions"
+        request_started = perf_counter()
         try:
             async with httpx.AsyncClient(
                 timeout=self.settings.deepseek_timeout_seconds,
@@ -136,14 +166,24 @@ class DeepSeekClient:
         except (httpx.HTTPError, ValueError) as exc:
             raise DeepSeekProviderError("DeepSeek 请求失败，请稍后重试") from exc
 
+        telemetry = _request_telemetry.get()
+        if telemetry is not None:
+            telemetry.provider_duration_ms = round((perf_counter() - request_started) * 1000)
         usage = body.get("usage") if isinstance(body, dict) else None
         if isinstance(usage, dict):
+            if telemetry is not None:
+                telemetry.prompt_tokens = self._int_or_none(usage.get("prompt_tokens"))
+                telemetry.completion_tokens = self._int_or_none(usage.get("completion_tokens"))
+                telemetry.total_tokens = self._int_or_none(usage.get("total_tokens"))
             logger.info(
-                "deepseek structured usage model=%s prompt=%s completion=%s total=%s",
+                "deepseek structured usage model=%s label=%s prompt=%s completion=%s "
+                "total=%s duration_ms=%s",
                 self.model,
+                telemetry.label if telemetry else None,
                 usage.get("prompt_tokens"),
                 usage.get("completion_tokens"),
                 usage.get("total_tokens"),
+                telemetry.provider_duration_ms if telemetry else None,
             )
 
         try:
@@ -199,6 +239,10 @@ class DeepSeekClient:
             ".".join(str(part) for part in error["loc"]) + f": {error['type']}: {error['msg']}"
             for error in exc.errors(include_input=False, include_url=False)
         )
+
+    @staticmethod
+    def _int_or_none(value: object) -> int | None:
+        return value if isinstance(value, int) else None
 
 
 def compact_json(items: Sequence[BaseModel | dict[str, Any]]) -> str:

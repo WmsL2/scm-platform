@@ -62,6 +62,7 @@ class PptFrozenRecommendationConfig(PptRecommendationConfigUpdateRequest):
     candidate_count_per_band: int = Field(default=1, ge=1, le=500)
     plan_count_per_band: int = Field(default=1, ge=1, le=20)
     selection_mode: Literal["PLANS", "DIRECT"] = "PLANS"
+    frozen_pool_statistics: "PptFrozenPoolStatistics | None" = None
 
     @model_validator(mode="before")
     @classmethod
@@ -79,6 +80,21 @@ class PptFrozenRecommendationConfig(PptRecommendationConfigUpdateRequest):
                 for band in raw_bands
             ]
         return result
+
+
+class PptFrozenPoolPriceBandStatistics(BaseModel):
+    """Immutable Type-5 pool count recorded before direct AI selection prunes it."""
+
+    price_band_index: int = Field(ge=1, le=12)
+    min_price: Decimal | None = Field(default=None, ge=0)
+    max_price: Decimal = Field(gt=0)
+    frozen_candidate_count: int = Field(ge=0)
+    requested_item_count: int = Field(ge=1, le=500)
+
+
+class PptFrozenPoolStatistics(BaseModel):
+    frozen_candidate_count: int = Field(ge=0)
+    price_bands: list[PptFrozenPoolPriceBandStatistics] = Field(default_factory=list)
 
 
 class PptPriceBandAvailabilityResponse(BaseModel):
@@ -149,6 +165,42 @@ class PptPlanProposalList(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     plans: list[PptPlanProposal] = Field(default_factory=list, max_length=240)
+
+
+class PptCandidateAssessment(BaseModel):
+    """One compact scene-and-value assessment for a server-issued candidate key."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_key: str = Field(pattern=r"^c[1-9]\d*$", max_length=32)
+    scene_score: int = Field(ge=0, le=100)
+    value_score: int = Field(ge=0, le=100)
+    overall_score: int = Field(ge=0, le=100)
+
+
+class PptCandidateAssessmentList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assessments: list[PptCandidateAssessment] = Field(default_factory=list, max_length=500)
+
+
+class PptDirectSelectionProposal(BaseModel):
+    """Final direct Type-5 selection using only server-issued candidate keys."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_keys: list[str] = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def unique_candidates(self) -> "PptDirectSelectionProposal":
+        if len(self.candidate_keys) != len(set(self.candidate_keys)):
+            raise ValueError("candidate_keys must be unique")
+        if any(
+            not value.startswith("c") or not value[1:].isdigit()
+            for value in self.candidate_keys
+        ):
+            raise ValueError("candidate_keys must be server-issued short keys")
+        return self
 
 
 class PptPlanReferenceProposal(BaseModel):

@@ -974,6 +974,16 @@ class RecommendationService:
 
     @staticmethod
     def _run_response(run: RecommendationRun) -> RecommendationRunResponse:
+        pool_statistics = None
+        if run.ppt_config_snapshot is not None:
+            try:
+                pool_statistics = PptFrozenRecommendationConfig.model_validate(
+                    run.ppt_config_snapshot
+                ).frozen_pool_statistics
+            except ValueError:
+                # Non-Type-5 runs and legacy malformed snapshots must preserve the
+                # generic RecommendationRun response contract.
+                pool_statistics = None
         return RecommendationRunResponse(
             id=run.id,
             project_id=run.project_id,
@@ -989,6 +999,7 @@ class RecommendationService:
                 if run.category_catalog_snapshot is not None
                 else None
             ),
+            ppt_frozen_pool_statistics=pool_statistics,
             provider=run.provider,
             model=run.model,
             prompt_version=run.prompt_version,

@@ -5,6 +5,21 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-09
 
+> 2026-10-09：类型 5 直接选品新增场景与性价比两阶段 AI 评估。后端保持与类型 4 相同的
+> 受控冻结召回；每个价格档的全部冻结候选按预算分批进行场景、价值和综合评分，高分候选再由
+> AI 精确选出配置数量，不再用未评估商品补数。Run 返回并展示冻结候选总数、各档数量和最终
+> AI 匹配数量。类型 4 不变；无 Migration，新增可选 Run 统计字段（ADR-0051）。
+> 类型 5 首轮评分改为默认 4 路受控并发，压缩规格与卖点文本；高分最终精选保留完整字段。每批
+> 记录候选数、输入长度、重试、耗时和 Token 用量。新 Run 先返回 `QUEUED`，服务端后台执行、
+> 前端每 3 秒轮询；类型 4 的同步链路不变。
+> 后端推荐模块 72 项测试、Ruff、Mypy、前端类型检查、165 项 Vitest 和生产构建通过；
+> 真实 DeepSeek 新 Run 与浏览器端到端验收待执行。
+
+> 2026-10-09：修复类型 5 直接选品在 AI 处理期间短暂展示完整冻结池的问题。冻结完成后 Run
+> 继续处于 `RANKING`，候选表保持隐藏；AI 删除未入选候选、落库最终指定数量后才进入
+> `WAITING_CONFIRMATION`。冻结总数仍仅作统计展示，不能提前被勾选或全选。Type 5 MySQL HTTP
+> 专项 2 项、Ruff、Mypy 通过；真实浏览器新 Run 验收待执行。
+
 > 2026-10-09：类型 5 已从“每档多方案卡”调整为“每个价格档直接 AI 匹配指定数量商品”。配置将
 > 商品数量放入每条价格档；Agent 完成受控类目选择后，每档仅保留一次 AI 匹配并从同档冻结候选
 > 补齐，多个价格档的商品统一在类型 4 风格候选表中由人工复选确认。历史 Run 仍按冻结模式保留
