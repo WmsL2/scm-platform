@@ -1,11 +1,17 @@
 from base64 import b64decode
 from io import BytesIO
 from pathlib import Path
+from zipfile import ZipFile
 
 from pptx import Presentation
 
 from app.modules.recommendation.application.ppt_renderer import PptRenderer
-from app.modules.recommendation.application.ppt_template_registry import list_ppt_templates
+from app.modules.recommendation.application.ppt_template_manifest import PPTX_SLOT_MANIFESTS
+from app.modules.recommendation.application.ppt_template_registry import (
+    get_ppt_template,
+    list_ppt_templates,
+    resolve_ppt_template_asset,
+)
 
 _PNG = b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9J7VIAAAAASUVORK5CYII="
@@ -65,10 +71,10 @@ def _source() -> dict[str, object]:
                     "product_name": "不锈钢保温杯",
                     "brand": "示例品牌",
                     "model": "C-200",
-                "product_specification": "450ml，食品级不锈钢",
-                "selling_points": "虚构测试卖点",
-                "shipping_courier": "测试快递",
-                "warranty_period": "一年",
+                    "product_specification": "450ml，食品级不锈钢",
+                    "selling_points": "虚构测试卖点",
+                    "shipping_courier": "测试快递",
+                    "warranty_period": "一年",
                 },
                 "prices": {
                     "market_price": "129.00",
@@ -130,7 +136,7 @@ def test_each_builtin_template_creates_an_editable_valid_pptx_with_three_package
         deck = Presentation(
             BytesIO(renderer.render(_source(), template_code=template.code, product_images=images))
         )
-        expected_slide_count = 2 if template.code == "SYSTEM_DEFAULT" else 3
+        expected_slide_count = 3 if template.code in {"JD_DETAIL_RED", "JD_FESTIVE_RED"} else 2
         assert len(deck.slides) == expected_slide_count
         text = _all_text(deck)
         assert "不锈钢保温杯" in text
@@ -138,7 +144,10 @@ def test_each_builtin_template_creates_an_editable_valid_pptx_with_three_package
         assert "109.00" in text
         assert "虚构测试卖点" in text
         package_slide = deck.slides[-2]
-        assert sum(shape.shape_type == 13 for shape in package_slide.shapes) == 3
+        # Festive has one retained full-slide background image in addition to the
+        # three dynamic package images; the other source templates do not.
+        expected_pictures = 4 if template.code == "JD_FESTIVE_RED" else 3
+        assert sum(shape.shape_type == 13 for shape in package_slide.shapes) == expected_pictures
         for slide in deck.slides:
             for shape in slide.shapes:
                 assert shape.left >= 0 and shape.top >= 0
@@ -160,6 +169,46 @@ def test_long_details_use_continuation_pages_without_dropping_prices_or_name() -
     assert "¥ 89.00" in text
     assert "¥ 109.00" in text
     assert "长规格" * 20 in text
+
+
+def test_business_price_slot_avoids_body_price_and_missing_images_show_one_notice() -> None:
+    source = _source()
+    source["packages"] = []  # type: ignore[index]
+    for template in list_ppt_templates():
+        if template.code == "SYSTEM_DEFAULT":
+            continue
+        deck = Presentation(BytesIO(PptRenderer().render(source, template_code=template.code)))
+        text = _all_text(deck)
+        assert text.count("协议价：¥ 99.00") == 1
+        assert text.count("人工确认活动价：¥ 89.00") == 1
+        assert text.count("商品图片待补充") == 1
+        assert "快递：待确认" not in text
+        assert "质保：待确认" not in text
+
+
+def test_business_templates_retain_source_canvas_without_source_business_text() -> None:
+    renderer = PptRenderer()
+    for template in list_ppt_templates():
+        if template.code == "SYSTEM_DEFAULT":
+            continue
+        source_deck = Presentation(resolve_ppt_template_asset(get_ppt_template(template.code)))
+        source_strings = {
+            shape.text.strip()
+            for slide in source_deck.slides
+            for shape in slide.shapes
+            if getattr(shape, "has_text_frame", False) and shape.text.strip()
+        }
+        rendered = renderer.render(_source(), template_code=template.code)
+        output = Presentation(BytesIO(rendered))
+        assert (output.slide_width, output.slide_height) == (
+            source_deck.slide_width,
+            source_deck.slide_height,
+        )
+        rendered_text = _all_text(output)
+        assert not source_strings.intersection({rendered_text})
+        assert template.code in PPTX_SLOT_MANIFESTS
+        with ZipFile(BytesIO(rendered)) as archive:
+            assert not any("notesSlides" in name for name in archive.namelist())
 
 
 def test_invalid_builtin_template_is_rejected() -> None:
