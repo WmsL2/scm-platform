@@ -5,6 +5,12 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-09
 
+> 2026-10-09：类型 5 最终 AI 选品新增相关三级类目覆盖策略。客户未明确限定单一类目时，已评分
+> 高分短名单先轮换保留各三级类目的最高分商品，最终 AI 在场景相关候选中尽量覆盖多个类目；
+> 不会为了凑类目选择无关商品，单类目需求或候选不足时仍可同类目多选。无逐件理由输出、无额外
+> 理由 Token、无 API、权限或 Migration 变化；类型 1–4 不变（ADR-0054）。推荐模块 86 项测试、
+> Ruff、Mypy 通过；真实 DeepSeek 新 Run 与浏览器端到端验收待执行。
+
 > 2026-10-09：类型 5 直接选品新增场景与性价比两阶段 AI 评估。后端保持与类型 4 相同的
 > 受控冻结召回；每个价格档的全部冻结候选按预算分批进行场景、价值和综合评分，高分候选再由
 > AI 精确选出配置数量，不再用未评估商品补数。Run 返回并展示冻结候选总数、各档数量和最终

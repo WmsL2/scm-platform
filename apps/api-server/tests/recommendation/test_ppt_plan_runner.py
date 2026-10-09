@@ -92,7 +92,9 @@ class ConcurrentDirectProvider(DirectProvider):
         return await super().structured_completion(**kwargs)
 
 
-def _candidate(price: str, *, rank: int = 1) -> RecommendationCandidate:
+def _candidate(
+    price: str, *, rank: int = 1, category: str = "测试三级类目"
+) -> RecommendationCandidate:
     return RecommendationCandidate(
         id=uuid.uuid4(),
         run_id=uuid.uuid4(),
@@ -101,7 +103,7 @@ def _candidate(price: str, *, rank: int = 1) -> RecommendationCandidate:
         product_snapshot={
             "product_name": f"测试商品 {rank}",
             "brand": "品牌",
-            "category_level3_name": "测试三级类目",
+            "category_level3_name": category,
         },
         supplier_snapshot={},
         price_snapshot={"agreement_price": price},
@@ -294,6 +296,44 @@ async def test_type5_direct_runner_scores_every_frozen_candidate_then_selects_ex
     final_call = json.loads(provider.calls[1]["user_prompt"])
     assert final_call["stage"] == "final_direct_selection"
     assert final_call["required_item_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_type5_direct_runner_keeps_multiple_categories_in_final_shortlist() -> None:
+    candidates = [
+        *[_candidate("120", rank=index, category="炒锅") for index in range(1, 5)],
+        *[_candidate("120", rank=index, category="保温杯") for index in range(5, 9)],
+        *[_candidate("120", rank=index, category="毛巾") for index in range(9, 13)],
+    ]
+    provider = DirectProvider()
+    band = PptFrozenRecommendationConfig.model_validate(
+        {
+            "recommendation_mode": "SINGLE",
+            "price_bands": [{"min_price": "100", "max_price": "200", "item_count": 3}],
+            "selection_mode": "DIRECT",
+        }
+    ).price_bands[0]
+
+    selected = await PptPlanAgentRunner(provider).select_direct_candidates(
+        1,
+        band,
+        candidates,
+        item_count=3,
+        scene_context="客户原始需求：日用品奖品，尽量覆盖实用生活用品",
+    )
+
+    final_call = next(
+        call for call in provider.calls if call["response_model"] is PptDirectSelectionProposal
+    )
+    finalist_categories = {
+        row["category"] for row in json.loads(final_call["user_prompt"])["candidates"]
+    }
+    selected_categories = {
+        item.candidate.product_snapshot["category_level3_name"] for item in selected
+    }
+    assert finalist_categories == {"炒锅", "保温杯", "毛巾"}
+    assert selected_categories == {"炒锅", "保温杯", "毛巾"}
+    assert "尽量覆盖多个三级类目" in final_call["system_prompt"]
 
 
 @pytest.mark.asyncio
