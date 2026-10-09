@@ -25,6 +25,10 @@ from app.modules.recommendation.application.agent_runner import (
 )
 from app.modules.recommendation.application.ppt_plan_runner import PptPlanAgentRunner
 from app.modules.recommendation.application.ppt_renderer import PptRenderer
+from app.modules.recommendation.application.ppt_template_registry import (
+    get_ppt_template,
+    list_ppt_templates,
+)
 from app.modules.recommendation.application.service import RecommendationService
 from app.modules.recommendation.domain.lifecycle import (
     ensure_transition as ensure_recommendation_transition,
@@ -53,6 +57,7 @@ from app.modules.recommendation.ppt_schemas import (
     PptRecommendationConfigUpdateRequest,
     PptSolutionPlanItemResponse,
     PptSolutionPlanResponse,
+    PptTemplateResponse,
 )
 from app.modules.recommendation.schemas import BatchConfirmationRequest
 from app.modules.recommendation.template.schemas import RecommendationRunStatus
@@ -616,6 +621,7 @@ class PptSolutionService:
         actor_id: uuid.UUID,
         *,
         use_default_template: bool,
+        template_code: str | None = None,
     ) -> PptGenerationTaskResponse:
         settings = get_settings()
         async with transaction_scope(self.session):
@@ -635,14 +641,18 @@ class PptSolutionService:
                 raise AppError("PPT_SOLUTION_RUN_NOT_CONFIRMED", "请先确认本次选品", 409)
             if not await self.repository.confirmed_candidates(run_id):
                 raise AppError("PPT_SOLUTION_SELECTION_REQUIRED", "至少选择一个商品", 409)
-            # Type 5 deliberately has one controlled system template. Keep the
-            # request field for wire compatibility, but do not bind project files.
-            del use_default_template
-            template = None
+            # The legacy flag remains accepted. A caller that omits the new field
+            # always receives the system layout, and no global template is ever a
+            # project-file foreign key.
+            selected_template = get_ppt_template(template_code)
+            if template_code is None and not use_default_template:
+                selected_template = get_ppt_template("SYSTEM_DEFAULT")
             task = PptGenerationTask(
                 project_id=project_id,
                 run_id=run_id,
-                template_file_id=template.id if template else None,
+                template_file_id=None,
+                template_code=selected_template.code,
+                template_version=selected_template.version,
                 status=PptGenerationStatus.QUEUED.value,
                 provider="deepseek-python-pptx",
                 model=settings.deepseek_model,
@@ -715,6 +725,8 @@ class PptSolutionService:
                     source,
                     template_path=template_path,
                     product_images=product_images,
+                    template_code=task.template_code,
+                    template_version=task.template_version,
                 )
             version = await self.repository.next_output_version(project.id)
             saved_key = await self.storage.save(
@@ -778,6 +790,19 @@ class PptSolutionService:
 
     async def list_generations(self, project_id: uuid.UUID) -> list[PptGenerationTaskResponse]:
         return [self._task_response(task) for task in await self.repository.generations(project_id)]
+
+    @staticmethod
+    def list_templates() -> list[PptTemplateResponse]:
+        return [
+            PptTemplateResponse(
+                template_code=item.code,
+                name=item.name,
+                description=item.description,
+                preview_url=item.preview_url,
+                version=item.version,
+            )
+            for item in list_ppt_templates()
+        ]
 
     async def download(
         self, task_id: uuid.UUID, file_id: uuid.UUID
@@ -1036,6 +1061,8 @@ class PptSolutionService:
             project_id=task.project_id,
             run_id=task.run_id,
             template_file_id=task.template_file_id,
+            template_code=task.template_code,
+            template_version=task.template_version,
             output_file_id=task.output_file_id,
             status=PptGenerationStatus(task.status),
             provider=task.provider,

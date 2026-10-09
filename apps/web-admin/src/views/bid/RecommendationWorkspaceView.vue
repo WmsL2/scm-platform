@@ -7,6 +7,7 @@ import { bidApi } from "../../api/bid"
 import { recommendationApi } from "../../api/recommendation"
 import { HttpError } from "../../shared/http"
 import { useAuthStore } from "../../stores/auth"
+import { useWorkspaceStore } from "../../stores/workspace"
 import type { BidProjectDetail } from "../../types/bid"
 import {
   RUN_STATUS_LABELS,
@@ -31,6 +32,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const workspace = useWorkspaceStore()
 const projectId = String(route.params.id)
 const loading = ref(false)
 const acting = ref(false)
@@ -65,6 +67,9 @@ const confirmation = reactive({
 let pollTimer: ReturnType<typeof setInterval> | undefined
 
 const mappingConfirmed = computed(() => Boolean(mapping.value?.confirmed_at))
+const isCategoryRecommendation = computed(() => project.value?.recommendation_type === "TYPE_3_CATEGORY")
+const workspaceTitle = computed(() => isCategoryRecommendation.value ? "指定类目推品" : "自由推品 Agent")
+const workspaceCode = computed(() => isCategoryRecommendation.value ? "CATEGORY RECOMMENDATION" : "FREE RECOMMENDATION")
 const activeRun = computed(() => run.value && ["QUEUED", "ANALYZING", "RETRIEVING", "RANKING"].includes(run.value.status))
 const selectionEditable = computed(() => project.value?.status === "SELECTING" && auth.hasPermission("recommendation:review"))
 const canStart = computed(() => mappingConfirmed.value && !activeRun.value && ["IMPORTED", "MATCHING", "SELECTING"].includes(project.value?.status ?? "") && auth.hasPermission("recommendation:run"))
@@ -98,10 +103,15 @@ async function load() {
   try {
     await refreshProject()
     if (project.value?.project_type !== "FREE_RECOMMENDATION") {
-      ElMessage.warning("该项目不是类型4自由推品项目")
+      ElMessage.warning("该项目不是类型3或类型4批量推品项目")
       await router.replace(`/bid-projects/${projectId}`)
       return
     }
+    if (route.meta) route.meta.title = workspaceTitle.value
+    workspace.renameRoute(
+      route.fullPath || route.path || `/bid-projects/${projectId}/recommendation`,
+      workspaceTitle.value,
+    )
     templates.value = await bidApi.recommendationTemplates(projectId)
     const latest = templates.value.at(-1)
     if (latest) {
@@ -120,7 +130,7 @@ async function load() {
     }
     syncPolling()
   } catch (error) {
-    ElMessage.error(messageFor(error, "加载自由推品项目失败"))
+    ElMessage.error(messageFor(error, `加载${workspaceTitle.value}项目失败`))
   } finally {
     loading.value = false
   }
@@ -251,10 +261,10 @@ async function startRun() {
     candidatePage.value = 1
     await refreshRun(run.value.id)
     runHistory.value = await recommendationApi.runs(projectId)
-    if (run.value?.status === "FAILED") ElMessage.error(run.value.error ?? "自由推品任务执行失败")
+    if (run.value?.status === "FAILED") ElMessage.error(run.value.error ?? `${workspaceTitle.value}任务执行失败`)
     else if (run.value?.status === "NEEDS_INPUT") ElMessage.warning(run.value.error ?? "请补充需求信息")
     else if (run.value?.status === "NO_CANDIDATES") ElMessage.warning("没有找到满足当前需求的候选商品")
-    else ElMessage.success("自由推品候选已生成")
+    else ElMessage.success(`${workspaceTitle.value}候选已生成`)
     syncPolling()
   } catch (error) {
     ElMessage.error(messageFor(error, "启动推荐任务失败"))
@@ -362,7 +372,7 @@ async function exportConfirmedCandidates() {
     link.click()
     URL.revokeObjectURL(url)
     await refreshRun(run.value.id)
-    ElMessage.success("自由推品结果已导出")
+    ElMessage.success(`${workspaceTitle.value}结果已导出`)
   } catch (error) {
     ElMessage.error(messageFor(error, "导出确认结果失败"))
   } finally {
@@ -560,7 +570,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
 <template>
   <div v-loading="loading" class="workspace">
     <header>
-      <div><p>FREE RECOMMENDATION</p><h1>{{ project?.project_name ?? "自由推品 Agent" }}</h1><span>{{ project?.remark }}</span></div>
+      <div><p>{{ workspaceCode }}</p><h1>{{ project?.project_name ?? workspaceTitle }}</h1><span>{{ project?.remark }}</span></div>
       <div class="actions"><el-button @click="router.push('/bid-projects')">返回项目</el-button><el-button v-if="['IMPORTED', 'MATCHING', 'SELECTING'].includes(project?.status ?? '')" type="primary" :disabled="!canStart" :loading="acting" @click="startRun">{{ run ? "重新生成推荐" : "开始生成推荐" }}</el-button><el-button v-if="project?.status === 'SELECTING'" type="success" :disabled="!canCompleteSelection" :loading="acting" @click="completeSelection">完成选品</el-button><el-button v-if="['READY', 'EXPORTED'].includes(project?.status ?? '')" :disabled="!canReopenSelection" :loading="acting" @click="reopenSelection">返回调整选品</el-button><el-button v-if="['READY', 'EXPORTED'].includes(project?.status ?? '')" type="success" :disabled="!canExport" :loading="acting" @click="exportConfirmedCandidates">导出确认结果</el-button></div>
     </header>
 
@@ -625,7 +635,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
       <el-pagination v-model:current-page="candidatePage" v-model:page-size="candidatePageSize" :page-sizes="[50, 100, 200]" :total="candidateTotal" layout="total, sizes, prev, pager, next" @current-change="changeCandidatePage" @size-change="changeCandidatePageSize" />
     </el-card>
 
-    <el-empty v-if="mappingConfirmed && !run" description="模板已确认，可以开始生成自由推品推荐" />
+    <el-empty v-if="mappingConfirmed && !run" :description="`模板已确认，可以开始生成${workspaceTitle}推荐`" />
 
     <el-dialog v-model="confirmVisible" title="人工确认候选商品" width="min(640px, 92vw)">
       <el-form label-position="top" :disabled="!selectionEditable"><el-form-item label="活动价"><el-input v-model="confirmation.campaign_price" inputmode="decimal" /></el-form-item><el-form-item label="发货状态"><el-input v-model="confirmation.delivery_status" /></el-form-item><el-form-item label="库存状态"><el-input v-model="confirmation.inventory_status" /></el-form-item><el-form-item label="是否厂直"><el-select v-model="confirmation.factory_direct"><el-option label="待确认" value="PENDING" /><el-option label="是" value="YES" /><el-option label="否" value="NO" /></el-select></el-form-item><el-form-item label="履约说明"><el-input v-model="confirmation.fulfillment_cycle" type="textarea" :rows="3" /></el-form-item><el-form-item label="依据与备注"><el-input v-model="confirmation.evidence" type="textarea" :rows="3" /></el-form-item></el-form>

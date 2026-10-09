@@ -68,6 +68,34 @@ def test_template_analysis_maps_each_column_even_when_a_field_repeats() -> None:
     }
 
 
+def test_type3_template_analysis_skips_reference_sheet_and_maps_result_columns() -> None:
+    workbook = Workbook()
+    reference = workbook.active
+    reference.title = "建投自建类目参考"
+    reference.append(["一级类目", "二级类目", "三级类目"])
+    result = workbook.create_sheet("家用电器")
+    result.append(["客户类目", "sku", "商品名称", "普惠到手", "VIP价格", "69码"])
+    output = BytesIO()
+    workbook.save(output)
+    workbook.close()
+
+    analysis = analyze_template(
+        output.getvalue(), exclude_sheet_title_terms=("参考",)
+    )
+
+    assert analysis.sheet_name == "家用电器"
+    assert analysis.mapping_json == {
+        "version": 2,
+        "columns": [
+            {"column_index": 2, "field_key": "sku"},
+            {"column_index": 3, "field_key": "product_name"},
+            {"column_index": 4, "field_key": "market_price"},
+            {"column_index": 5, "field_key": "agreement_price"},
+            {"column_index": 6, "field_key": "barcode_text"},
+        ],
+    }
+
+
 def test_mapping_contract_rejects_unknown_database_fields() -> None:
     with pytest.raises(ValidationError):
         RecommendationTemplateMappingUpdateRequest(

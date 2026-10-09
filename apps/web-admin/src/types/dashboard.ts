@@ -1,10 +1,11 @@
-import type { BidProjectStatus, BidProjectType } from "./bid"
+import type { BidProjectStatus, BidProjectType, BidRecommendationType } from "./bid"
 
 export interface DashboardRecentProject {
   id: string
   project_code: string
   project_name: string
   project_type: BidProjectType
+  recommendation_type?: BidRecommendationType | null
   status: BidProjectStatus
   updated_at: string
 }

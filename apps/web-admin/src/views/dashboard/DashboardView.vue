@@ -8,8 +8,8 @@ import { useDashboardStore } from "../../stores/dashboard"
 import {
   PROJECT_STATUS_LABELS,
   PROJECT_TYPE_LABELS,
+  RECOMMENDATION_TYPE_LABELS,
   type BidProjectStatus,
-  type BidProjectType,
 } from "../../types/bid"
 import type { DashboardRecentProject, DashboardSummary } from "../../types/dashboard"
 
@@ -47,9 +47,15 @@ function cardValue(value: number | undefined): string {
 }
 
 function projectTarget(project: DashboardRecentProject): string {
-  return project.project_type === "FREE_RECOMMENDATION"
-    ? `/bid-projects/${project.id}/recommendation`
-    : `/bid-projects/${project.id}`
+  if (project.project_type === "FREE_RECOMMENDATION") return `/bid-projects/${project.id}/recommendation`
+  if (project.project_type === "PPT_SOLUTION") return `/bid-projects/${project.id}/ppt-solution`
+  return `/bid-projects/${project.id}`
+}
+
+function projectTypeLabel(project: DashboardRecentProject): string {
+  return project.recommendation_type
+    ? RECOMMENDATION_TYPE_LABELS[project.recommendation_type]
+    : PROJECT_TYPE_LABELS[project.project_type]
 }
 
 function statusTagType(status: BidProjectStatus): "success" | "warning" | "info" | "primary" {
@@ -112,7 +118,7 @@ onMounted(() => void loadSummary())
             </template>
           </el-table-column>
           <el-table-column label="类型" min-width="130">
-            <template #default="{ row }">{{ PROJECT_TYPE_LABELS[row.project_type as BidProjectType] ?? row.project_type }}</template>
+            <template #default="{ row }">{{ projectTypeLabel(row) }}</template>
           </el-table-column>
           <el-table-column label="状态" width="105">
             <template #default="{ row }"><el-tag :type="statusTagType(row.status)" effect="light">{{ PROJECT_STATUS_LABELS[row.status] ?? row.status }}</el-tag></template>

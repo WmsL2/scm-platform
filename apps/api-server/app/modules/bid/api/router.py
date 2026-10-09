@@ -12,7 +12,12 @@ from app.core.database import get_db_session
 from app.modules.auth.dependencies import require_permission
 from app.modules.auth.schemas import CurrentUser
 from app.modules.bid.application.service import BidProjectService
-from app.modules.bid.domain.lifecycle import BidItemStatus, BidProjectStatus, BidProjectType
+from app.modules.bid.domain.lifecycle import (
+    BidItemStatus,
+    BidProjectStatus,
+    BidProjectType,
+    BidRecommendationType,
+)
 from app.modules.bid.schemas import (
     BidProjectCreateResponse,
     BidProjectDetailResponse,
@@ -47,6 +52,7 @@ async def create_bid_project(
     deadline_at: Annotated[datetime | None, Form()] = None,
     remark: Annotated[str | None, Form(max_length=5000)] = None,
     project_type: Annotated[BidProjectType, Form()] = BidProjectType.FILTER_RECOMMENDATION,
+    recommendation_type: Annotated[BidRecommendationType | None, Form()] = None,
     recommendation_template: Annotated[UploadFile | None, File()] = None,
 ) -> ApiResponse[BidProjectCreateResponse]:
     if (
@@ -70,6 +76,7 @@ async def create_bid_project(
                 await recommendation_template.read() if recommendation_template else None
             ),
             project_type=project_type,
+            recommendation_type=recommendation_type,
             actor_id=current.user_id,
         )
     )

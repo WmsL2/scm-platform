@@ -28,6 +28,31 @@ class BidProjectType(StrEnum):
     PPT_SOLUTION = "PPT_SOLUTION"
 
 
+class BidRecommendationType(StrEnum):
+    """User-facing recommendation workflow; project_type remains the internal engine."""
+
+    TYPE_1_SPECIFICATION = "TYPE_1_SPECIFICATION"
+    TYPE_2_IDENTIFIED_PRODUCT = "TYPE_2_IDENTIFIED_PRODUCT"
+    TYPE_3_CATEGORY = "TYPE_3_CATEGORY"
+    TYPE_4_FREE = "TYPE_4_FREE"
+    TYPE_5_PPT = "TYPE_5_PPT"
+
+
+_RECOMMENDATION_PROJECT_TYPES = {
+    BidRecommendationType.TYPE_1_SPECIFICATION: BidProjectType.FILTER_RECOMMENDATION,
+    BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT: BidProjectType.FILTER_RECOMMENDATION,
+    BidRecommendationType.TYPE_3_CATEGORY: BidProjectType.FREE_RECOMMENDATION,
+    BidRecommendationType.TYPE_4_FREE: BidProjectType.FREE_RECOMMENDATION,
+    BidRecommendationType.TYPE_5_PPT: BidProjectType.PPT_SOLUTION,
+}
+
+
+def project_type_for_recommendation_type(
+    recommendation_type: BidRecommendationType,
+) -> BidProjectType:
+    return _RECOMMENDATION_PROJECT_TYPES[recommendation_type]
+
+
 class BidFileType(StrEnum):
     ORIGINAL = "ORIGINAL"
     QUOTED_EXPORT = "QUOTED_EXPORT"

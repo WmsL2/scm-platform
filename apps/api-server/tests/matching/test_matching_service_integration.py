@@ -5,7 +5,12 @@ import pytest
 from sqlalchemy import select
 
 from app.core.database import SessionLocal
-from app.modules.bid.domain.lifecycle import BidImportStatus, BidItemStatus, BidProjectStatus
+from app.modules.bid.domain.lifecycle import (
+    BidImportStatus,
+    BidItemStatus,
+    BidProjectStatus,
+    BidRecommendationType,
+)
 from app.modules.bid.infrastructure.models import (
     BidItemSelection,
     BidProject,
@@ -138,4 +143,90 @@ async def test_matching_persists_candidates_selection_snapshot_and_no_quote() ->
         assert refreshed_project.status == BidProjectStatus.READY.value
         assert unmatched_item.current_selection_id is None
         assert unmatched_item.no_quote_reason is not None
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_type2_automatically_selects_lowest_cost_and_finishes_with_unmatched_rows() -> None:
+    actor_id = uuid.uuid4()
+    token = uuid.uuid4().hex
+    suppliers = [
+        Supplier(
+            supplier_code=f"L{token[:10]}{index}",
+            supplier_name=f"类型2最低价供应商-{index}-{token}",
+            main_brands="Clear",
+            advantage="测试",
+            archive_status=ArchiveStatus.ARCHIVED.value,
+            cooperation_status=CooperationStatus.NORMAL.value,
+        )
+        for index in range(2)
+    ]
+    project = BidProject(
+        project_code=f"BID{token[:12]}",
+        project_name="类型2自动最低价测试",
+        buyer_name="测试买家",
+        status=BidProjectStatus.IMPORTED.value,
+        import_status=BidImportStatus.PARSED.value,
+        recommendation_type=BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value,
+        total_item_count=2,
+        processed_item_count=0,
+        created_by=actor_id,
+    )
+
+    async with SessionLocal() as session:
+        session.add_all([*suppliers, project])
+        await session.flush()
+        expensive = Product(
+            source_supplier_id=suppliers[0].id,
+            sku=f"EXP-{token[:8]}",
+            brand="Clear",
+            model="ARC3",
+            product_name="Clear ARC3",
+            cost_price=Decimal("90.0000"),
+            status=ProductStatus.ACTIVE,
+        )
+        cheapest = Product(
+            source_supplier_id=suppliers[1].id,
+            sku=f"LOW-{token[:8]}",
+            brand="Clear",
+            model="ARC3",
+            product_name="Clear ARC3",
+            cost_price=Decimal("80.0000"),
+            status=ProductStatus.ACTIVE,
+        )
+        matched_item = BidProjectItem(
+            project_id=project.id,
+            sheet_name="Sheet1",
+            source_row_number=2,
+            source_data={"品牌": "Clear", "型号": "ARC3"},
+            brand="Clear",
+            model="ARC3",
+            max_price=Decimal("85.0000"),
+            status=BidItemStatus.PENDING.value,
+        )
+        unmatched_item = BidProjectItem(
+            project_id=project.id,
+            sheet_name="Sheet1",
+            source_row_number=3,
+            source_data={"品牌": "Missing", "型号": "NONE"},
+            brand="Missing",
+            model="NONE",
+            status=BidItemStatus.PENDING.value,
+        )
+        session.add_all([expensive, cheapest, matched_item, unmatched_item])
+        await session.flush()
+
+        await MatchingService(session).start(project.id, actor_id)
+        await session.flush()
+        selection = await session.get(BidItemSelection, matched_item.current_selection_id)
+        refreshed_project = await session.get(BidProject, project.id)
+
+        assert selection is not None
+        assert selection.product_id == cheapest.id
+        assert selection.selected_unit_price == Decimal("80.0000")
+        assert matched_item.status == BidItemStatus.SELECTED.value
+        assert unmatched_item.status == BidItemStatus.NO_MATCH.value
+        assert refreshed_project is not None
+        assert refreshed_project.status == BidProjectStatus.READY.value
+        assert refreshed_project.processed_item_count == 2
         await session.rollback()

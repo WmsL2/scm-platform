@@ -68,6 +68,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     sortByPreferredOrder()
   }
 
+  function renameRoute(path: string, title: string): void {
+    const tab = tabs.value.find((item) => item.path === path)
+    if (tab && title.trim()) tab.title = title.trim()
+  }
+
   function moveByIndex(oldIndex: number, newIndex: number): void {
     if (
       oldIndex === newIndex
@@ -92,5 +97,5 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     tabs.value = [{ ...DASHBOARD_TAB }]
   }
 
-  return { tabs, openRoute, moveByIndex, close, reset }
+  return { tabs, openRoute, renameRoute, moveByIndex, close, reset }
 })

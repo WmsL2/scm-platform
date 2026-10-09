@@ -25,6 +25,7 @@ from app.modules.recommendation.ppt_schemas import (
     PptRecommendationConfigResponse,
     PptRecommendationConfigUpdateRequest,
     PptSolutionPlanResponse,
+    PptTemplateResponse,
 )
 
 router = APIRouter(prefix="/ppt-solution-projects", tags=["ppt-solution"])
@@ -155,12 +156,20 @@ async def create_generation(
             run_id,
             current.user_id,
             use_default_template=payload.use_default_template,
+            template_code=payload.template_code,
         )
     if get_settings().task_mode == "inline":
         await _dispatch_generation(task.id)
     else:
         background_tasks.add_task(_dispatch_generation, task.id)
     return success(task)
+
+
+@router.get("/templates", response_model=ApiResponse[list[PptTemplateResponse]])
+async def list_templates(
+    _: Annotated[CurrentUser, Depends(require_permission("recommendation:detail"))],
+) -> ApiResponse[list[PptTemplateResponse]]:
+    return success(PptSolutionService.list_templates())
 
 
 async def _dispatch_generation(task_id: uuid.UUID) -> None:
