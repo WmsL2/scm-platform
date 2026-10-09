@@ -1,7 +1,7 @@
 """add explicit recommendation type 1-5
 
-Revision ID: 20261009_0051
-Revises: 20261008_0050
+Revision ID: 20261009_0052
+Revises: 20261009_0051
 Create Date: 2026-10-09
 """
 
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "20261009_0051"
-down_revision: str | Sequence[str] | None = "20261008_0050"
+revision: str = "20261009_0052"
+down_revision: str | Sequence[str] | None = "20261009_0051"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

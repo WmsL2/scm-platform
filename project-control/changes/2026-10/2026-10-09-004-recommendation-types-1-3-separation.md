@@ -19,7 +19,7 @@
 
 ## 数据库与权限
 
-- Alembic Revision：`20261009_0051`。
+- Alembic Revision：`20261009_0052`。
 - API 新增可选 multipart 字段 `recommendation_type`；既有 URL 和权限码不变。
 
 ## 验证

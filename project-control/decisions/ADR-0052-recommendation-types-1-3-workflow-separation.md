@@ -1,4 +1,4 @@
-# ADR-0051：类型 1–3 业务类型与内部处理引擎分离
+# ADR-0052：类型 1–3 业务类型与内部处理引擎分离
 
 状态：ACCEPTED  
 日期：2026-10-09
@@ -27,7 +27,7 @@
 
 ## 数据库
 
-Revision `20261009_0051` 新增可空 `recommendation_type` 和受控 Check Constraint，并仅对能
+Revision `20261009_0052` 新增可空 `recommendation_type` 和受控 Check Constraint，并仅对能
 确定类型的历史类型 4、5 项目回填。
 
 ## 后果
