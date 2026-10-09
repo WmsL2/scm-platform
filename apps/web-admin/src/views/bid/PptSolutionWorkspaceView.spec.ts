@@ -28,4 +28,14 @@ describe("PptSolutionWorkspaceView", () => {
     expect(source).toContain("生成 PPT")
     expect(source).toContain("下载 PPTX")
   })
+
+  it("validates every price band before posting the configuration", () => {
+    expect(source).toContain("validatePriceBands")
+    expect(source).toContain("最高价必填")
+    expect(source).toContain("最低价不能大于最高价")
+    expect(source).toContain("价格区间与第")
+    expect(source).toContain("商品数量必须在 1 到 500 之间")
+    expect(source).toContain("priceBandErrors[index]")
+    expect(source).toContain("if (!validatePriceBands())")
+  })
 })
