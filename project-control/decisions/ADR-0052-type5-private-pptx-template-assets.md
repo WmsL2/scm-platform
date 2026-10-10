@@ -1,17 +1,18 @@
-# ADR-0052：类型 5 私有 PPTX 真模板资产
+# ADR-0052：类型 5 审核后 PPTX 模板资产
 
 状态：ACCEPTED
 日期：2026-10-09
 
 ## 决策
 
-- `JD_DETAIL_RED`、`JD_FESTIVE_RED`、`CATALOG_MINIMAL` 和 `UNION_QUOTE_WHITE` 的生成改为读取受控 PPTX 资产中的封面和标准商品页；`SYSTEM_DEFAULT` 继续由既有代码渲染。
+- `JD_DETAIL_RED`、`JD_FESTIVE_RED`、`CATALOG_MINIMAL` 和 `UNION_QUOTE_WHITE` 的生成读取审核后、可公开分发的 PPTX 资产中的封面和标准商品页；`SYSTEM_DEFAULT` 继续由既有代码渲染。
 - 每套资产使用经过人工结构审查的“幻灯片索引 + 形状索引”槽位清单替换商品字段和媒体，禁止通过客户样例文字做模糊匹配。
 - 运行时保留主题、母版、布局、背景和静态关系；新增页会连同关系复制标准商品页。源模板中非授权的商品图片、业务文字、链接、备注和未选页面会被移除或替换。
-- 资产路径由 `PPT_TEMPLATE_ASSET_DIR` 指向部署侧的授权私有目录；仅开发/测试环境可回退到 Git 忽略的 `.codex-assets/ppt-template-sources/`。资产不存在时返回 `PPT_TEMPLATE_ASSET_UNAVAILABLE`，不退回低保真重绘。
+- 未设置 `PPT_TEMPLATE_ASSET_DIR` 时，运行时读取仓库内版本化的 `assets/ppt-templates/`。显式设置该配置时仅读取指定目录；资产不存在时仍返回 `PPT_TEMPLATE_ASSET_UNAVAILABLE`，不退回低保真重绘。
 
 ## 后果
 
-- 原始客户 PPTX 和其媒体始终不进入 Git、镜像或公开构建产物。
+- 已授权的公开分发 CLEAN v3 资产进入 Git，保证克隆仓库即可生成四套内置模板。`local-data/ppt-template-verification/` 的已授权验证模板也可随仓库分发。
+- 未获授权的原始客户 PPTX、客户文本、品牌标识、商品图片、链接、备注和其他媒体仍不得进入 Git、镜像或公开构建产物；公开 CLEAN v3 资产仅保留虚构静态形状、槽位与节庆虚构背景媒体。
 - 模板版本仍由现有任务冻结字段校验；本决策不修改数据库、API 权限或 DeepSeek/候选选择流程。
 - 未取得明确授权的品牌标识或装饰图片不能作为新公共模板资产分发；部署者需对私有资产的授权与脱敏负责。

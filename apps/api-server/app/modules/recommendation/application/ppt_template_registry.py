@@ -17,8 +17,8 @@ class PptTemplateDefinition:
     preview_url: str | None
 
 
-# The four business assets are private, authorised deployment assets. They are never
-# checked into this repository and cannot be selected through a user-provided path.
+# The four business assets are reviewed, public distribution assets. They cannot be
+# selected through a user-provided path; deployments may only override their root.
 PPT_TEMPLATES: tuple[PptTemplateDefinition, ...] = (
     PptTemplateDefinition(
         "SYSTEM_DEFAULT",
@@ -78,9 +78,11 @@ def resolve_ppt_template_asset(template: PptTemplateDefinition) -> Path:
     if template.version != manifest.asset_version:
         raise AppError("PPT_TEMPLATE_ASSET_VERSION_MISMATCH", "PPT 模板资产版本不匹配", 409)
     settings = get_settings()
-    asset_root = settings.ppt_template_asset_dir
-    if asset_root is None and settings.app_env.lower() in {"development", "test"}:
-        asset_root = PROJECT_ROOT / ".codex-assets" / "ppt-template-sources"
+    # Explicit deployment configuration is strict, so a mount/configuration error
+    # continues to fail safely rather than falling back to another source.
+    asset_root = settings.ppt_template_asset_dir or (
+        PROJECT_ROOT / "assets" / "ppt-templates"
+    )
     path = asset_root / manifest.clean_filename if asset_root is not None else None
     if path is None or not path.is_file():
         raise AppError("PPT_TEMPLATE_ASSET_UNAVAILABLE", "所选 PPT 模板资产不可用", 409)
