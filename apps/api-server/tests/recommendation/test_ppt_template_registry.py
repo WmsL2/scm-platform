@@ -12,7 +12,9 @@ def test_builtin_template_catalog_is_fixed_and_complete() -> None:
         "CATALOG_MINIMAL",
         "UNION_QUOTE_WHITE",
     ]
-    assert all(item.version == "1" for item in templates)
+    versions = {item.code: item.version for item in templates}
+    assert versions["SYSTEM_DEFAULT"] == "1"
+    assert all(versions[code] == "3" for code in versions if code != "SYSTEM_DEFAULT")
     assert [item.template_code for item in PptSolutionService.list_templates()] == [
         item.code for item in templates
     ]

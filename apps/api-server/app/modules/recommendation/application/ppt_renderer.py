@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
@@ -14,7 +15,18 @@ from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Inches, Pt
 
 from app.common.contracts import AppError
-from app.modules.recommendation.application.ppt_template_registry import get_ppt_template
+from app.modules.recommendation.application.ppt_template_manifest import (
+    PPTX_SLOT_MANIFESTS,
+    SLOT_BODY,
+    SLOT_IMAGE_PREFIX,
+    SLOT_PRICE,
+    SLOT_TITLE,
+    PptxSlotManifest,
+)
+from app.modules.recommendation.application.ppt_template_registry import (
+    get_ppt_template,
+    resolve_ppt_template_asset,
+)
 
 _DARK = RGBColor(31, 45, 61)  # type: ignore[no-untyped-call]
 _GREY = RGBColor(96, 112, 128)  # type: ignore[no-untyped-call]
@@ -46,14 +58,18 @@ class PptRenderer:
         if template_version is not None and template.version != template_version:
             raise AppError("PPT_TEMPLATE_VERSION_UNAVAILABLE", "所选 PPT 模板版本不可用", 409)
         self._template_code = template.code
+        if template.code != "SYSTEM_DEFAULT":
+            # Business decks are real PPTX templates, not approximations drawn on a
+            # new canvas. A missing private asset is a hard error by design.
+            return self._render_business_template(
+                source, images=product_images or {}, template=template
+            )
         presentation = Presentation(str(template_path)) if template_path else Presentation()
         if template_path is None:
             presentation.slide_width = _SLIDE_WIDTH
             presentation.slide_height = _SLIDE_HEIGHT
 
         images = product_images or {}
-        if template.code != "SYSTEM_DEFAULT":
-            self._add_cover(presentation, source, template.code, template.name)
         for package in self._mappings(source.get("packages")):
             self._add_package_page(presentation, package, images)
         for product in self._mappings(source.get("single_products")):
@@ -62,6 +78,335 @@ class PptRenderer:
         output = BytesIO()
         presentation.save(output)
         return output.getvalue()
+
+    def _render_business_template(
+        self,
+        source: Mapping[str, object],
+        *,
+        images: Mapping[str, bytes],
+        template: Any,
+    ) -> bytes:
+        manifest = PPTX_SLOT_MANIFESTS[template.code]
+        presentation = Presentation(str(resolve_ppt_template_asset(template)))
+        prototype = presentation.slides[manifest.product_slide_index]
+        cover = (
+            presentation.slides[manifest.cover_slide_index]
+            if manifest.cover_slide_index is not None
+            else None
+        )
+        # Remove every unselected customer page before generating. This keeps the
+        # source theme/master/layout but prevents old slides, notes and links from
+        # travelling with the output.
+        for slide in list(presentation.slides):
+            if slide is not prototype and slide is not cover:
+                self._remove_slide(presentation, slide)
+        for slide in (prototype, cover):
+            if slide is not None:
+                self._remove_notes_relationship(slide)
+        if cover is not None:
+            self._replace_cover_text(
+                cover,
+                self._text_value(
+                    self._mapping(source.get("project")), "project_name", "商品推荐方案"
+                ),
+            )
+        entries: list[tuple[str, list[tuple[str, str]], list[bytes]]] = []
+        for package in self._mappings(source.get("packages")):
+            entries.extend(self._package_template_entries(package, images))
+        for item in self._mappings(source.get("single_products")):
+            entries.extend(self._product_template_entries(item, images))
+        if not entries:
+            entries.append(("商品推荐方案", [("提示", "暂无已确认商品")], []))
+        # `prototype` is never populated. Every output page is cloned from the
+        # immutable clean page, so fields/media from product N cannot bleed into N+1.
+        for title, details, page_images in entries:
+            slide = self._clone_slide(presentation, prototype)
+            self._populate_template_slide(slide, manifest, title, details, page_images)
+        self._remove_slide(presentation, prototype)
+        output = BytesIO()
+        presentation.save(output)
+        return output.getvalue()
+
+    @staticmethod
+    def _remove_slide(presentation: Any, slide: Any) -> None:
+        index = list(presentation.slides).index(slide)
+        slide_id = presentation.slides._sldIdLst[index]
+        presentation.part.drop_rel(slide_id.rId)
+        del presentation.slides._sldIdLst[index]
+
+    def _clone_slide(self, presentation: Any, source: Any) -> Any:
+        destination = presentation.slides.add_slide(source.slide_layout)
+        relationship_map: dict[str, str] = {}
+        for relationship in source.part.rels.values():
+            if "notesSlide" in relationship.reltype:
+                continue
+            target = (
+                relationship.target_ref if relationship.is_external else relationship.target_part
+            )
+            relationship_map[relationship.rId] = destination.part.relate_to(
+                target, relationship.reltype, is_external=relationship.is_external
+            )
+        for shape in source.shapes:
+            element = deepcopy(shape.element)
+            for node in element.iter():
+                for key, value in list(node.attrib.items()):
+                    if value in relationship_map:
+                        node.set(key, relationship_map[value])
+            destination.shapes._spTree.insert_element_before(element, "p:extLst")
+        return destination
+
+    @staticmethod
+    def _remove_notes_relationship(slide: Any) -> None:
+        for relationship in list(slide.part.rels.values()):
+            if "notesSlide" in relationship.reltype:
+                slide.part.drop_rel(relationship.rId)
+
+    def _replace_cover_text(self, slide: Any, title: str) -> None:
+        for shape in slide.shapes:
+            if getattr(shape, "has_text_frame", False):
+                self._set_styled_text(shape, title)
+            self._remove_hyperlinks(shape)
+
+    def _populate_template_slide(
+        self,
+        slide: Any,
+        manifest: PptxSlotManifest,
+        title: str,
+        details: list[tuple[str, str]],
+        images: list[bytes],
+    ) -> None:
+        shapes = {shape.name: shape for shape in slide.shapes}
+        body_details = (
+            [line for line in details if "价" not in line[0]] if SLOT_PRICE in shapes else details
+        )
+        body = "\n".join(f"{label}：{value}" for label, value in body_details)
+        if SLOT_TITLE not in shapes and SLOT_BODY not in shapes:
+            raise AppError("PPT_TEMPLATE_SLOT_MISMATCH", "PPT 模板槽位不匹配", 409)
+        title_shape = shapes.get(SLOT_TITLE, shapes[SLOT_BODY])
+        body_shape = shapes.get(SLOT_BODY, title_shape)
+        self._set_styled_text(
+            body_shape,
+            f"{title}\n\n{body}" if body_shape is title_shape else body,
+        )
+        self._fit_slot_text(body_shape, body, minimum=10)
+        if body_shape is not title_shape:
+            self._set_styled_text(title_shape, title)
+            self._fit_slot_text(title_shape, title, minimum=14)
+        if SLOT_PRICE in shapes:
+            price_lines = [line for line in details if "价" in line[0]]
+            self._set_styled_text(
+                shapes[SLOT_PRICE],
+                "\n".join(f"{a}：{b}" for a, b in price_lines) or "价格待确认",
+            )
+            self._fit_slot_text(
+                shapes[SLOT_PRICE], "\n".join(value for _, value in price_lines), minimum=10
+            )
+        image_slots = [name for name in shapes if name.startswith(SLOT_IMAGE_PREFIX)]
+        image_slots.sort()
+        if not image_slots:
+            raise AppError("PPT_TEMPLATE_SLOT_MISMATCH", "PPT 模板图片槽位不匹配", 409)
+        if len(image_slots) == 1 and len(images) > 1:
+            # The catalogue source has one hero-image placeholder. A package keeps
+            # the original image region but divides it into an in-region grid.
+            slot_name = image_slots[0]
+            hero = shapes[slot_name]
+            image_slots = [slot_name] * min(len(images), 4)
+            slot_rectangles = self._grid_rectangles(
+                hero.left, hero.top, hero.width, hero.height, len(image_slots)
+            )
+        else:
+            slot_rectangles = []
+        removed_shapes: set[str] = set()
+        for slot_number, slot_name in enumerate(image_slots):
+            shape = shapes[slot_name]
+            left, top, width, height = shape.left, shape.top, shape.width, shape.height
+            if slot_rectangles:
+                left, top, width, height = slot_rectangles[slot_number]
+            if slot_name not in removed_shapes:
+                element = shape._element
+                element.getparent().remove(element)
+                removed_shapes.add(slot_name)
+            content = images[slot_number] if slot_number < len(images) else None
+            if content is not None and self._add_contained_image_emu(
+                slide, content, left, top, width, height
+            ):
+                continue
+            if slot_number > 0 or images:
+                continue
+            box = slide.shapes.add_textbox(
+                left, top + height // 2 - Inches(0.16), width, Inches(0.32)
+            )
+            self._set_styled_text(box, "商品图片待补充")
+            box.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
+        for shape in slide.shapes:
+            self._remove_hyperlinks(shape)
+
+    @staticmethod
+    def _grid_rectangles(
+        left: int, top: int, width: int, height: int, count: int
+    ) -> list[tuple[int, int, int, int]]:
+        columns = 2 if count > 1 else 1
+        rows = 2 if count > 2 else 1
+        cell_width, cell_height = width // columns, height // rows
+        return [
+            (
+                left + (number % columns) * cell_width,
+                top + (number // columns) * cell_height,
+                cell_width,
+                cell_height,
+            )
+            for number in range(count)
+        ]
+
+    @staticmethod
+    def _set_styled_text(shape: Any, value: str) -> None:
+        frame = shape.text_frame
+        paragraph = frame.paragraphs[0]
+        run = paragraph.runs[0] if paragraph.runs else paragraph.add_run()
+        run.text = value
+        for extra in list(paragraph._element):
+            if extra is not run._r and (
+                extra.tag.endswith("}r") or extra.tag.endswith("}br") or extra.tag.endswith("}fld")
+            ):
+                paragraph._element.remove(extra)
+        for extra_paragraph in list(frame.paragraphs)[1:]:
+            extra_paragraph._element.getparent().remove(extra_paragraph._element)
+        frame.word_wrap = True
+
+    @staticmethod
+    def _fit_slot_text(shape: Any, value: str, *, minimum: int) -> None:
+        """Use the existing run styling for short text; only reduce long text."""
+        capacity = max(24, int((shape.width / Inches(1)) * (shape.height / Inches(1)) * 16))
+        if len(value) <= capacity:
+            return
+        run = shape.text_frame.paragraphs[0].runs[0]
+        ratio = max(0.55, capacity / len(value))
+        inherited = run.font.size.pt if run.font.size is not None else 18
+        run.font.size = Pt(max(minimum, int(inherited * ratio)))
+
+    @staticmethod
+    def _remove_hyperlinks(shape: Any) -> None:
+        if not getattr(shape, "has_text_frame", False):
+            return
+        for node in shape._element.iter():
+            if node.tag.endswith("}hlinkClick") or node.tag.endswith("}hlinkMouseOver"):
+                node.getparent().remove(node)
+
+    def _product_template_entries(
+        self, item: Mapping[str, object], images: Mapping[str, bytes]
+    ) -> list[tuple[str, list[tuple[str, str]], list[bytes]]]:
+        product, manual, prices = (
+            self._mapping(item.get(key)) for key in ("product", "manual", "prices")
+        )
+        title = self._text_value(product, "product_name", "推荐商品")
+        price_label, display_price = self._display_price(item)
+        details = self._compact_product_details(product, manual, prices, price_label, display_price)
+        if evidence := self._text_value(manual, "evidence", ""):
+            details.append(("备注", evidence))
+        return [
+            (
+                title if number == 1 else f"{title}（详情续页 {number}）",
+                page,
+                [images[product_id]]
+                if number == 1 and (product_id := self._text_value(product, "id", "")) in images
+                else [],
+            )
+            for number, page in enumerate(self._paginate_details(details), start=1)
+        ]
+
+    def _compact_product_details(
+        self,
+        product: Mapping[str, object],
+        manual: Mapping[str, object],
+        prices: Mapping[str, object],
+        price_label: str,
+        display_price: str,
+    ) -> list[tuple[str, str]]:
+        details = [
+            (label, value)
+            for label, value in (
+                ("品牌", self._text_value(product, "brand", "")),
+                ("型号", self._text_value(product, "model", "")),
+                ("核心规格", self._summary_text(product.get("product_specification"), 4)),
+                ("核心卖点", self._summary_text(product.get("selling_points"), 2)),
+            )
+            if value
+        ]
+        details.extend(
+            [
+                ("市场价", self._money(prices.get("market_price"))),
+                ("京东价", self._money(prices.get("jd_price"))),
+                ("协议价", self._money(prices.get("agreement_price"))),
+            ]
+        )
+        if price_label == "人工确认活动价":
+            details.append((price_label, display_price))
+        actual_delivery = self._text_value(manual, "delivery_status", "")
+        if actual_delivery and actual_delivery != "以项目要求为准":
+            details.append(("配送", actual_delivery))
+        return details
+
+    @staticmethod
+    def _summary_text(value: object, maximum_lines: int) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        parts = [part.strip() for part in raw.replace("；", "\n").replace("。", "\n").splitlines()]
+        selected = [part for part in parts if part][:maximum_lines]
+        return "；".join(selected)[:180]
+
+    def _package_template_entries(
+        self, package: Mapping[str, object], images: Mapping[str, bytes]
+    ) -> list[tuple[str, list[tuple[str, str]], list[bytes]]]:
+        items = self._mappings(package.get("items"))
+        details = [
+            (
+                "套装组成",
+                "\n".join(self._package_item_line(i, item) for i, item in enumerate(items, 1))
+                or "—",
+            ),
+            ("价格档位", self._money(package.get("price_tier"))),
+            ("套装总价", self._money(package.get("total_price"))),
+            ("方案说明", self._text_value(package, "reason", "人工确认的组合方案")),
+        ]
+        title = self._text_value(package, "name", "商品组合方案")
+        page_images = [
+            images[product_id]
+            for item in items
+            if (
+                product_id := self._text_value(
+                    self._mapping(item.get("product_snapshot")), "id", ""
+                )
+            )
+            in images
+        ]
+        return [
+            (
+                title if number == 1 else f"{title}（详情续页 {number}）",
+                page,
+                page_images if number == 1 else [],
+            )
+            for number, page in enumerate(self._paginate_details(details), start=1)
+        ]
+
+    def _add_contained_image_emu(
+        self, slide: Any, content: bytes, left: int, top: int, width: int, height: int
+    ) -> bool:
+        try:
+            with Image.open(BytesIO(content)) as image:
+                image_width, image_height = image.size
+        except (UnidentifiedImageError, OSError, ValueError):
+            return False
+        scale = min(width / image_width, height / image_height)
+        rendered_width, rendered_height = int(image_width * scale), int(image_height * scale)
+        slide.shapes.add_picture(
+            BytesIO(content),
+            left + (width - rendered_width) // 2,
+            top + (height - rendered_height) // 2,
+            width=rendered_width,
+            height=rendered_height,
+        )
+        return True
 
     @staticmethod
     def _mapping(value: object) -> Mapping[str, object]:
@@ -205,9 +550,7 @@ class PptRenderer:
             panel.line.fill.background()
         else:
             fill.fore_color.rgb = RGBColor(255, 247, 247)  # type: ignore[no-untyped-call]
-            banner = slide.shapes.add_shape(
-                MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(0.82)
-            )
+            banner = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(0.82))
             banner.fill.solid()
             banner.fill.fore_color.rgb = RGBColor(190, 38, 38)  # type: ignore[no-untyped-call]
             banner.line.fill.background()
