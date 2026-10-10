@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     task_mode: str = "inline"
     storage_mode: str = "local"
     local_storage_path: Path = Path("local-data/files")
+    # Production must point at the access-controlled, authorised PPTX asset store.
+    # The repository-local default is only available to local development and is gitignored.
+    ppt_template_asset_dir: Path | None = None
     product_import_max_file_mb: int = 1024
     product_import_max_rows: int = 100_000
     product_import_max_concurrent_workbooks: int = 1
@@ -55,6 +58,14 @@ class Settings(BaseSettings):
     @field_validator("local_storage_path", mode="before")
     @classmethod
     def resolve_local_storage_path(cls, value: str | Path) -> Path:
+        path = Path(value)
+        return path if path.is_absolute() else PROJECT_ROOT / path
+
+    @field_validator("ppt_template_asset_dir", mode="before")
+    @classmethod
+    def resolve_ppt_template_asset_dir(cls, value: str | Path | None) -> Path | None:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
         path = Path(value)
         return path if path.is_absolute() else PROJECT_ROOT / path
 
