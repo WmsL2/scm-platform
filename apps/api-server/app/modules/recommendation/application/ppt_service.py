@@ -27,6 +27,7 @@ from app.modules.recommendation.application.ppt_plan_runner import PptPlanAgentR
 from app.modules.recommendation.application.ppt_renderer import PptRenderer
 from app.modules.recommendation.application.ppt_template_registry import (
     get_ppt_template,
+    is_ppt_template_available,
     list_ppt_templates,
 )
 from app.modules.recommendation.application.service import RecommendationService
@@ -378,7 +379,7 @@ class PptSolutionService:
             config = await RecommendationService(
                 context_session
             ).ppt_recommendation_config_for_run(run_id)
-            if config.recommendation_mode != "COMBINATION":
+            if config.recommendation_mode not in {"COMBINATION", "MIXED"}:
                 raise AppError("PPT_COMBINATION_MODE_REQUIRED", "当前任务不是组合推品模式", 409)
             candidates = await context_service.repository.candidates(run_id)
             scene_context = self._direct_selection_scene_context(run)
@@ -656,6 +657,15 @@ class PptSolutionService:
             run = await self.repository.run_for_update(run_id)
             if run is None:
                 raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
+            config = await RecommendationService(self.session).ppt_recommendation_config_for_run(
+                run_id
+            )
+            if config.recommendation_mode != "COMBINATION":
+                raise AppError(
+                    "PPT_PACKAGE_COMBINATION_MODE_REQUIRED",
+                    "单品推品不支持组成套装，请使用组合推品模式",
+                    409,
+                )
             project = await self.repository.project_for_update(run.project_id)
             if project is None:
                 raise AppError("PPT_SOLUTION_PROJECT_NOT_FOUND", "PPT 方案项目不存在", 404)
@@ -787,6 +797,30 @@ class PptSolutionService:
             selected_template = get_ppt_template(template_code)
             if template_code is None and not use_default_template:
                 selected_template = get_ppt_template("SYSTEM_DEFAULT")
+            if not is_ppt_template_available(selected_template):
+                raise AppError(
+                    "PPT_TEMPLATE_ASSET_UNAVAILABLE",
+                    "所选 PPT 模板资产不可用，请选择系统默认版或联系管理员配置模板资产",
+                    409,
+                )
+            config = await RecommendationService(self.session).ppt_recommendation_config_for_run(
+                run_id
+            )
+            is_combination_mode = config.recommendation_mode in {"COMBINATION", "MIXED"}
+            has_selected_combination = any(
+                plan.is_selected and plan.plan_type == "COMBINATION"
+                for plan in await self.repository.plans(run_id)
+            )
+            if (
+                is_combination_mode
+                and not has_selected_combination
+                and not await self.list_packages(run_id)
+            ):
+                raise AppError(
+                    "PPT_COMBINATION_SELECTION_REQUIRED",
+                    "请至少确认一个 AI 组合后再生成 PPT",
+                    409,
+                )
             task = PptGenerationTask(
                 project_id=project_id,
                 run_id=run_id,
@@ -812,23 +846,29 @@ class PptSolutionService:
             if project is None:
                 raise AppError("PPT_SOLUTION_PROJECT_NOT_FOUND", "PPT 方案项目不存在", 404)
             candidates = await self.repository.confirmed_candidates(task.run_id)
-            packages = await self.list_packages(task.run_id)
-            packaged_candidate_ids = {
-                item.candidate_id for package in packages for item in package.items
-            }
-            template = (
-                await self.session.get(BidProjectFile, task.template_file_id)
-                if task.template_file_id
-                else None
+            config = await RecommendationService(self.session).ppt_recommendation_config_for_run(
+                task.run_id
             )
-            source = {
-                "project": {
-                    "project_code": project.project_code,
-                    "project_name": project.project_name,
-                    "buyer_name": project.buyer_name,
-                    "requirement": project.remark,
-                },
-                "single_products": [
+            packages: list[dict[str, object]] = []
+            single_products: list[dict[str, object]] = []
+            if config.recommendation_mode in {"COMBINATION", "MIXED"}:
+                plans = await self.repository.plans(task.run_id)
+                packages = self._selected_combination_plan_sources(config, plans, candidates)
+                # Preserve old manually-created combination packages only for historical
+                # runs which predate persisted AI combination selections.
+                if not packages:
+                    packages = [
+                        item.model_dump(mode="json")
+                        for item in await self.list_packages(task.run_id)
+                    ]
+                if not packages:
+                    raise AppError(
+                        "PPT_COMBINATION_SELECTION_REQUIRED",
+                        "请至少确认一个 AI 组合后再生成 PPT",
+                        409,
+                    )
+            else:
+                single_products = [
                     {
                         "candidate_id": str(candidate.id),
                         "product": candidate.product_snapshot,
@@ -847,9 +887,21 @@ class PptSolutionService:
                         },
                     }
                     for candidate, confirmation in candidates
-                    if candidate.id not in packaged_candidate_ids
-                ],
-                "packages": [item.model_dump(mode="json") for item in packages],
+                ]
+            template = (
+                await self.session.get(BidProjectFile, task.template_file_id)
+                if task.template_file_id
+                else None
+            )
+            source = {
+                "project": {
+                    "project_code": project.project_code,
+                    "project_name": project.project_name,
+                    "buyer_name": project.buyer_name,
+                    "requirement": project.remark,
+                },
+                "single_products": single_products,
+                "packages": packages,
             }
             product_images = await self._load_product_images(candidates)
             # Rendering can load a customer template. Close the read transaction before
@@ -940,9 +992,74 @@ class PptSolutionService:
                 description=item.description,
                 preview_url=item.preview_url,
                 version=item.version,
+                is_available=is_ppt_template_available(item),
             )
             for item in list_ppt_templates()
         ]
+
+    @classmethod
+    def _selected_combination_plan_sources(
+        cls,
+        config: PptFrozenRecommendationConfig,
+        plans: Sequence[PptSolutionPlan],
+        confirmed_candidates: Sequence[tuple[RecommendationCandidate, RecommendationConfirmation]],
+    ) -> list[dict[str, object]]:
+        """Convert selected AI combination plans into renderer-only package snapshots."""
+        confirmed_by_id = {
+            candidate.id: (candidate, confirmation)
+            for candidate, confirmation in confirmed_candidates
+        }
+        sources: list[dict[str, object]] = []
+        for plan in plans:
+            if not plan.is_selected or plan.plan_type != "COMBINATION":
+                continue
+            if not 1 <= plan.price_band_index <= len(config.price_bands):
+                raise AppError("PPT_COMBINATION_INVALID", "已确认组合缺少有效价格档", 409)
+            items: list[dict[str, object]] = []
+            total_price = Decimal(0)
+            for raw_candidate_id in plan.candidate_ids:
+                candidate_id = uuid.UUID(raw_candidate_id)
+                pair = confirmed_by_id.get(candidate_id)
+                if pair is None:
+                    raise AppError(
+                        "PPT_COMBINATION_CANDIDATE_UNCONFIRMED",
+                        "已确认组合包含未确认商品，不能生成 PPT",
+                        409,
+                    )
+                candidate, confirmation = pair
+                unit_price = cls._candidate_price(
+                    candidate.price_snapshot, confirmation.campaign_price
+                )
+                total_price += unit_price
+                items.append(
+                    {
+                        "candidate_id": str(candidate.id),
+                        "quantity": 1,
+                        "unit_price": str(unit_price),
+                        "line_total": str(unit_price),
+                        "product_snapshot": candidate.product_snapshot,
+                        "price_snapshot": candidate.price_snapshot,
+                    }
+                )
+            if not 2 <= len(items) <= 4:
+                raise AppError("PPT_COMBINATION_INVALID", "已确认组合商品数量无效", 409)
+            band = config.price_bands[plan.price_band_index - 1]
+            if not cls._combination_total_in_band(
+                [confirmed_by_id[uuid.UUID(value)][0] for value in plan.candidate_ids],
+                band.min_price,
+                band.max_price,
+            ):
+                raise AppError("PPT_COMBINATION_PRICE_INVALID", "已确认组合总价不符合价格档", 409)
+            sources.append(
+                {
+                    "name": plan.name,
+                    "price_tier": str(band.max_price),
+                    "total_price": str(total_price),
+                    "reason": plan.summary or "AI 按场景和性价比生成的组合方案",
+                    "items": items,
+                }
+            )
+        return sources
 
     async def download(
         self, task_id: uuid.UUID, file_id: uuid.UUID
