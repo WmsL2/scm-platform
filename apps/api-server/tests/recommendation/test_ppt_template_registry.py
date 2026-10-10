@@ -28,7 +28,7 @@ def test_builtin_template_catalog_is_fixed_and_complete() -> None:
     ]
 
 
-def test_private_template_is_unavailable_without_its_configured_asset(
+def test_explicit_template_asset_directory_is_unavailable_when_it_lacks_an_asset(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
@@ -44,3 +44,16 @@ def test_private_template_is_unavailable_without_its_configured_asset(
     }
     assert available["SYSTEM_DEFAULT"] is True
     assert available["JD_FESTIVE_RED"] is False
+
+
+def test_public_template_assets_are_available_by_default(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ppt_template_registry,
+        "get_settings",
+        lambda: SimpleNamespace(ppt_template_asset_dir=None, app_env="production"),
+    )
+    available = {
+        item.template_code: item.is_available for item in PptSolutionService.list_templates()
+    }
+
+    assert all(available.values())

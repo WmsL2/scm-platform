@@ -5,6 +5,10 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-09
 
+> 2026-10-10：经明确授权，类型 5 四套 CLEAN v3 模板已变为仓库内的公开审核资产
+> `assets/ppt-templates/`，开发者克隆即可生成；`local-data/ppt-template-verification/` 的授权验证
+> 模板也允许版本控制。显式 `PPT_TEMPLATE_ASSET_DIR` 仍严格失败，未授权客户素材继续排除（ADR-0052）。
+
 > 2026-10-10：类型 5 PPT 输出改为按冻结推品模式严格隔离。单品 Run 只渲染已确认单品，不再展示或生成手工套装；组合 Run 只将已确认的 AI 组合转换为 PPT 组合页，兼容无 AI 组合的历史手工套装记录。模板接口改为返回当前部署的实际资产可用性，前端禁用不可用私有模板，生成接口也会在创建任务前拒绝缺失资产；系统默认版不依赖私有资产，可在未配置业务模板目录时正常生成。无 Migration、API 权限变化；类型 1--4 不变。定向后端 18 项、前端 2 项测试、类型检查与生产构建通过；真实浏览器与 PPTX 下载验收待执行。
 
 > 2026-10-10：类型 5 组合推品的每个商品行新增“查看详情”。弹窗仅读取该方案冻结的商品/价格快照，展示图片、SKU、品牌、型号、三级类目、规格、卖点和价格，不额外查询或改写主数据；不改变 AI 组合、人工确认、PPT 渲染、套餐创建、类型 5 单品模式或类型 1--4。无 Migration、API 或权限变化。

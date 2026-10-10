@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     task_mode: str = "inline"
     storage_mode: str = "local"
     local_storage_path: Path = Path("local-data/files")
-    # Production must point at the access-controlled, authorised PPTX asset store.
-    # The repository-local default is only available to local development and is gitignored.
+    # Deployments may override the repository's approved public PPTX assets.
+    # An explicit directory remains strict: missing assets are never silently replaced.
     ppt_template_asset_dir: Path | None = None
     product_import_max_file_mb: int = 1024
     product_import_max_rows: int = 100_000

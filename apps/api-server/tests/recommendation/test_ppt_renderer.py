@@ -255,6 +255,21 @@ def test_each_builtin_template_creates_an_editable_valid_pptx_with_three_package
                 assert shape.top + shape.height <= deck.slide_height
 
 
+def test_public_builtin_assets_render_without_private_asset_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        ppt_template_registry,
+        "get_settings",
+        lambda: SimpleNamespace(ppt_template_asset_dir=None, app_env="production"),
+    )
+    for template in list_ppt_templates():
+        if template.code == "SYSTEM_DEFAULT":
+            continue
+        deck = Presentation(BytesIO(PptRenderer().render(_source(), template_code=template.code)))
+        assert "不锈钢保温杯" in _all_text(deck)
+
+
 def test_long_details_use_continuation_pages_without_dropping_prices_or_name() -> None:
     source = _source()
     product = source["single_products"][0]["product"]  # type: ignore[index]
