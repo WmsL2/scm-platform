@@ -4,7 +4,11 @@ import uuid
 from decimal import Decimal
 
 from app.modules.recommendation.application.ppt_service import PptSolutionService
-from app.modules.recommendation.infrastructure.models import RecommendationCandidate
+from app.modules.recommendation.infrastructure.models import (
+    PptSolutionPlan,
+    RecommendationCandidate,
+    RecommendationConfirmation,
+)
 from app.modules.recommendation.ppt_schemas import PptFrozenRecommendationConfig
 
 
@@ -106,3 +110,43 @@ def test_price_band_availability_reports_the_actual_frozen_candidate_count() -> 
     assert availability[0].candidate_count == 200
     assert availability[0].can_generate is True
     assert "满足每方案 200 件" in availability[0].message
+
+
+def test_selected_combination_plan_becomes_one_renderer_package() -> None:
+    candidates = [_candidate(1, "100"), _candidate(2, "50")]
+    for candidate in candidates:
+        candidate.product_snapshot = {
+            "id": str(candidate.product_id),
+            "product_name": f"商品 {candidate.rank}",
+        }
+    confirmations = [
+        RecommendationConfirmation(candidate_id=candidate.id, campaign_price=None)
+        for candidate in candidates
+    ]
+    config = PptFrozenRecommendationConfig(
+        recommendation_mode="COMBINATION",
+        price_bands=[{"min_price": "100", "max_price": "200", "item_count": 1}],
+        fulfillment_deadline=None,
+    )
+    plan = PptSolutionPlan(
+        run_id=uuid.uuid4(),
+        price_band_index=1,
+        plan_no=1,
+        plan_type="COMBINATION",
+        name="100–200 元 · 组合 1",
+        summary="2 件商品 · 组合总协议价 150.00 元",
+        candidate_ids=[str(candidate.id) for candidate in candidates],
+        selection_source="AI",
+        is_selected=True,
+    )
+
+    sources = PptSolutionService._selected_combination_plan_sources(
+        config,
+        [plan],
+        list(zip(candidates, confirmations, strict=True)),
+    )
+
+    assert len(sources) == 1
+    assert sources[0]["name"] == plan.name
+    assert sources[0]["total_price"] == "150"
+    assert [item["quantity"] for item in sources[0]["items"]] == [1, 1]

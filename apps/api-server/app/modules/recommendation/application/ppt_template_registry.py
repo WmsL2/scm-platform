@@ -85,3 +85,14 @@ def resolve_ppt_template_asset(template: PptTemplateDefinition) -> Path:
     if path is None or not path.is_file():
         raise AppError("PPT_TEMPLATE_ASSET_UNAVAILABLE", "所选 PPT 模板资产不可用", 409)
     return path
+
+
+def is_ppt_template_available(template: PptTemplateDefinition) -> bool:
+    """Report whether this deployment can render the requested built-in template."""
+    if template.code == "SYSTEM_DEFAULT":
+        return True
+    try:
+        resolve_ppt_template_asset(template)
+    except AppError:
+        return False
+    return True
