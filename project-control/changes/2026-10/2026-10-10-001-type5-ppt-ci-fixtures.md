@@ -1,7 +1,7 @@
 # Change Record：类型 5 PPT 私有资产 CI 测试夹具
 
-日期：2026-10-10  
-分支：`codex/feat/type5-ppt-clean-v3`  
+日期：2026-10-10
+分支：`codex/feat/type5-ppt-clean-v3`
 模块：recommendation
 
 ## 变更
