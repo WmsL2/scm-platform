@@ -5,7 +5,7 @@ from uuid import UUID
 
 from app.common.contracts import AppError
 from app.core.database import SessionLocal
-from app.integrations.deepseek.client import DeepSeekStructuredOutputError
+from app.integrations.deepseek.client import DeepSeekProviderError, DeepSeekStructuredOutputError
 from app.modules.recommendation.application.agent_runner import StructuredProvider
 from app.modules.recommendation.application.agent_schemas import (
     AgentRecommendationResult,
@@ -116,7 +116,14 @@ class PptSelectionJobPort:
                     and isinstance(run.ppt_config_snapshot, dict)
                     and run.ppt_config_snapshot.get("selection_mode") == "DIRECT"
                 )
-                if direct_selection:
+                selection_mode = (
+                    run.ppt_config_snapshot.get("selection_mode")
+                    if run and isinstance(run.ppt_config_snapshot, dict)
+                    else None
+                )
+                if selection_mode == "COMBINATIONS":
+                    await service.retain_ai_matched_combinations(run_id, self.provider)
+                elif direct_selection:
                     await service.retain_ai_matched_candidates(run_id, self.provider)
                 else:
                     # Historical Runs keep their persisted plan cards available.
@@ -147,6 +154,17 @@ class PptSelectionJobPort:
                 await PptCatalogService(session).record_plan_failure(
                     run_id, f"类型 5 AI 商品匹配失败：{exc.message}，请重新生成。"
                 )
+        except DeepSeekProviderError as exc:
+            logger.warning(
+                "ppt provider failed run_id=%s error_kind=%s retryable=%s",
+                run_id,
+                exc.error_kind,
+                exc.retryable,
+            )
+            async with SessionLocal() as session:
+                await PptCatalogService(session).record_plan_failure(
+                    run_id, self._safe_provider_failure_message(exc)
+                )
         except Exception as exc:
             # Candidate recall remains usable and auditable even if direct matching fails.
             detail = f"（{type(exc).__name__}）"
@@ -162,3 +180,15 @@ class PptSelectionJobPort:
     async def cancelled(self, run_id: UUID) -> None:
         async with SessionLocal() as session:
             await PptCatalogService(session).mark_cancelled(run_id)
+
+    @staticmethod
+    def _safe_provider_failure_message(exc: DeepSeekProviderError) -> str:
+        if exc.error_kind == "TIMEOUT":
+            return "类型 5 AI 商品匹配超时，请稍后重新生成。"
+        if exc.error_kind == "HTTP_429":
+            return "类型 5 AI 请求过于频繁，已触发服务限流，请稍后重新生成。"
+        if exc.error_kind.startswith("HTTP_5"):
+            return "类型 5 AI 服务暂时异常，请稍后重新生成。"
+        if exc.error_kind == "CONTEXT_LENGTH_EXCEEDED":
+            return "类型 5 AI 请求内容超过服务限制，请缩小配置后重新生成。"
+        return "类型 5 AI 服务请求失败，请检查服务配置后重新生成。"

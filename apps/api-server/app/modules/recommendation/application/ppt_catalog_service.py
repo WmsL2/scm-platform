@@ -246,8 +246,14 @@ class PptCatalogService:
                         frozen_candidate_count=sum(
                             1
                             for product, _supplier in rows
-                            if self._matches_price_band(
-                                product.agreement_price, band.min_price, band.max_price
+                            if (
+                                self._matches_combination_source(
+                                    product.agreement_price, band.max_price
+                                )
+                                if config.recommendation_mode == "COMBINATION"
+                                else self._matches_price_band(
+                                    product.agreement_price, band.min_price, band.max_price
+                                )
                             )
                         ),
                         requested_item_count=band.item_count,
@@ -260,7 +266,7 @@ class PptCatalogService:
             ).model_dump(mode="json")
             direct_selection = (
                 isinstance(run.ppt_config_snapshot, dict)
-                and run.ppt_config_snapshot.get("selection_mode") == "DIRECT"
+                and run.ppt_config_snapshot.get("selection_mode") in {"DIRECT", "COMBINATIONS"}
             )
             project = self._ensure_ppt_project(
                 await self.repository.project_for_update(run.project_id)
@@ -283,6 +289,10 @@ class PptCatalogService:
         price: Decimal | None, minimum: Decimal | None, maximum: Decimal
     ) -> bool:
         return price is not None and price <= maximum and (minimum is None or price >= minimum)
+
+    @staticmethod
+    def _matches_combination_source(price: Decimal | None, maximum: Decimal) -> bool:
+        return price is not None and price > 0 and price <= maximum
 
     async def mark_needs_input(self, run_id: uuid.UUID, error: str) -> None:
         await self._mark_terminal(

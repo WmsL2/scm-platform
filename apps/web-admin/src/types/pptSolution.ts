@@ -32,6 +32,10 @@ export interface PptSolutionPlan {
   name: string
   summary: string | null
   candidate_ids: string[]
+  selection_source: string
+  selection_provider: string | null
+  selection_model: string | null
+  selection_prompt_version: string | null
   is_selected: boolean
   selected_by: string | null
   selected_at: string | null
