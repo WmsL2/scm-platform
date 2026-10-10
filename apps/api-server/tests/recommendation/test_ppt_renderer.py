@@ -1,21 +1,113 @@
 from base64 import b64decode
+from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from zipfile import ZipFile
 
+import pytest
 from pptx import Presentation
+from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.util import Inches
 
+from app.common.contracts import AppError
+from app.modules.recommendation.application import ppt_renderer, ppt_template_registry
 from app.modules.recommendation.application.ppt_renderer import PptRenderer
-from app.modules.recommendation.application.ppt_template_manifest import PPTX_SLOT_MANIFESTS
+from app.modules.recommendation.application.ppt_template_manifest import (
+    PPTX_SLOT_MANIFESTS,
+    SLOT_BODY,
+    SLOT_IMAGE_PREFIX,
+    SLOT_PRICE,
+    SLOT_TITLE,
+)
 from app.modules.recommendation.application.ppt_template_registry import (
     get_ppt_template,
     list_ppt_templates,
-    resolve_ppt_template_asset,
 )
 
 _PNG = b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9J7VIAAAAASUVORK5CYII="
 )
+
+
+def _add_static_shape(
+    slide: object, *, left: float, top: float, width: float, height: float
+) -> None:
+    shape = slide.shapes.add_shape(  # type: ignore[attr-defined]
+        MSO_SHAPE.RECTANGLE, Inches(left), Inches(top), Inches(width), Inches(height)
+    )
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = RGBColor(230, 230, 230)
+    shape.line.fill.background()
+
+
+def _add_text_slot(
+    slide: object, name: str, *, left: float, top: float, width: float, height: float
+) -> None:
+    slot = slide.shapes.add_textbox(  # type: ignore[attr-defined]
+        Inches(left), Inches(top), Inches(width), Inches(height)
+    )
+    slot.name = name
+    slot.text = "虚构模板槽位"
+
+
+def _write_business_template_fixture(path: Path, template_code: str) -> None:
+    """Create the minimum fictional clean deck required by the runtime slot contract."""
+    manifest = PPTX_SLOT_MANIFESTS[template_code]
+    deck = Presentation()
+    deck.slide_width = Inches(13.333333)
+    deck.slide_height = Inches(7.5)
+
+    if manifest.cover_slide_index is not None:
+        cover = deck.slides.add_slide(deck.slide_layouts[6])
+        _add_static_shape(cover, left=0, top=0, width=13.333333, height=7.5)
+        _add_text_slot(cover, "SCM_FIXTURE_COVER", left=1, top=3, width=11, height=0.8)
+
+    product = deck.slides.add_slide(deck.slide_layouts[6])
+    _add_static_shape(product, left=0, top=0, width=13.333333, height=0.2)
+    _add_text_slot(product, SLOT_TITLE, left=6, top=0.5, width=6, height=0.7)
+    _add_text_slot(product, SLOT_BODY, left=6, top=1.4, width=6, height=3.8)
+    if SLOT_PRICE in manifest.source_text_slots:
+        _add_text_slot(product, SLOT_PRICE, left=6, top=5.4, width=6, height=1.1)
+    if template_code == "JD_FESTIVE_RED":
+        # A fictional static background image must survive cloning while product
+        # images are replaced in the named dynamic slots.
+        product.shapes.add_picture(BytesIO(_PNG), 0, 0, deck.slide_width, deck.slide_height)
+    image_count = len(manifest.source_image_slots)
+    for index in range(image_count):
+        _add_text_slot(
+            product,
+            f"{SLOT_IMAGE_PREFIX}{index + 1}",
+            left=0.6 + (index % 2) * 2.5,
+            top=1.0 + (index // 2) * 2.2,
+            width=2.2,
+            height=2.0,
+        )
+    deck.save(path)
+
+
+@pytest.fixture
+def business_template_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> dict[str, Path]:
+    """Point the renderer's directly imported resolver at fictional tmp assets."""
+    paths: dict[str, Path] = {}
+    for template in list_ppt_templates():
+        if template.code == "SYSTEM_DEFAULT":
+            continue
+        path = tmp_path / f"{template.code.lower()}-fixture.pptx"
+        _write_business_template_fixture(path, template.code)
+        paths[template.code] = path
+
+    # ppt_renderer imports this function directly, so patching the registry alone
+    # would leave the actual render call bound to the production resolver.
+    monkeypatch.setattr(
+        ppt_renderer,
+        "resolve_ppt_template_asset",
+        lambda template: paths[template.code],
+    )
+    return paths
 
 
 def _source() -> dict[str, object]:
@@ -97,6 +189,10 @@ def _all_text(deck: Presentation) -> str:
     )
 
 
+def _slide_text(slide: object) -> str:
+    return "\n".join(shape.text for shape in slide.shapes if hasattr(shape, "text"))  # type: ignore[attr-defined]
+
+
 def test_renderer_creates_editable_default_pptx(tmp_path: Path) -> None:
     output = tmp_path / "default.pptx"
     output.write_bytes(PptRenderer().render(_source(), product_images={"single-product": _PNG}))
@@ -124,7 +220,9 @@ def test_renderer_preserves_customer_template_and_appends_editable_pages(tmp_pat
     assert "商品名称：500 元节日套装" in _all_text(deck)
 
 
-def test_each_builtin_template_creates_an_editable_valid_pptx_with_three_package_images() -> None:
+def test_each_builtin_template_creates_an_editable_valid_pptx_with_three_package_images(
+    business_template_assets: dict[str, Path],
+) -> None:
     renderer = PptRenderer()
     images = {
         "single-product": _PNG,
@@ -148,6 +246,8 @@ def test_each_builtin_template_creates_an_editable_valid_pptx_with_three_package
         # three dynamic package images; the other source templates do not.
         expected_pictures = 4 if template.code == "JD_FESTIVE_RED" else 3
         assert sum(shape.shape_type == 13 for shape in package_slide.shapes) == expected_pictures
+        assert "500 元节日套装" in _slide_text(package_slide)
+        assert "不锈钢保温杯" not in _slide_text(package_slide)
         for slide in deck.slides:
             for shape in slide.shapes:
                 assert shape.left >= 0 and shape.top >= 0
@@ -171,7 +271,9 @@ def test_long_details_use_continuation_pages_without_dropping_prices_or_name() -
     assert "长规格" * 20 in text
 
 
-def test_business_price_slot_avoids_body_price_and_missing_images_show_one_notice() -> None:
+def test_business_price_slot_avoids_body_price_and_missing_images_show_one_notice(
+    business_template_assets: dict[str, Path],
+) -> None:
     source = _source()
     source["packages"] = []  # type: ignore[index]
     for template in list_ppt_templates():
@@ -186,12 +288,14 @@ def test_business_price_slot_avoids_body_price_and_missing_images_show_one_notic
         assert "质保：待确认" not in text
 
 
-def test_business_templates_retain_source_canvas_without_source_business_text() -> None:
+def test_business_templates_retain_source_canvas_without_source_business_text(
+    business_template_assets: dict[str, Path],
+) -> None:
     renderer = PptRenderer()
     for template in list_ppt_templates():
         if template.code == "SYSTEM_DEFAULT":
             continue
-        source_deck = Presentation(resolve_ppt_template_asset(get_ppt_template(template.code)))
+        source_deck = Presentation(business_template_assets[template.code])
         source_strings = {
             shape.text.strip()
             for slide in source_deck.slides
@@ -209,6 +313,40 @@ def test_business_templates_retain_source_canvas_without_source_business_text() 
         assert template.code in PPTX_SLOT_MANIFESTS
         with ZipFile(BytesIO(rendered)) as archive:
             assert not any("notesSlides" in name for name in archive.namelist())
+
+
+def test_real_business_asset_missing_still_fails_explicitly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        ppt_template_registry,
+        "get_settings",
+        lambda: SimpleNamespace(ppt_template_asset_dir=tmp_path, app_env="production"),
+    )
+
+    with pytest.raises(AppError) as raised:
+        ppt_template_registry.resolve_ppt_template_asset(get_ppt_template("JD_DETAIL_RED"))
+
+    assert getattr(raised.value, "code", None) == "PPT_TEMPLATE_ASSET_UNAVAILABLE"
+
+
+def test_real_business_asset_version_mismatch_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    template = get_ppt_template("JD_DETAIL_RED")
+    manifest = PPTX_SLOT_MANIFESTS[template.code]
+    monkeypatch.setitem(
+        PPTX_SLOT_MANIFESTS,
+        template.code,
+        replace(manifest, asset_version="fixture-version-mismatch"),
+    )
+
+    with pytest.raises(AppError) as raised:
+        PptRenderer().render(
+            _source(), template_code=template.code, template_version=template.version
+        )
+
+    assert getattr(raised.value, "code", None) == "PPT_TEMPLATE_ASSET_VERSION_MISMATCH"
 
 
 def test_invalid_builtin_template_is_rejected() -> None:
