@@ -27,6 +27,7 @@ from app.modules.catalog.infrastructure.models import Product
 from app.modules.matching.domain.rules import (
     CanonicalRequirement,
     MatchableProduct,
+    build_brand_catalog,
     decide_identified_product_matches,
     decide_product_matches,
     is_eligible_matching_product,
@@ -103,6 +104,7 @@ class MatchingService:
             items = await self.repository.items(project_id)
             product_rows = await self.repository.eligible_products()
             candidates = [self._matchable(product, supplier) for product, supplier in product_rows]
+            brand_catalog = build_brand_catalog(candidates)
             allow_brand_substitution = (
                 project.recommendation_type
                 == BidRecommendationType.TYPE_1_SPECIFICATION.value
@@ -117,12 +119,17 @@ class MatchingService:
             for item in items:
                 requirement = self._requirement(item)
                 decision = (
-                    decide_identified_product_matches(requirement, candidates)
+                    decide_identified_product_matches(
+                        requirement,
+                        candidates,
+                        brand_catalog=brand_catalog,
+                    )
                     if is_type2
                     else decide_product_matches(
                         requirement,
                         candidates,
                         allow_brand_substitution=allow_brand_substitution,
+                        brand_catalog=brand_catalog,
                     )
                 )
                 item.status = decision.status.value

@@ -5,6 +5,10 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-09
 
+> 2026-10-12：类型 2 品牌+型号同品判断新增受控品牌归一化。每次匹配任务从可用正式商品品牌构建一次别名目录，支持“联想 / Lenovo / 联想Lenovo / 中国联想电脑”等可唯一定位的变体；型号继续只做全半角、大小写、空格和分隔符归一化。品牌输入同时命中多个目录品牌时保持未匹配，未知品牌不猜测；最低有效当前成本价、限价、供应商资格、原表回填和工作台流程不变。无 Migration、API 或权限变化（ADR-0057）。
+
+> 2026-10-12：修复类型 1/2 报价导出成功后立即下载偶发 404。投标导出 POST 的数据库事务现在保证在响应发送前提交，附件记录、项目状态和审计事件对紧随其后的下载 GET 可见；文件生成、存储、API 合同、UI 和权限不变。无 Migration，遵循 ADR-0007。
+
 > 2026-10-12：类型 5 `COMBINATION` 已改为 Run 级无重复组合：后端对组合内、同档和跨档统一排除已占用 `product_id`，避免同一商品反复出现在组合卡。全冻结池保持压缩 AI 粗评，后端据价格、2--4 件、类目多样性和去重生成受限短名单，AI 再精评详细组合；并发最多四路。目标数量不足时仍保留可行组合并进入人工确认，工作台显示“已生成 / 目标”和短缺提示，只有零组合失败。类型 1--4、类型 5 单品、PPT 渲染、套餐、API 和权限不变；无 Migration（ADR-0056）。定向后端 18 项、前端 Vitest 2 项、前端类型检查通过；真实 DeepSeek 新 Run 和浏览器验收待执行。
 
 > 2026-10-12：修复类型 5 工作台点击项目加载 Run 历史时的 MySQL 1038。原查询按 `project_id` 筛选、按 `created_at DESC` 排序，但表仅有两个单列索引；大 JSON 快照在 256 KiB `sort_buffer_size` 下会 `Using filesort` 并报 `Out of sort memory`。Revision `20261012_0053` 新增 `(project_id, created_at)` 复合索引；Run 历史 API、类型 1--5 的业务、AI、PPT、UI 合同和权限不变。定向测试、Ruff、Mypy、开发库 Migration 升级及问题项目实际 `EXPLAIN` 均已通过；浏览器刷新工作台验收待执行。

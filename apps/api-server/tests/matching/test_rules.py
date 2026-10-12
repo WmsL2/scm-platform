@@ -105,7 +105,7 @@ def test_exact_buyer_item_code_returns_a_unique_candidate_with_explanation() -> 
     assert result.status == BidItemMatchStatus.UNIQUE_MATCH
     assert result.candidates[0].product_id == candidate.id
     assert result.candidates[0].recall_stage == RecallStage.EXACT_IDENTIFIER
-    assert result.candidates[0].match_reason()["rules_version"] == "v1"
+    assert result.candidates[0].match_reason()["rules_version"] == "v2"
     assert result.candidates[0].match_reason()["signals"][0] == {
         "field": "BUYER_ITEM_CODE",
         "score": 100,
@@ -152,6 +152,65 @@ def test_type2_exact_match_prefers_lowest_current_supplier_quote() -> None:
         cheapest.id,
         expensive.id,
     ]
+
+
+@pytest.mark.parametrize("requirement_brand", ["联想", "Lenovo", "中国联想电脑"])
+def test_type2_resolves_controlled_brand_variants_from_product_catalog(
+    requirement_brand: str,
+) -> None:
+    candidate = product(brand="联想Lenovo", model="LT-1821")
+
+    result = decide_identified_product_matches(
+        CanonicalRequirement(brand=requirement_brand, model="LT/1821"),
+        [candidate],
+    )
+
+    assert result.status == BidItemMatchStatus.UNIQUE_MATCH
+    assert result.candidates[0].product_id == candidate.id
+    assert result.candidates[0].score == 80
+    assert result.candidates[0].match_reason()["canonical_brand"] == "联想"
+    brand_signal = next(
+        signal
+        for signal in result.candidates[0].match_reason()["signals"]
+        if signal["field"] == "BRAND"
+    )
+    assert brand_signal["comparison"] in {"EXACT", "CANONICAL_ALIAS"}
+
+
+def test_type2_rejects_brand_text_that_identifies_multiple_catalog_brands() -> None:
+    lenovo = product(brand="联想Lenovo", model="M1")
+    hp = product(brand="惠普HP", model="M1")
+
+    result = decide_identified_product_matches(
+        CanonicalRequirement(brand="联想惠普通用配件", model="M-1"),
+        [lenovo, hp],
+    )
+
+    assert result.status == BidItemMatchStatus.NO_MATCH
+    assert result.candidates == ()
+    assert "多个受控品牌" in (result.reason or "")
+
+
+def test_type2_does_not_strip_a_prefix_that_can_be_part_of_a_brand_name() -> None:
+    candidate = product(brand="移动", model="M1")
+
+    result = decide_identified_product_matches(
+        CanonicalRequirement(brand="中国移动", model="M1"),
+        [candidate],
+    )
+
+    assert result.status == BidItemMatchStatus.NO_MATCH
+
+
+def test_type2_does_not_use_unsafe_fuzzy_model_matching() -> None:
+    candidate = product(brand="联想Lenovo", model="TN328C")
+
+    result = decide_identified_product_matches(
+        CanonicalRequirement(brand="联想", model="TN328"),
+        [candidate],
+    )
+
+    assert result.status == BidItemMatchStatus.NO_MATCH
 
 
 def test_type2_does_not_fall_back_to_similar_name_or_substitute_product() -> None:
