@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from app.common.contracts import AppError
 from app.core.config import PROJECT_ROOT, get_settings
-from app.modules.recommendation.application.ppt_template_manifest import PPTX_SLOT_MANIFESTS
+from app.modules.recommendation.application.ppt_template_manifest import get_pptx_manifest
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,17 +62,21 @@ def list_ppt_templates() -> tuple[PptTemplateDefinition, ...]:
     return PPT_TEMPLATES
 
 
-def get_ppt_template(code: str | None) -> PptTemplateDefinition:
+def get_ppt_template(code: str | None, version: str | None = None) -> PptTemplateDefinition:
     normalized = (code or "SYSTEM_DEFAULT").strip().upper()
     for template in PPT_TEMPLATES:
         if template.code == normalized:
-            return template
+            if version is None or version == template.version:
+                return template
+            if get_pptx_manifest(template.code, version) is not None:
+                return replace(template, version=version)
+            raise AppError("PPT_TEMPLATE_VERSION_UNAVAILABLE", "所选 PPT 模板版本不可用", 409)
     raise AppError("PPT_TEMPLATE_INVALID", "不支持的 PPT 模板编号", 422)
 
 
 def resolve_ppt_template_asset(template: PptTemplateDefinition) -> Path:
     """Return an approved business template, or fail explicitly without fallback."""
-    manifest = PPTX_SLOT_MANIFESTS.get(template.code)
+    manifest = get_pptx_manifest(template.code, template.version)
     if manifest is None:
         raise AppError("PPT_TEMPLATE_ASSET_UNAVAILABLE", "所选 PPT 模板资产不可用", 409)
     if template.version != manifest.asset_version:
@@ -80,9 +84,7 @@ def resolve_ppt_template_asset(template: PptTemplateDefinition) -> Path:
     settings = get_settings()
     # Explicit deployment configuration is strict, so a mount/configuration error
     # continues to fail safely rather than falling back to another source.
-    asset_root = settings.ppt_template_asset_dir or (
-        PROJECT_ROOT / "assets" / "ppt-templates"
-    )
+    asset_root = settings.ppt_template_asset_dir or (PROJECT_ROOT / "assets" / "ppt-templates")
     path = asset_root / manifest.clean_filename if asset_root is not None else None
     if path is None or not path.is_file():
         raise AppError("PPT_TEMPLATE_ASSET_UNAVAILABLE", "所选 PPT 模板资产不可用", 409)

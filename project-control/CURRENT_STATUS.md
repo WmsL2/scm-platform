@@ -5,11 +5,18 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-09
 
-> 2026-10-12：类型 2 品牌+型号同品判断新增受控品牌归一化。每次匹配任务从可用正式商品品牌构建一次别名目录，支持“联想 / Lenovo / 联想Lenovo / 中国联想电脑”等可唯一定位的变体；型号继续只做全半角、大小写、空格和分隔符归一化。品牌输入同时命中多个目录品牌时保持未匹配，未知品牌不猜测；最低有效当前成本价、限价、供应商资格、原表回填和工作台流程不变。无 Migration、API 或权限变化（ADR-0056）。
+> 2026-10-12：类型 2 品牌+型号同品判断新增受控品牌归一化。每次匹配任务从可用正式商品品牌构建一次别名目录，支持“联想 / Lenovo / 联想Lenovo / 中国联想电脑”等可唯一定位的变体；型号继续只做全半角、大小写、空格和分隔符归一化。品牌输入同时命中多个目录品牌时保持未匹配，未知品牌不猜测；最低有效当前成本价、限价、供应商资格、原表回填和工作台流程不变。无 Migration、API 或权限变化（ADR-0057）。
 
 > 2026-10-12：修复类型 1/2 报价导出成功后立即下载偶发 404。投标导出 POST 的数据库事务现在保证在响应发送前提交，附件记录、项目状态和审计事件对紧随其后的下载 GET 可见；文件生成、存储、API 合同、UI 和权限不变。无 Migration，遵循 ADR-0007。
 
+> 2026-10-12：类型 5 `COMBINATION` 已改为 Run 级无重复组合：后端对组合内、同档和跨档统一排除已占用 `product_id`，避免同一商品反复出现在组合卡。全冻结池保持压缩 AI 粗评，后端据价格、2--4 件、类目多样性和去重生成受限短名单，AI 再精评详细组合；并发最多四路。目标数量不足时仍保留可行组合并进入人工确认，工作台显示“已生成 / 目标”和短缺提示，只有零组合失败。类型 1--4、类型 5 单品、PPT 渲染、套餐、API 和权限不变；无 Migration（ADR-0056）。定向后端 18 项、前端 Vitest 2 项、前端类型检查通过；真实 DeepSeek 新 Run 和浏览器验收待执行。
+
 > 2026-10-12：修复类型 5 工作台点击项目加载 Run 历史时的 MySQL 1038。原查询按 `project_id` 筛选、按 `created_at DESC` 排序，但表仅有两个单列索引；大 JSON 快照在 256 KiB `sort_buffer_size` 下会 `Using filesort` 并报 `Out of sort memory`。Revision `20261012_0053` 新增 `(project_id, created_at)` 复合索引；Run 历史 API、类型 1--5 的业务、AI、PPT、UI 合同和权限不变。定向测试、Ruff、Mypy、开发库 Migration 升级及问题项目实际 `EXPLAIN` 均已通过；浏览器刷新工作台验收待执行。
+> 2026-10-10：分支 `codex/feat/type5-high-fidelity-v4` 正在实施 `JD_DETAIL_RED` 私有 v4 高保真样板。v3 资产与冻结任务保持不变；v4 以精确代码+版本解析，未公开、未暂存，等待素材安全和人工视觉验收后才决定是否推广其余模板。私有候选已恢复封面、布局及母版的 7 个固定媒体，但该组素材的公开分发授权尚未留存，当前为发布 Blocker。无 Migration、API、UI 或权限变化。
+
+> 2026-10-10：`JD_FESTIVE_RED`、`CATALOG_MINIMAL`、`UNION_QUOTE_WHITE` 已在私有目录建立 v4 槽位候选并完成可解析虚构输出。它们仍需逐页人工视觉验收；尤其 CATALOG 原始右侧图片装饰的授权与保留范围尚未确认，不能作为已完成的公开高保真资产发布。
+
+> 2026-10-10：`JD_FESTIVE_RED` 私有 v4 已恢复“方案编号”和“组套后或内外包装图片：”固定文本，并从人工原件继承标题、卖点、报价的段落/Run 样式；报价字段已拆分，未把原有层级压缩为正文。`manual.jd_customer_price` 尚无当前任务输入来源，系统严格保持该动态值为空、不会回退普通京东价。三套后续模板已重新导出无 token 的完全虚构样例；它们的实际 LibreOffice/WPS 逐页比对与授权复核仍为发布前 Blocker。
 
 > 2026-10-10：经明确授权，类型 5 四套 CLEAN v3 模板已变为仓库内的公开审核资产
 > `assets/ppt-templates/`，开发者克隆即可生成；`local-data/ppt-template-verification/` 的授权验证

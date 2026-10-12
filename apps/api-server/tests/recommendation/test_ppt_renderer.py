@@ -9,13 +9,18 @@ import pytest
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
-from pptx.util import Inches
+from pptx.util import Inches, Pt
 
 from app.common.contracts import AppError
-from app.modules.recommendation.application import ppt_renderer, ppt_template_registry
+from app.modules.recommendation.application import (
+    ppt_renderer,
+    ppt_renderer_v4,
+    ppt_template_registry,
+)
 from app.modules.recommendation.application.ppt_renderer import PptRenderer
 from app.modules.recommendation.application.ppt_template_manifest import (
     PPTX_SLOT_MANIFESTS,
+    PPTX_VERSIONED_MANIFESTS,
     SLOT_BODY,
     SLOT_IMAGE_PREFIX,
     SLOT_PRICE,
@@ -88,9 +93,7 @@ def _write_business_template_fixture(path: Path, template_code: str) -> None:
 
 
 @pytest.fixture
-def business_template_assets(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> dict[str, Path]:
+def business_template_assets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     """Point the renderer's directly imported resolver at fictional tmp assets."""
     paths: dict[str, Path] = {}
     for template in list_ppt_templates():
@@ -380,3 +383,113 @@ def test_renderer_rejects_a_task_with_a_frozen_unavailable_template_version() ->
         assert getattr(exc, "code", None) == "PPT_TEMPLATE_VERSION_UNAVAILABLE"
     else:
         raise AssertionError("an unavailable frozen version must be rejected")
+
+
+def test_jd_v4_uses_tmp_fixture_and_preserves_named_static_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """v4 is real rendering, but CI never needs a private customer deck."""
+    deck = Presentation()
+    cover = deck.slides.add_slide(deck.slide_layouts[6])
+    _add_text_slot(cover, "SCM_FIELD_PROJECT", left=1, top=1, width=8, height=0.5)
+    cover.shapes[-1].text = "项目：{{project_name}}"
+    product = deck.slides.add_slide(deck.slide_layouts[6])
+    static = product.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(0.2))
+    static.name = "SCM_STATIC_HEADER"
+    for index, name in enumerate(
+        PPTX_VERSIONED_MANIFESTS[("JD_DETAIL_RED", "4")].source_text_slots
+    ):
+        _add_text_slot(product, name, left=6, top=0.3 + index * 0.35, width=6, height=0.3)
+        product.shapes[-1].text = "{{" + name.removeprefix("SCM_FIELD_").lower() + "}}"
+    for index in range(4):
+        product.shapes.add_picture(
+            BytesIO(_PNG), Inches(0.5 + index), Inches(1), Inches(0.8), Inches(0.8)
+        ).name = f"SCM_SLOT_IMAGE_{index + 1:02d}"
+    slots = {shape.name: shape for shape in product.shapes}
+    slots["SCM_FIELD_IMAGE_NOTICE"].text = "组套后或内外包装图片："
+    slots["SCM_FIELD_SELLING_POINTS"].text = "产品卖点（介绍详细）\n{{selling_points:0}}"
+    slots["SCM_FIELD_REFERENCE"].text = "履约：{{fulfillment}}"
+    slots["SCM_FIELD_SERVICE"].text = "备注：{{evidence}}"
+    asset = tmp_path / "JD_DETAIL_RED_CLEAN_v4.pptx"
+    deck.save(asset)
+    monkeypatch.setattr(ppt_renderer_v4, "resolve_ppt_template_asset", lambda _template: asset)
+
+    source = _source()
+    source["single_products"][0]["manual"] = {}  # type: ignore[index]
+    output = Presentation(
+        BytesIO(
+            PptRenderer().render(source, template_code="JD_DETAIL_RED", template_version="4")
+        )
+    )
+    assert len(output.slides) == 2
+    shapes = {shape.name: shape for shape in output.slides[-1].shapes}
+    assert shapes["SCM_STATIC_HEADER"].left == 0
+    assert "不锈钢保温杯" in _slide_text(output.slides[-1])
+    assert "商品图片待补充" not in _slide_text(output.slides[-1])
+    assert "组套后或内外包装图片：" in _slide_text(output.slides[-1])
+    assert "产品卖点（介绍详细）" in _slide_text(output.slides[-1])
+    assert "履约：" not in _slide_text(output.slides[-1])
+    assert "备注：" not in _slide_text(output.slides[-1])
+
+
+def test_jd_v4_keeps_sku_out_of_the_brand_model_field() -> None:
+    item = _source()["single_products"][0]  # type: ignore[index]
+    item["product"]["sku"] = "SKU-200"  # type: ignore[index]
+    values = ppt_renderer_v4._fields(item)
+
+    assert values["brand_model"] == "示例品牌 / C-200"
+    assert values["sku"] == "SKU-200"
+
+
+def test_festive_v4_preserves_static_labels_and_original_token_run_format(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The public fixture proves v4 replaces values, not original typography."""
+    deck = Presentation()
+    cover = deck.slides.add_slide(deck.slide_layouts[6])
+    _add_text_slot(cover, "SCM_SLOT_COVER_TITLE", left=1, top=1, width=8, height=0.5)
+    cover.shapes[-1].text = "{{project_name}}"
+    product = deck.slides.add_slide(deck.slide_layouts[6])
+    names = PPTX_VERSIONED_MANIFESTS[("JD_FESTIVE_RED", "4")].source_text_slots
+    for index, name in enumerate(names):
+        _add_text_slot(product, name, left=6, top=0.5 + index * 0.4, width=6, height=0.35)
+        shape = product.shapes[-1]
+        shape.text_frame.paragraphs[0].add_run().font.size = Pt(20)
+        shape.text_frame.paragraphs[0].runs[-1].font.bold = True
+        shape.text_frame.paragraphs[0].runs[-1].font.color.rgb = RGBColor(255, 255, 255)
+    shapes = {shape.name: shape for shape in product.shapes}
+    shapes["SCM_FIELD_SELLING_POINTS"].text = (
+        "产品卖点（介绍详细）\n{{selling_points:0}}\n{{selling_points:1}}\n{{selling_points:2}}"
+    )
+    shapes["SCM_FIELD_REFERENCE"].text = (
+        "市场参考价：{{market_reference_value}} 京东大客户价：{{jd_customer_price_value}}\n"
+        "货期：{{fulfillment}} 发货物流：{{delivery}}"
+    )
+    shapes["SCM_FIELD_TITLE"].text = "{{title}}"
+    shapes["SCM_STATIC_PROJECT_NUMBER"].text = "方案编号"
+    shapes["SCM_STATIC_IMAGE_CAPTION"].text = "组套后或内外包装图片："
+    title_run = shapes["SCM_FIELD_TITLE"].text_frame.paragraphs[0].runs[0]
+    title_run.font.size = Pt(20)
+    title_run.font.bold = True
+    title_run.font.color.rgb = RGBColor(255, 255, 255)
+    for index in range(5):
+        product.shapes.add_picture(
+            BytesIO(_PNG), Inches(0.5 + index), Inches(1.5), Inches(0.8), Inches(0.8)
+        ).name = f"SCM_SLOT_IMAGE_{index + 1:02d}"
+    asset = tmp_path / "JD_FESTIVE_RED_CLEAN_v4.pptx"
+    deck.save(asset)
+    monkeypatch.setattr(ppt_renderer_v4, "resolve_ppt_template_asset", lambda _template: asset)
+
+    source = _source()
+    source["single_products"][0]["manual"] = {"delivery_status": "虚构配送"}  # type: ignore[index]
+    output = Presentation(
+        BytesIO(PptRenderer().render(source, template_code="JD_FESTIVE_RED", template_version="4"))
+    )
+    rendered = {shape.name: shape for shape in output.slides[-1].shapes}
+    assert "方案编号" in _slide_text(output.slides[-1])
+    assert "组套后或内外包装图片：" in _slide_text(output.slides[-1])
+    assert "京东大客户价：¥" not in _slide_text(output.slides[-1])
+    rendered_title = rendered["SCM_FIELD_TITLE"].text_frame.paragraphs[0].runs[0]
+    assert rendered_title.font.size == Pt(20)
+    assert rendered_title.font.bold is True
+    assert rendered_title.font.color.rgb == RGBColor(255, 255, 255)
