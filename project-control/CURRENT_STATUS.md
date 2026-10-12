@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-09
 
+> 2026-10-12：修复类型 5 工作台点击项目加载 Run 历史时的 MySQL 1038。原查询按 `project_id` 筛选、按 `created_at DESC` 排序，但表仅有两个单列索引；大 JSON 快照在 256 KiB `sort_buffer_size` 下会 `Using filesort` 并报 `Out of sort memory`。Revision `20261012_0053` 新增 `(project_id, created_at)` 复合索引；Run 历史 API、类型 1--5 的业务、AI、PPT、UI 合同和权限不变。定向测试、Ruff、Mypy、开发库 Migration 升级及问题项目实际 `EXPLAIN` 均已通过；浏览器刷新工作台验收待执行。
+
 > 2026-10-10：经明确授权，类型 5 四套 CLEAN v3 模板已变为仓库内的公开审核资产
 > `assets/ppt-templates/`，开发者克隆即可生成；`local-data/ppt-template-verification/` 的授权验证
 > 模板也允许版本控制。显式 `PPT_TEMPLATE_ASSET_DIR` 仍严格失败，未授权客户素材继续排除（ADR-0052）。
