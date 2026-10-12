@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-09
 
+> 2026-10-12：类型 5 工作台已隐藏旧“额外人工组套”入口、列表和弹窗。新组合 Run 只按已确认 AI 组合生成 PPT，避免用户误以为历史人工组套会加入当前输出；历史组套数据、后端接口和渲染兼容保持不变。无 Migration、API 或权限变化；前端定向 Vitest 2 项、类型检查及生产构建通过。
+
 > 2026-10-12：类型 2 品牌+型号同品判断新增受控品牌归一化。每次匹配任务从可用正式商品品牌构建一次别名目录，支持“联想 / Lenovo / 联想Lenovo / 中国联想电脑”等可唯一定位的变体；型号继续只做全半角、大小写、空格和分隔符归一化。品牌输入同时命中多个目录品牌时保持未匹配，未知品牌不猜测；最低有效当前成本价、限价、供应商资格、原表回填和工作台流程不变。无 Migration、API 或权限变化（ADR-0057）。
 
 > 2026-10-12：修复类型 1/2 报价导出成功后立即下载偶发 404。投标导出 POST 的数据库事务现在保证在响应发送前提交，附件记录、项目状态和审计事件对紧随其后的下载 GET 可见；文件生成、存储、API 合同、UI 和权限不变。无 Migration，遵循 ADR-0007。
