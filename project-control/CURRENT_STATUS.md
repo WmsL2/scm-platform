@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-09
 
+> 2026-10-12：类型 5 `COMBINATION` 已改为 Run 级无重复组合：后端对组合内、同档和跨档统一排除已占用 `product_id`，避免同一商品反复出现在组合卡。全冻结池保持压缩 AI 粗评，后端据价格、2--4 件、类目多样性和去重生成受限短名单，AI 再精评详细组合；并发最多四路。目标数量不足时仍保留可行组合并进入人工确认，工作台显示“已生成 / 目标”和短缺提示，只有零组合失败。类型 1--4、类型 5 单品、PPT 渲染、套餐、API 和权限不变；无 Migration（ADR-0056）。定向后端 18 项、前端 Vitest 2 项、前端类型检查通过；真实 DeepSeek 新 Run 和浏览器验收待执行。
+
 > 2026-10-12：修复类型 5 工作台点击项目加载 Run 历史时的 MySQL 1038。原查询按 `project_id` 筛选、按 `created_at DESC` 排序，但表仅有两个单列索引；大 JSON 快照在 256 KiB `sort_buffer_size` 下会 `Using filesort` 并报 `Out of sort memory`。Revision `20261012_0053` 新增 `(project_id, created_at)` 复合索引；Run 历史 API、类型 1--5 的业务、AI、PPT、UI 合同和权限不变。定向测试、Ruff、Mypy、开发库 Migration 升级及问题项目实际 `EXPLAIN` 均已通过；浏览器刷新工作台验收待执行。
 > 2026-10-10：分支 `codex/feat/type5-high-fidelity-v4` 正在实施 `JD_DETAIL_RED` 私有 v4 高保真样板。v3 资产与冻结任务保持不变；v4 以精确代码+版本解析，未公开、未暂存，等待素材安全和人工视觉验收后才决定是否推广其余模板。私有候选已恢复封面、布局及母版的 7 个固定媒体，但该组素材的公开分发授权尚未留存，当前为发布 Blocker。无 Migration、API、UI 或权限变化。
 

@@ -6,10 +6,11 @@ import asyncio
 import json
 import logging
 from collections import defaultdict, deque
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from time import perf_counter
+from uuid import UUID
 
 from app.core.config import Settings, get_settings
 from app.integrations.deepseek.client import (
@@ -242,7 +243,11 @@ class PptPlanAgentRunner:
             index=0,
             candidates=candidates,
             scene_context=scene_context,
-            assessment_concurrency=min(2, self.settings.ppt_ai_assessment_concurrency),
+            # Combination scoring uses the same compact first pass as direct
+            # selection.  Keep provider pressure bounded, but do not retain the
+            # former two-request cap now that the shared limiter/configuration
+            # has an explicit safe default of four.
+            assessment_concurrency=min(4, self.settings.ppt_ai_assessment_concurrency),
         )
         diversified_keys = self._category_diversified_keys(ranked_keys, key_map)
         return [
@@ -260,35 +265,54 @@ class PptPlanAgentRunner:
         scored_candidates: Sequence[PptDirectSelectedCandidate],
         combination_count: int,
         scene_context: str,
+        excluded_product_ids: Collection[UUID] | None = None,
     ) -> list[PptCombinationCandidate]:
-        """Choose one band's groups from a previously AI-scored source pool."""
+        """Choose one band's groups from a previously AI-scored source pool.
+
+        ``excluded_product_ids`` is supplied by the Type-5 orchestration layer
+        after earlier price bands have reserved their products.  The runner also
+        makes every finalist mutually disjoint, so model output cannot re-use a
+        product inside the same band.  A short result is valid: callers persist
+        the feasible groups and surface the shortfall instead of discarding all
+        useful recommendations.
+        """
+        excluded_product_ids = excluded_product_ids or set()
         permitted = [
             item
             for item in scored_candidates
-            if self._candidate_price_value(item.candidate) <= band.max_price
+            if (
+                item.candidate.id not in excluded_product_ids
+                and self._candidate_price_value(item.candidate) <= band.max_price
+            )
         ]
         if len(permitted) < 2:
-            raise RecommendationAgentContractError("价格档冻结候选不足，无法组成至少两件商品")
+            return []
         combinations = self._combination_candidates(
             band,
             permitted,
             requested_count=combination_count,
         )
-        if len(combinations) < combination_count:
-            raise RecommendationAgentContractError(
-                f"价格档无法组成 {combination_count} 组 2～4 件且总价合规的组合"
-            )
+        # Select a larger, mutually-disjoint candidate set before the final
+        # model call.  This is a deterministic availability rule, not a proxy
+        # for relevance: AI still ranks the complete, detailed finalist list.
+        combinations = self._disjoint_combination_candidates(
+            combinations,
+            desired_count=max(combination_count * 2, combination_count),
+        )
+        if not combinations:
+            return []
         finalists = self._combination_finalist_rows(combinations, combination_count)
-        if len(finalists) < combination_count:
-            raise RecommendationAgentContractError("类型 5 组合候选无法放入 AI 安全输入预算")
+        if not finalists:
+            return []
+        requested_for_finalists = min(combination_count, len(finalists))
         proposal = await self._select_combination_finalists(
             index=index,
-            combination_count=combination_count,
+            combination_count=requested_for_finalists,
             scene_context=scene_context,
             finalists=finalists,
         )
         by_key = {item.key: item for item in combinations}
-        if len(proposal.combination_keys) != combination_count:
+        if len(proposal.combination_keys) != requested_for_finalists:
             raise RecommendationAgentContractError("类型 5 AI 未返回指定数量的组合")
         if any(key not in by_key for key in proposal.combination_keys):
             raise RecommendationAgentContractError("类型 5 AI 返回了清单外组合")
@@ -622,15 +646,29 @@ class PptPlanAgentRunner:
                 maximum,
             ),
         )
-        # Keep enough alternatives for the final AI call while bounding its input.
-        limit = min(120, max(requested_count * 8, 48))
+        # Build the detailed AI shortlist as disjoint groups here, while the full
+        # score-ranked search result is still available.  Truncating the first N
+        # groups and only then de-duplicating is incorrect: high-scoring groups
+        # naturally share the strongest individual item and can make a large
+        # source pool look like only a few feasible groups.
+        limit = max(requested_count * 2, requested_count)
+        selected_groups: list[tuple[tuple[int, ...], tuple[Decimal, int, frozenset[str]]]] = []
+        used_product_ids: set[UUID] = set()
+        for positions, values in ranked_groups:
+            member_product_ids = {options[position].candidate.id for position in positions}
+            if member_product_ids & used_product_ids:
+                continue
+            selected_groups.append((positions, values))
+            used_product_ids.update(member_product_ids)
+            if len(selected_groups) >= limit:
+                break
         return [
             PptCombinationCandidate(
                 key=f"g{index}",
                 candidates=tuple(options[position] for position in positions),
                 total_price=values[0],
             )
-            for index, (positions, values) in enumerate(ranked_groups[:limit], start=1)
+            for index, (positions, values) in enumerate(selected_groups, start=1)
         ]
 
     @staticmethod
@@ -647,6 +685,23 @@ class PptPlanAgentRunner:
         # sort ascending: higher score and more category variety first, then a
         # sensible total inside the requested budget.
         return (-average_score, -category_count, closeness, item_count)
+
+    @staticmethod
+    def _disjoint_combination_candidates(
+        combinations: Sequence[PptCombinationCandidate], *, desired_count: int
+    ) -> list[PptCombinationCandidate]:
+        """Keep score-ranked groups whose products have not appeared before."""
+        selected: list[PptCombinationCandidate] = []
+        used_product_ids: set[UUID] = set()
+        for combination in combinations:
+            member_ids = {item.candidate.id for item in combination.candidates}
+            if member_ids & used_product_ids:
+                continue
+            selected.append(combination)
+            used_product_ids.update(member_ids)
+            if len(selected) >= desired_count:
+                break
+        return selected
 
     def _combination_finalist_rows(
         self,
