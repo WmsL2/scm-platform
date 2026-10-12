@@ -398,6 +398,7 @@ class PptSolutionService:
         scored_candidates = await runner.score_combination_candidates(
             combination_sources, scene_context=scene_context
         )
+        used_product_ids: set[uuid.UUID] = set()
         for band_index, band in enumerate(config.price_bands, start=1):
             groups = await runner.select_combination_from_scored(
                 index=band_index,
@@ -405,8 +406,15 @@ class PptSolutionService:
                 scored_candidates=scored_candidates,
                 combination_count=band.item_count,
                 scene_context=scene_context,
+                excluded_product_ids=used_product_ids,
             )
             selected_plans.extend((band_index, group) for group in groups)
+            used_product_ids.update(
+                item.candidate.id for group in groups for item in getattr(group, "candidates")
+            )
+
+        if not selected_plans:
+            raise RecommendationAgentContractError("没有可生成的 2～4 件且总价合规的无重复组合")
 
         async with SessionLocal() as persist_session:
             service = PptSolutionService(persist_session)
@@ -466,7 +474,7 @@ class PptSolutionService:
                             selection_source="AI",
                             selection_provider=provider.provider,
                             selection_model=provider.model,
-                            selection_prompt_version=f"{provider.prompt_version}:ppt-combination-v1",
+                            selection_prompt_version=f"{provider.prompt_version}:ppt-combination-v2",
                         )
                     )
                     retained_ids.update(candidate_ids)

@@ -11,7 +11,10 @@ import pytest
 from app.core.config import get_settings
 from app.integrations.deepseek.client import DeepSeekStructuredOutputError
 from app.modules.recommendation.application.agent_runner import RecommendationAgentContractError
-from app.modules.recommendation.application.ppt_plan_runner import PptPlanAgentRunner
+from app.modules.recommendation.application.ppt_plan_runner import (
+    PptDirectSelectedCandidate,
+    PptPlanAgentRunner,
+)
 from app.modules.recommendation.infrastructure.models import RecommendationCandidate
 from app.modules.recommendation.ppt_schemas import (
     PptCandidateAssessment,
@@ -395,6 +398,92 @@ async def test_type5_combination_runner_reuses_one_shared_assessment_for_multipl
     assert sum(
         call["response_model"] is PptCombinationSelectionProposal for call in provider.calls
     ) == 2
+
+
+@pytest.mark.asyncio
+async def test_type5_combination_runner_returns_feasible_disjoint_subset() -> None:
+    candidates = [_candidate("60", rank=index) for index in range(1, 7)]
+    provider = CombinationProvider()
+    band = PptFrozenRecommendationConfig.model_validate(
+        {
+            "recommendation_mode": "COMBINATION",
+            "price_bands": [{"min_price": "120", "max_price": "120", "item_count": 5}],
+            "selection_mode": "COMBINATIONS",
+        }
+    ).price_bands[0]
+
+    selected = await PptPlanAgentRunner(provider).select_combination_candidates(
+        1,
+        band,
+        candidates,
+        combination_count=5,
+        scene_context="客户原始需求：员工活动实用礼品",
+    )
+
+    member_ids = [item.candidate.id for group in selected for item in group.candidates]
+    assert len(selected) == 3
+    assert len(member_ids) == len(set(member_ids))
+    final_payload = json.loads(
+        next(
+            call["user_prompt"]
+            for call in provider.calls
+            if call["response_model"] is PptCombinationSelectionProposal
+        )
+    )
+    assert final_payload["required_combination_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_type5_combination_runner_honors_products_reserved_by_another_band() -> None:
+    candidates = [_candidate("60", rank=index) for index in range(1, 9)]
+    provider = CombinationProvider()
+    runner = PptPlanAgentRunner(provider)
+    scored = await runner.score_combination_candidates(
+        candidates, scene_context="客户原始需求：员工活动礼品"
+    )
+    band = PptFrozenRecommendationConfig.model_validate(
+        {
+            "recommendation_mode": "COMBINATION",
+            "price_bands": [{"min_price": "120", "max_price": "120", "item_count": 2}],
+            "selection_mode": "COMBINATIONS",
+        }
+    ).price_bands[0]
+
+    selected = await runner.select_combination_from_scored(
+        index=1,
+        band=band,
+        scored_candidates=scored,
+        combination_count=2,
+        scene_context="客户原始需求：员工活动礼品",
+        excluded_product_ids={candidates[0].id, candidates[1].id},
+    )
+
+    assert len(selected) == 2
+    assert {
+        item.candidate.id for group in selected for item in group.candidates
+    }.isdisjoint({candidates[0].id, candidates[1].id})
+
+
+def test_type5_combination_candidates_scan_past_overlapping_top_groups() -> None:
+    candidates = [_candidate("60", rank=index) for index in range(1, 61)]
+    runner = PptPlanAgentRunner(CombinationProvider())
+    band = PptFrozenRecommendationConfig.model_validate(
+        {
+            "recommendation_mode": "COMBINATION",
+            "price_bands": [{"min_price": "120", "max_price": "120", "item_count": 25}],
+            "selection_mode": "COMBINATIONS",
+        }
+    ).price_bands[0]
+    ranked = [
+        PptDirectSelectedCandidate(candidate=item, overall_score=100 - item.rank)
+        for item in candidates
+    ]
+
+    combinations = runner._combination_candidates(band, ranked, requested_count=25)
+
+    member_ids = [item.candidate.id for group in combinations for item in group.candidates]
+    assert len(combinations) >= 25
+    assert len(member_ids) == len(set(member_ids))
 
 
 @pytest.mark.asyncio

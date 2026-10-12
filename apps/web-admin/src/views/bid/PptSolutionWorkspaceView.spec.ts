@@ -20,6 +20,8 @@ describe("PptSolutionWorkspaceView", () => {
     expect(source).not.toContain("确认本方案商品")
     expect(source).not.toContain("plan-card--selected")
     expect(source).toContain("组合总价 / AI 生成组合数量")
+    expect(source).toContain("AI 已生成 {{ plans.length }} / 目标 {{ requestedCombinationCount }} 组")
+    expect(source).toContain("已保留这 ${plans.length} 组供人工确认")
     expect(source).toContain("每组固定 2～4 件")
     expect(source).toContain("AI 组合推品与人工确认")
     expect(source).toContain("pptSolutionApi.selectPlan")
