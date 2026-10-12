@@ -44,6 +44,7 @@ export interface ProductListItem {
   shipping_courier: string | null
   after_sales_policy: string | null
   remark: string | null
+  is_featured: boolean
   status: ProductStatus
   created_by: string | null
   created_by_username: string | null
@@ -91,6 +92,7 @@ export interface ProductListParams {
   discount_rate_max?: string
   sales_volume_min?: string
   sales_volume_max?: string
+  is_featured?: boolean
   status?: ProductStatus
 }
 
@@ -135,6 +137,23 @@ export interface ProductSelectionIdsResult {
 
 export interface ProductLifecycleResult {
   id: string
+  status: ProductStatus
+}
+
+export interface ProductBatchUpdatePayload {
+  product_ids: string[]
+  updates: Partial<Pick<ProductUpdatePayload,
+    "company_name" | "brand" | "category_level1_name" | "category_level2_name" |
+    "category_level3_name" | "purchasing_agent"
+  >> & { is_featured?: boolean }
+}
+
+export interface ProductBatchUpdateResult {
+  updated_count: number
+}
+
+export interface ProductBatchLifecycleResult {
+  updated_count: number
   status: ProductStatus
 }
 

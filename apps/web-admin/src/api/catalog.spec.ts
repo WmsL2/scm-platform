@@ -210,6 +210,34 @@ describe("product import api", () => {
     expect(http.delete).toHaveBeenCalledWith("/api/v1/products/product-1", { confirm: true })
   })
 
+  it("uses Product batch update and lifecycle routes", async () => {
+    http.patch.mockResolvedValue({ updated_count: 2 })
+    http.post.mockResolvedValue({ updated_count: 2, status: "DISABLED" })
+    const { productApi } = await import("./catalog")
+
+    await productApi.batchUpdate({
+      product_ids: ["product-1", "product-2"],
+      updates: { brand: "批量品牌", is_featured: true },
+    })
+    await productApi.batchDisable(["product-1", "product-2"])
+    await productApi.batchEnable(["product-1", "product-2"])
+
+    expect(http.patch).toHaveBeenCalledWith(
+      "/api/v1/products/batch",
+      { product_ids: ["product-1", "product-2"], updates: { brand: "批量品牌", is_featured: true } },
+    )
+    expect(http.post).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/products/commands/batch-disable",
+      { product_ids: ["product-1", "product-2"] },
+    )
+    expect(http.post).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/products/commands/batch-enable",
+      { product_ids: ["product-1", "product-2"] },
+    )
+  })
+
   it("uses controlled product image routes", async () => {
     http.post.mockResolvedValue({ id: "product-1" })
     http.delete.mockResolvedValue({ id: "product-1", image_reference: null })

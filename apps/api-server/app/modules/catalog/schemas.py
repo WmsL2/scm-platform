@@ -4,7 +4,14 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMN_KEYS
 from app.modules.catalog.domain.lifecycle import ProductStatus
@@ -185,6 +192,7 @@ class ProductListItem(_ProductPriceResponseMixin):
     shipping_courier: str | None
     after_sales_policy: str | None
     remark: str | None
+    is_featured: bool
     status: ProductStatus
     created_by: uuid.UUID | None
     created_by_username: str | None
@@ -241,6 +249,7 @@ class ProductDetailResponse(_ProductPriceResponseMixin):
     tax_category: str | None
     shipping_courier: str | None
     after_sales_policy: str | None
+    is_featured: bool
     status: ProductStatus
     created_at: datetime
     updated_at: datetime
@@ -287,6 +296,74 @@ class ProductExportRequest(BaseModel):
 class ProductSelectionIdsResponse(BaseModel):
     ids: list[uuid.UUID]
     total: int
+
+
+class ProductBatchUpdateFields(BaseModel):
+    """Safe fields that may be changed identically on several Products."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    company_name: str | None = Field(default=None, max_length=255)
+    brand: str | None = Field(default=None, max_length=128)
+    category_level1_name: str | None = Field(default=None, max_length=255)
+    category_level2_name: str | None = Field(default=None, max_length=255)
+    category_level3_name: str | None = Field(default=None, max_length=255)
+    purchasing_agent: str | None = Field(default=None, max_length=128)
+    is_featured: bool | None = None
+
+    @field_validator(
+        "company_name",
+        "brand",
+        "category_level1_name",
+        "category_level2_name",
+        "category_level3_name",
+        "purchasing_agent",
+    )
+    @classmethod
+    def normalize_text(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+
+class ProductBatchUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_ids: list[uuid.UUID] = Field(min_length=1, max_length=5000)
+    updates: ProductBatchUpdateFields
+
+    @field_validator("product_ids")
+    @classmethod
+    def unique_product_ids(cls, value: list[uuid.UUID]) -> list[uuid.UUID]:
+        if len(set(value)) != len(value):
+            raise ValueError("product_ids must not contain duplicates")
+        return value
+
+    @model_validator(mode="after")
+    def require_update_field(self) -> "ProductBatchUpdateRequest":
+        if not self.updates.model_fields_set:
+            raise ValueError("updates must contain at least one field")
+        return self
+
+
+class ProductBatchUpdateResponse(BaseModel):
+    updated_count: int
+
+
+class ProductBatchLifecycleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_ids: list[uuid.UUID] = Field(min_length=1, max_length=5000)
+
+    @field_validator("product_ids")
+    @classmethod
+    def unique_product_ids(cls, value: list[uuid.UUID]) -> list[uuid.UUID]:
+        if len(set(value)) != len(value):
+            raise ValueError("product_ids must not contain duplicates")
+        return value
+
+
+class ProductBatchLifecycleResponse(BaseModel):
+    updated_count: int
+    status: ProductStatus
 
 
 class ProductUpdateRequest(BaseModel):

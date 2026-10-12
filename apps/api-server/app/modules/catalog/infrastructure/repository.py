@@ -66,6 +66,31 @@ class ProductRepository:
         statement = select(Product).where(Product.id == product_id).with_for_update()
         return cast(Product | None, await self.session.scalar(statement))
 
+    async def active_by_ids_for_update(self, product_ids: list[uuid.UUID]) -> list[Product]:
+        """Lock only Products that are still editable in the normal Product workflow."""
+        statement = (
+            select(Product)
+            .join(Supplier)
+            .where(
+                Product.id.in_(sorted(product_ids, key=str)),
+                Product.status == ProductStatus.ACTIVE,
+                Supplier.is_deleted.is_(False),
+                Supplier.cooperation_status == CooperationStatus.NORMAL,
+            )
+            .order_by(Product.id)
+            .with_for_update()
+        )
+        return list((await self.session.scalars(statement)).all())
+
+    async def by_ids_any_status_for_update(self, product_ids: list[uuid.UUID]) -> list[Product]:
+        statement = (
+            select(Product)
+            .where(Product.id.in_(sorted(product_ids, key=str)))
+            .order_by(Product.id)
+            .with_for_update()
+        )
+        return list((await self.session.scalars(statement)).all())
+
     async def category_filter_options(
         self,
         *,
@@ -476,6 +501,7 @@ class ProductRepository:
         discount_rate_max: Decimal | None,
         sales_volume_min: int | None,
         sales_volume_max: int | None,
+        is_featured: bool | None,
         status: ProductStatus,
     ) -> tuple[Select[tuple[Product]], Select[tuple[int]]]:
         supplier_criteria = (
@@ -605,6 +631,8 @@ class ProductRepository:
             range_criteria.append(Product.sales_volume >= sales_volume_min)
         if sales_volume_max is not None:
             range_criteria.append(Product.sales_volume <= sales_volume_max)
+        if is_featured is not None:
+            range_criteria.append(Product.is_featured.is_(is_featured))
         if range_criteria:
             statement = statement.where(*range_criteria)
             count_statement = count_statement.where(*range_criteria)
@@ -645,6 +673,7 @@ class ProductRepository:
         discount_rate_max: Decimal | None,
         sales_volume_min: int | None,
         sales_volume_max: int | None,
+        is_featured: bool | None,
         status: ProductStatus,
     ) -> tuple[list[Product], int]:
         statement, count_statement = self._filtered_statements(
@@ -675,6 +704,7 @@ class ProductRepository:
             discount_rate_max=discount_rate_max,
             sales_volume_min=sales_volume_min,
             sales_volume_max=sales_volume_max,
+            is_featured=is_featured,
             status=status,
         )
         products = cast(
@@ -721,6 +751,7 @@ class ProductRepository:
         discount_rate_max: Decimal | None,
         sales_volume_min: int | None,
         sales_volume_max: int | None,
+        is_featured: bool | None,
         status: ProductStatus,
         limit: int,
     ) -> List[uuid.UUID]:
@@ -752,6 +783,7 @@ class ProductRepository:
             discount_rate_max=discount_rate_max,
             sales_volume_min=sales_volume_min,
             sales_volume_max=sales_volume_max,
+            is_featured=is_featured,
             status=status,
         )
         return list(

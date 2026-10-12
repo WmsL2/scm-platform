@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-09
 
+> 2026-10-12：商品主数据新增人工“是否主推”标记与批量维护。Revision `20261012_0054` 为 `scm_product` 增加 `is_featured`（默认否）和 `(status, is_featured)` 索引；列表显示标签、支持主推/非主推筛选，所选正常商品可批量更新所属公司、品牌、三级类目、采销员并设为/取消主推，正常/停用列表分别支持整批停用/启用。资料更新复用 `product:update`，生命周期复用 `product:disable`，单次最多 5,000 件且整批原子提交。SKU、来源供应商、商品名称、价格均不纳入批改；主推绝不参与类型 1--5 匹配、推荐、排序或 AI 输入。后端定向测试、Ruff、Mypy、前端定向 Vitest、类型检查和生产构建通过；本机开发库已升级至 `20261012_0054`，浏览器人工验收待执行。
+
 > 2026-10-12：类型 5 工作台已隐藏旧“额外人工组套”入口、列表和弹窗。新组合 Run 只按已确认 AI 组合生成 PPT，避免用户误以为历史人工组套会加入当前输出；历史组套数据、后端接口和渲染兼容保持不变。无 Migration、API 或权限变化；前端定向 Vitest 2 项、类型检查及生产构建通过。
 
 > 2026-10-12：类型 2 品牌+型号同品判断新增受控品牌归一化。每次匹配任务从可用正式商品品牌构建一次别名目录，支持“联想 / Lenovo / 联想Lenovo / 中国联想电脑”等可唯一定位的变体；型号继续只做全半角、大小写、空格和分隔符归一化。品牌输入同时命中多个目录品牌时保持未匹配，未知品牌不猜测；最低有效当前成本价、限价、供应商资格、原表回填和工作台流程不变。无 Migration、API 或权限变化（ADR-0057）。

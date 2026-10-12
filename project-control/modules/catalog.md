@@ -2,7 +2,7 @@
 
 状态：IMPLEMENTED / PRODUCT_MASTER_CATEGORY_DECOUPLED / PRODUCT_IMPORT_SAFETY_CONCURRENCY / TEMPORARY_SOURCE_RETENTION
 Owner：feat/product-import-confirm-reupload
-Last Updated：2026-09-24
+Last Updated：2026-10-12
 
 ## Database
 - [x] `20260909_0008` / `20260909_0009` 创建并对齐 `scm_category` 与 `scm_product`
@@ -20,6 +20,7 @@ Last Updated：2026-09-24
 - [x] `20260918_0034` 将六个正式价格字段扩展为 `DECIMAL(65,30)`，保留 Excel 价格原值；`20260920_0035` 将 `cost_price` 调整为可空
 - [x] `20260921_0036` 为按状态查询的京东价、利润区间新增组合索引；不改变商品业务字段或价格计算规则
 - [x] `20260921_0037` 为按状态查询的所属公司多选新增组合索引；不改变商品业务字段或价格计算规则
+- [x] `20261012_0054` 增加 `scm_product.is_featured BOOLEAN NOT NULL DEFAULT false` 与 `(status, is_featured)` 组合索引；仅用于商品管理人工展示/筛选，不进入匹配或推荐
 - [x] `discount_rate` 取消 `0..1` 业务范围限制，仍为可空 `DECIMAL(9,4)`；好评率和 Category 扣点率范围保持不变（ADR-0032）
 - [x] 未创建独立 Supplier Product Quote 表或报价历史表
 
@@ -32,6 +33,7 @@ Last Updated：2026-09-24
 - [x] 固定 43 列 2026 商品大表导入（仅 SKU 与供应商必填，其余 41 列含三级类目可为空）、直接保存价格正式值、保存 WPS/Excel 内嵌图片、严格供应商精确匹配、SKU 防重预览和通过行原子 Confirm
 - [x] Supplier 为 `STOPPED` / `BLACKLIST` / 逻辑删除时，关联 Product 不能列表、详情、编辑或更新成本价；恢复 `NORMAL` 后自动恢复可见
 - [x] Product 可显式停用/启用；停用商品不能正常列表、详情、编辑或更新成本价，但保留业务键和商品字段
+- [x] Product 批量维护：单次最多 5,000 件，批量修改所属公司、品牌、三级类目、采销员和 `is_featured`；批量停用/启用在同一事务内锁定全部商品，任一目标失效则整批不修改
 - [x] 类目维表管理：三级路径列表、详情、新增、编辑、删除、轻量启用选择接口与 Excel 原子导入；不再受 Product 引用保护，真实身份为 `source_type + level3_external_id`，路径仅为属性
 - [x] 类目管理列表为服务端分页（默认每页 20）；商城导入使用公司 9 列中文模板，后端固定 `MALL_LEVEL3`，由批次 `deduction_rate_percent` 写入正式扣点，Excel 颜色不参与判断且不隐式更新既有类目
 - [x] 仅已停用 Product 可永久删除；删除前写入最小审计并依赖事务及外键保护，永久删除后同键可重新导入为新商品
@@ -51,6 +53,7 @@ Last Updated：2026-09-24
 - [x] 4,000+ 行导入预览使用每页 50 行的服务端分页，不再把全部行发送到浏览器
 - [x] 关闭商品导入预览会调用 discard 接口，立即删除临时源 Excel 并作废任务；未关闭但 24 小时未完成的任务由下一次导入操作兜底过期清理
 - [x] 商品列表支持正常/已停用状态筛选、停用/启用和 SKU/名称二次确认的永久删除；页面保留普通纵向滚动，左侧导航固定于视口左侧
+- [x] 商品列表显示主推标签并支持主推/非主推筛选；勾选的正常商品可批量修改基础资料或设为/取消主推，正常/停用页分别可批量停用/启用。批量修改不提供 SKU、来源供应商、商品名称或价格字段
 - [x] 商品导入确认、停用、启用和永久删除成功后统一清空跨页导出选择并重新请求列表；导入固定回第一页，当前页最后一条被移除时自动回上一页。列表请求以递增序列防止旧慢响应覆盖 mutation 后的新数据
 - [x] 商品 Confirm 成功后将正式列表刷新置于导入明细回读、提示和关闭预览之前；导入明细作为次级 UI，不得阻断首次或连续 Confirm 的正式列表 GET
 - [x] Product Import Confirm 使用 FastAPI function-scoped request transaction；HTTP 200 发送前已提交正式 Product 写入，前端首次列表 GET 可立即读取最新数据
@@ -63,6 +66,7 @@ Last Updated：2026-09-24
 
 ## Permissions
 - [x] `product:list`、`product:detail`、`product:update`、`product:cost:update`、`product:disable`、`product:purge`、`product:import`、`product:import:resolve`
+- [x] 批量资料及主推操作复用 `product:update`；批量停用/启用复用 `product:disable`，不新增权限
 - [x] `category:list`、`category:detail`、`category:create`、`category:update`、`category:delete`；类目选择接口保留 `product:list`，类目模板/导入保留 `product:import`
 
 ## Tests

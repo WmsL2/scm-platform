@@ -44,6 +44,7 @@ import type {
   ProductListItem,
   ProductListParams,
   ProductExportColumnKey,
+  ProductBatchUpdatePayload,
 } from "../../types/catalog"
 
 type CategorySelectInstance = {
@@ -129,6 +130,7 @@ const filters = reactive({
   discount_rate_max: "",
   sales_volume_min: "",
   sales_volume_max: "",
+  is_featured: undefined as boolean | undefined,
   status: "ACTIVE" as "ACTIVE" | "DISABLED",
 })
 const columnStorageKey = "scm.product-list.visible-columns.v2"
@@ -188,6 +190,24 @@ function initialExportColumns(): ProductExportColumnKey[] {
   return restoreExportColumns(localStorage.getItem(exportColumnStorageKey))
 }
 const exportColumns = ref<ProductExportColumnKey[]>(initialExportColumns())
+const batchEditVisible = ref(false)
+const batchSubmitting = ref(false)
+const batchEditFields = reactive({
+  company_name: false,
+  brand: false,
+  category: false,
+  purchasing_agent: false,
+  is_featured: false,
+})
+const batchEditForm = reactive({
+  company_name: "",
+  brand: "",
+  category_level1_name: "",
+  category_level2_name: "",
+  category_level3_name: "",
+  purchasing_agent: "",
+  is_featured: true,
+})
 const isAllFilteredProductsSelected = computed(() =>
   isAllProductsSelected(selectedProductIds.value, total.value),
 )
@@ -220,6 +240,7 @@ function productListParams(targetPage?: number): ProductListParams {
     discount_rate_max: percentQuery(filters.discount_rate_max),
     sales_volume_min: filters.sales_volume_min,
     sales_volume_max: filters.sales_volume_max,
+    is_featured: filters.is_featured,
     status: filters.status,
     ...(targetPage === undefined ? {} : { page: targetPage, page_size: pageSize }),
   }
@@ -325,7 +346,7 @@ function reset(): void {
   Object.assign(filters, {
     keyword: "", source_supplier_id: "", cost_price_min: "", cost_price_max: "", agreement_price_min: "",
     agreement_price_max: "", jd_price_min: "", jd_price_max: "", profit_min: "", profit_max: "", discount_rate_min: "", discount_rate_max: "", sales_volume_min: "",
-    sales_volume_max: "", status: "ACTIVE",
+    sales_volume_max: "", is_featured: undefined, status: "ACTIVE",
   })
   productFilterSelections.COMPANY = []
   productFilterSelections.PURCHASING_AGENT = []
@@ -786,6 +807,71 @@ async function purgeProduct(product: ProductListItem): Promise<void> {
   }
 }
 
+function resetBatchEdit(): void {
+  Object.assign(batchEditFields, {
+    company_name: false, brand: false, category: false, purchasing_agent: false, is_featured: false,
+  })
+  Object.assign(batchEditForm, {
+    company_name: "", brand: "", category_level1_name: "", category_level2_name: "",
+    category_level3_name: "", purchasing_agent: "", is_featured: true,
+  })
+}
+
+function openBatchEdit(): void {
+  resetBatchEdit()
+  batchEditVisible.value = true
+}
+
+function optionalBatchText(value: string): string | null {
+  return value.trim() || null
+}
+
+async function submitBatchEdit(): Promise<void> {
+  const updates: ProductBatchUpdatePayload["updates"] = {}
+  if (batchEditFields.company_name) updates.company_name = optionalBatchText(batchEditForm.company_name)
+  if (batchEditFields.brand) updates.brand = optionalBatchText(batchEditForm.brand)
+  if (batchEditFields.category) {
+    updates.category_level1_name = optionalBatchText(batchEditForm.category_level1_name)
+    updates.category_level2_name = optionalBatchText(batchEditForm.category_level2_name)
+    updates.category_level3_name = optionalBatchText(batchEditForm.category_level3_name)
+  }
+  if (batchEditFields.purchasing_agent) updates.purchasing_agent = optionalBatchText(batchEditForm.purchasing_agent)
+  if (batchEditFields.is_featured) updates.is_featured = batchEditForm.is_featured
+  if (Object.keys(updates).length === 0) {
+    ElMessage.warning("请至少选择一项需要批量修改的字段")
+    return
+  }
+  batchSubmitting.value = true
+  try {
+    const result = await productApi.batchUpdate({ product_ids: [...selectedProductIds.value], updates })
+    batchEditVisible.value = false
+    ElMessage.success(`已批量修改 ${result.updated_count} 件商品`)
+    await refreshProductsAfterMutation()
+  } catch (error) {
+    ElMessage.error(error instanceof HttpError ? error.response.message : "批量修改商品失败")
+  } finally { batchSubmitting.value = false }
+}
+
+async function batchChangeStatus(target: "ACTIVE" | "DISABLED"): Promise<void> {
+  const productIds = [...selectedProductIds.value]
+  const action = target === "DISABLED" ? "停用" : "启用"
+  try {
+    await ElMessageBox.confirm(
+      `确定${action}已选择的 ${productIds.length} 件商品吗？本次操作会整批成功或整批不修改。`,
+      `确认批量${action}`,
+      { confirmButtonText: action, cancelButtonText: "取消", type: "warning" },
+    )
+    const result = target === "DISABLED"
+      ? await productApi.batchDisable(productIds)
+      : await productApi.batchEnable(productIds)
+    ElMessage.success(`已批量${action} ${result.updated_count} 件商品`)
+    await refreshProductsAfterMutation({ rowRemoved: true })
+  } catch (error) {
+    if (error === "cancel" || error === "close") return
+    ElMessage.error(error instanceof HttpError ? error.response.message : `批量${action}商品失败`)
+  }
+}
+
 onMounted(async () => {
   void loadProducts()
   if (route.query.action === "import" && auth.hasPermission("product:import")) {
@@ -863,6 +949,12 @@ onMounted(async () => {
             <el-option label="已停用" value="DISABLED" />
           </el-select>
         </el-form-item>
+        <el-form-item label="主推商品">
+          <el-select v-model="filters.is_featured" clearable placeholder="全部" style="width: 120px">
+            <el-option label="主推" :value="true" />
+            <el-option label="非主推" :value="false" />
+          </el-select>
+        </el-form-item>
         <el-form-item class="filter-action">
           <el-button type="primary" :icon="Search" :loading="loading" @click="searchProducts">
             查询
@@ -927,6 +1019,17 @@ onMounted(async () => {
               :disabled="total === 0"
               @click="isAllFilteredProductsSelected ? clearAllFilteredProductSelection() : selectAllFilteredProducts()"
             >{{ isAllFilteredProductsSelected ? "取消全选" : `全选全部商品（${total}）` }}</el-button>
+            <el-button
+              v-if="filters.status === 'ACTIVE' && auth.hasPermission('product:update')"
+              :disabled="selectedProductIds.size === 0"
+              @click="openBatchEdit"
+            >批量修改（{{ selectedProductIds.size }}）</el-button>
+            <el-button
+              v-if="auth.hasPermission('product:disable')"
+              :disabled="selectedProductIds.size === 0"
+              :type="filters.status === 'ACTIVE' ? 'warning' : 'success'"
+              @click="batchChangeStatus(filters.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE')"
+            >批量{{ filters.status === 'ACTIVE' ? '停用' : '启用' }}（{{ selectedProductIds.size }}）</el-button>
             <el-button type="primary" :icon="Download" :disabled="selectedProductIds.size === 0" @click="exportDialogVisible = true">导出 Excel（{{ selectedProductIds.size }}）</el-button>
             <el-popover placement="bottom-end" :width="340" trigger="click">
               <template #reference><el-button :icon="Setting">自定义显示列</el-button></template>
@@ -958,6 +1061,9 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column prop="sku" label="SKU" min-width="130" fixed="left" />
         <el-table-column prop="product_name" label="商品名称" min-width="200" show-overflow-tooltip fixed="left" />
+        <el-table-column label="主推" width="78" fixed="left">
+          <template #default="{ row }"><el-tag v-if="row.is_featured" type="warning">主推</el-tag><span v-else>—</span></template>
+        </el-table-column>
         <el-table-column v-for="column in selectedColumnOptions" :key="column.key" :prop="column.prop" :label="column.label" :min-width="column.minWidth" :show-overflow-tooltip="column.format === 'text'">
           <template #default="{ row }">
             <el-tag v-if="column.format === 'status'" :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status === 'ACTIVE' ? '正常' : '已停用' }}</el-tag>
@@ -1036,6 +1142,19 @@ onMounted(async () => {
         <el-checkbox v-for="column in PRODUCT_EXPORT_COLUMN_DEFINITIONS" :key="column.key" :label="column.key">{{ column.label }}</el-checkbox>
       </el-checkbox-group>
       <template #footer><el-button @click="cancelProductExport">取消</el-button><el-button type="primary" :disabled="exportColumns.length === 0" :loading="exporting" @click="exportSelected">确认导出</el-button><OperationDuration v-if="operationTimer.state.label === '商品导出'" :timing="operationTimer.state" /></template>
+    </el-dialog>
+
+    <el-dialog v-model="batchEditVisible" title="批量修改商品" width="620px" @closed="resetBatchEdit">
+      <el-alert title="只会修改已勾选的正常商品；SKU、来源供应商、商品名称及价格不支持批量改动。留空并勾选字段表示清空该字段。" type="info" :closable="false" show-icon />
+      <p class="batch-edit-count">本次将修改 {{ selectedProductIds.size }} 件商品</p>
+      <el-form label-width="112px" class="batch-edit-form">
+        <el-form-item><template #label><el-checkbox v-model="batchEditFields.company_name">所属公司</el-checkbox></template><el-input v-model="batchEditForm.company_name" :disabled="!batchEditFields.company_name" placeholder="留空可清空" /></el-form-item>
+        <el-form-item><template #label><el-checkbox v-model="batchEditFields.brand">品牌</el-checkbox></template><el-input v-model="batchEditForm.brand" :disabled="!batchEditFields.brand" placeholder="留空可清空" /></el-form-item>
+        <el-form-item><template #label><el-checkbox v-model="batchEditFields.purchasing_agent">采销员</el-checkbox></template><el-input v-model="batchEditForm.purchasing_agent" :disabled="!batchEditFields.purchasing_agent" placeholder="留空可清空" /></el-form-item>
+        <el-form-item><template #label><el-checkbox v-model="batchEditFields.category">三级类目</el-checkbox></template><div class="batch-category-fields"><el-input v-model="batchEditForm.category_level1_name" :disabled="!batchEditFields.category" placeholder="一级类目" /><el-input v-model="batchEditForm.category_level2_name" :disabled="!batchEditFields.category" placeholder="二级类目" /><el-input v-model="batchEditForm.category_level3_name" :disabled="!batchEditFields.category" placeholder="三级类目" /></div></el-form-item>
+        <el-form-item><template #label><el-checkbox v-model="batchEditFields.is_featured">主推商品</el-checkbox></template><el-radio-group v-model="batchEditForm.is_featured" :disabled="!batchEditFields.is_featured"><el-radio :value="true">设为主推</el-radio><el-radio :value="false">取消主推</el-radio></el-radio-group></el-form-item>
+      </el-form>
+      <template #footer><el-button :disabled="batchSubmitting" @click="batchEditVisible = false">取消</el-button><el-button type="primary" :loading="batchSubmitting" @click="submitBatchEdit">确认批量修改</el-button></template>
     </el-dialog>
 
     <el-dialog
@@ -1160,6 +1279,9 @@ onMounted(async () => {
 .import-warning { display: block; margin-top: 5px; color: var(--text-secondary); }
 .import-error { color: var(--el-color-danger); }
 .import-row-filter { margin: -4px 0 12px; }
+.batch-edit-count { margin: 16px 0 8px; color: var(--text-secondary); }
+.batch-edit-form { margin-top: 16px; }
+.batch-category-fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; width: 100%; }
 .product-thumbnail, .image-placeholder { width: 68px; height: 68px; border: 1px solid var(--border); border-radius: 6px; }
 .image-placeholder { display: grid; place-items: center; padding: 6px; box-sizing: border-box; color: var(--text-secondary); background: #f8fafc; font-size: 12px; text-align: center; }
 </style>
