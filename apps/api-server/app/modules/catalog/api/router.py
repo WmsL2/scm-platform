@@ -21,6 +21,10 @@ from app.modules.catalog.application.import_service import ProductImportService
 from app.modules.catalog.application.service import ProductService
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.schemas import (
+    ProductBatchLifecycleRequest,
+    ProductBatchLifecycleResponse,
+    ProductBatchUpdateRequest,
+    ProductBatchUpdateResponse,
     ProductCategoryFilterOptionPageResponse,
     ProductCostUpdateRequest,
     ProductDetailResponse,
@@ -83,6 +87,7 @@ async def list_products(
     session: SessionDep,
     page_params: Annotated[PageParams, Depends()],
     keyword: Annotated[str | None, Query(max_length=255)] = None,
+    skus: Annotated[list[str] | None, Query()] = None,
     company_name: Annotated[str | None, Query(max_length=255)] = None,
     purchasing_agent: Annotated[str | None, Query(max_length=128)] = None,
     brand: Annotated[str | None, Query(max_length=128)] = None,
@@ -107,6 +112,7 @@ async def list_products(
     discount_rate_max: Decimal | None = None,
     sales_volume_min: Annotated[int | None, Query(ge=0)] = None,
     sales_volume_max: Annotated[int | None, Query(ge=0)] = None,
+    is_featured: bool | None = None,
     status: ProductStatus = ProductStatus.ACTIVE,
 ) -> ApiResponse[PageResult[ProductListItem]]:
     if status == ProductStatus.DISABLED and "product:disable" not in current.permissions:
@@ -115,6 +121,7 @@ async def list_products(
         await ProductService(session).list(
             page_params,
             keyword=keyword,
+            skus=skus or [],
             company_name=company_name,
             purchasing_agent=purchasing_agent,
             brand=brand,
@@ -139,6 +146,7 @@ async def list_products(
             discount_rate_max=discount_rate_max,
             sales_volume_min=sales_volume_min,
             sales_volume_max=sales_volume_max,
+            is_featured=is_featured,
             status=status,
         )
     )
@@ -149,6 +157,7 @@ async def product_selection_ids(
     current: Annotated[CurrentUser, Depends(require_permission("product:list"))],
     session: SessionDep,
     keyword: Annotated[str | None, Query(max_length=255)] = None,
+    skus: Annotated[list[str] | None, Query()] = None,
     company_name: Annotated[str | None, Query(max_length=255)] = None,
     purchasing_agent: Annotated[str | None, Query(max_length=128)] = None,
     brand: Annotated[str | None, Query(max_length=128)] = None,
@@ -173,12 +182,14 @@ async def product_selection_ids(
     discount_rate_max: Decimal | None = None,
     sales_volume_min: Annotated[int | None, Query(ge=0)] = None,
     sales_volume_max: Annotated[int | None, Query(ge=0)] = None,
+    is_featured: bool | None = None,
     status: ProductStatus = ProductStatus.ACTIVE,
 ) -> ApiResponse[ProductSelectionIdsResponse]:
     if status == ProductStatus.DISABLED and "product:disable" not in current.permissions:
         raise AppError("AUTH_FORBIDDEN", "Permission denied", 403)
     ids = await ProductService(session).selection_ids(
         keyword=keyword,
+        skus=skus or [],
         company_name=company_name,
         purchasing_agent=purchasing_agent,
         brand=brand,
@@ -203,6 +214,7 @@ async def product_selection_ids(
         discount_rate_max=discount_rate_max,
         sales_volume_min=sales_volume_min,
         sales_volume_max=sales_volume_max,
+        is_featured=is_featured,
         status=status,
     )
     return success(ProductSelectionIdsResponse(ids=ids, total=len(ids)))
@@ -395,6 +407,37 @@ async def source_supplier_candidates(
     session: SessionDep,
 ) -> ApiResponse[list[ProductSourceSupplierCandidateResponse]]:
     return success(await ProductService(session).source_supplier_candidates())
+
+
+@router.patch("/batch", response_model=ApiResponse[ProductBatchUpdateResponse])
+async def batch_update_products(
+    payload: ProductBatchUpdateRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("product:update"))],
+    session: SessionDep,
+) -> ApiResponse[ProductBatchUpdateResponse]:
+    return success(await ProductService(session).batch_update(payload, current.user_id))
+
+
+@router.post(
+    "/commands/batch-disable", response_model=ApiResponse[ProductBatchLifecycleResponse]
+)
+async def batch_disable_products(
+    payload: ProductBatchLifecycleRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("product:disable"))],
+    session: SessionDep,
+) -> ApiResponse[ProductBatchLifecycleResponse]:
+    return success(await ProductService(session).batch_disable(payload.product_ids, current.user_id))
+
+
+@router.post(
+    "/commands/batch-enable", response_model=ApiResponse[ProductBatchLifecycleResponse]
+)
+async def batch_enable_products(
+    payload: ProductBatchLifecycleRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("product:disable"))],
+    session: SessionDep,
+) -> ApiResponse[ProductBatchLifecycleResponse]:
+    return success(await ProductService(session).batch_enable(payload.product_ids, current.user_id))
 
 
 @router.post("/{product_id}/image", response_model=ApiResponse[ProductDetailResponse])

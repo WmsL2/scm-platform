@@ -17,7 +17,7 @@ async def test_product_schema_and_permission_directory() -> None:
             "sales_volume", "positive_rating", "price_inflation_rate", "deduction_rate",
             "tax_code", "invoice_name", "tax_category", "shipping_courier", "after_sales_policy",
             "created_by", "updated_by", "created_at",
-        "updated_at", "status", "disabled_by", "disabled_at",
+        "updated_at", "status", "disabled_by", "disabled_at", "is_featured",
     }
     async with SessionLocal() as session:
         table_rows = await session.execute(
