@@ -2,6 +2,8 @@
 
 状态：B_CORE_C_AGENT_WEB_INTEGRATED / EXPORT_IMPLEMENTED
 
+> 2026-10-12：修复项目 Run 历史读取在大 JSON 快照下的 MySQL 排序内存异常。`scm_recommendation_run` 新增 `(project_id, created_at)` 复合索引，覆盖按项目读取并按创建时间倒序的工作台查询，避免 `Using filesort` 导致的 MySQL 1038；Revision `20261012_0053`。不改变类型 1--5 业务、AI、PPT、API 或权限合同。
+
 > 2026-10-10：经明确授权，四套类型 5 CLEAN v3 模板改为仓库内可公开分发的
 > `assets/ppt-templates/` 资产；克隆仓库后无需私有 `.codex-assets/` 即可生成。显式
 > `PPT_TEMPLATE_ASSET_DIR` 覆盖仍严格校验并在缺失时失败；公开资产仅包含虚构槽位、静态形状与

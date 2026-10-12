@@ -39,6 +39,11 @@ class RecommendationRun(Base):
             name="ck_scm_recommendation_run_status",
         ),
         Index("ix_scm_recommendation_run_project_id", "project_id"),
+        Index(
+            "ix_scm_recommendation_run_project_created_at",
+            "project_id",
+            "created_at",
+        ),
         Index("ix_scm_recommendation_run_status", "status"),
         Index("ix_scm_recommendation_run_created_at", "created_at"),
     )
