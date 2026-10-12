@@ -34,6 +34,7 @@ Let an operator change selected Product Master records together, including batch
 
 ## Verification
 
+- 2026-10-12 CI follow-up: sorted the migration imports so repository-wide Ruff no longer stops the backend job before Mypy, Alembic and pytest run.
 - Backend Product API tests: `25 passed`.
 - Backend Ruff and Mypy: passed.
 - Alembic head: `20261012_0054`; local development database upgraded to that revision.
