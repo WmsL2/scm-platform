@@ -179,18 +179,18 @@ async def test_type2_automatically_selects_lowest_cost_and_finishes_with_unmatch
         expensive = Product(
             source_supplier_id=suppliers[0].id,
             sku=f"EXP-{token[:8]}",
-            brand="Clear",
-            model="ARC3",
-            product_name="Clear ARC3",
+            brand="联想",
+            model="LT-1821",
+            product_name="联想 LT-1821",
             cost_price=Decimal("90.0000"),
             status=ProductStatus.ACTIVE,
         )
         cheapest = Product(
             source_supplier_id=suppliers[1].id,
             sku=f"LOW-{token[:8]}",
-            brand="Clear",
-            model="ARC3",
-            product_name="Clear ARC3",
+            brand="联想Lenovo",
+            model="LT/1821",
+            product_name="联想 Lenovo LT1821",
             cost_price=Decimal("80.0000"),
             status=ProductStatus.ACTIVE,
         )
@@ -198,9 +198,9 @@ async def test_type2_automatically_selects_lowest_cost_and_finishes_with_unmatch
             project_id=project.id,
             sheet_name="Sheet1",
             source_row_number=2,
-            source_data={"品牌": "Clear", "型号": "ARC3"},
-            brand="Clear",
-            model="ARC3",
+            source_data={"品牌": "中国联想电脑", "型号": "LT 1821"},
+            brand="中国联想电脑",
+            model="LT 1821",
             max_price=Decimal("85.0000"),
             status=BidItemStatus.PENDING.value,
         )

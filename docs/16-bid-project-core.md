@@ -41,6 +41,8 @@
 - `POST /api/v1/bid-projects/{id}/commands/win`：标记中标。
 - `POST /api/v1/bid-projects/{id}/commands/lose`：标记未中标。
 
+报价导出的附件记录、项目状态和审计事件必须在 POST 响应发送前完成事务提交。前端收到文件 ID 后可以立即调用下载接口，不应因另一数据库会话尚不可见而偶发返回“投标文件不存在”。
+
 ## 商品匹配与人工选品
 
 - `POST /api/v1/bid-projects/{id}/commands/start-matching`：针对已解析项目创建一次匹配任务，在本机 `inline` TaskQueue 中完成候选生成；写入任务、Top 20 候选和行级匹配状态。

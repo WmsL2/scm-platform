@@ -8,8 +8,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import ApiResponse, AppError, PageParams, PageResult, success
-from app.core.database import get_db_session
-from app.modules.auth.dependencies import require_permission
+from app.core.database import FunctionSessionDep, get_db_session
+from app.modules.auth.dependencies import require_permission, require_permission_before_response
 from app.modules.auth.schemas import CurrentUser
 from app.modules.bid.application.service import BidProjectService
 from app.modules.bid.domain.lifecycle import (
@@ -248,8 +248,10 @@ async def download_bid_project_file(
 @router.post("/{project_id}/exports", response_model=ApiResponse[BidProjectFileResponse])
 async def export_bid_project(
     project_id: uuid.UUID,
-    current: Annotated[CurrentUser, Depends(require_permission("bid:export"))],
-    session: SessionDep,
+    current: Annotated[
+        CurrentUser, Depends(require_permission_before_response("bid:export"))
+    ],
+    session: FunctionSessionDep,
 ) -> ApiResponse[BidProjectFileResponse]:
     return success(await BidProjectService(session).export(project_id, current.user_id))
 

@@ -12,7 +12,25 @@ from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
 
 _SEPARATOR_PATTERN = re.compile(r"[\s\-_—–/\\|,，.。;；:：()（）\[\]【】{}<>《》]+")
-_MATCH_RULES_VERSION = "v1"
+_BRAND_SCRIPT_PATTERN = re.compile(r"[\u3400-\u9fff]+|[a-z0-9]+")
+_BRAND_SUFFIXES = (
+    "官方旗舰店",
+    "品牌旗舰店",
+    "集团有限公司",
+    "有限责任公司",
+    "专卖店",
+    "旗舰店",
+    "有限公司",
+    "通用配件",
+    "集团",
+    "公司",
+    "计算机",
+    "电脑",
+    "数码",
+    "品牌",
+    "官方",
+)
+_MATCH_RULES_VERSION = "v2"
 _MAX_CANDIDATES = 20
 
 
@@ -96,9 +114,10 @@ class ScoredCandidate:
     rank: int
     recall_stage: RecallStage
     signals: tuple[MatchSignal, ...]
+    canonical_brand: str | None = None
 
     def match_reason(self) -> dict[str, object]:
-        return {
+        reason: dict[str, object] = {
             "rules_version": _MATCH_RULES_VERSION,
             "recall_stage": self.recall_stage.value,
             "signals": [
@@ -110,6 +129,9 @@ class ScoredCandidate:
                 for signal in self.signals
             ],
         }
+        if self.canonical_brand is not None:
+            reason["canonical_brand"] = self.canonical_brand
+        return reason
 
 
 @dataclass(frozen=True)
@@ -117,6 +139,23 @@ class MatchDecision:
     status: BidItemMatchStatus
     candidates: tuple[ScoredCandidate, ...]
     reason: str | None = None
+
+
+@dataclass(frozen=True)
+class _BrandCatalogGroup:
+    member_keys: frozenset[str]
+    aliases: frozenset[str]
+    canonical_name: str
+
+
+@dataclass(frozen=True)
+class _BrandModelMatches:
+    candidates: tuple[MatchableProduct, ...]
+    ambiguous_brand: bool = False
+    canonical_brand: str | None = None
+
+
+BrandCatalog = tuple[_BrandCatalogGroup, ...]
 
 
 def normalize_match_text(value: str | None) -> str:
@@ -142,6 +181,7 @@ def decide_product_matches(
     candidates: Sequence[MatchableProduct],
     *,
     allow_brand_substitution: bool = False,
+    brand_catalog: BrandCatalog | None = None,
 ) -> MatchDecision:
     """Recall and rank candidates without selecting or writing any business record."""
     if not _has_match_evidence(requirement):
@@ -156,9 +196,18 @@ def decide_product_matches(
     if identifier_matches:
         return _build_decision(requirement, identifier_matches, RecallStage.EXACT_IDENTIFIER)
 
-    brand_model_matches = _brand_model_matches(requirement, eligible)
-    if brand_model_matches:
-        return _build_decision(requirement, brand_model_matches, RecallStage.BRAND_MODEL)
+    brand_model_matches = _brand_model_matches(
+        requirement,
+        eligible,
+        brand_catalog=brand_catalog,
+    )
+    if brand_model_matches.candidates:
+        return _build_decision(
+            requirement,
+            brand_model_matches.candidates,
+            RecallStage.BRAND_MODEL,
+            canonical_brand=brand_model_matches.canonical_brand,
+        )
 
     fallback_matches = _fallback_matches(
         requirement,
@@ -177,6 +226,8 @@ def decide_product_matches(
 def decide_identified_product_matches(
     requirement: CanonicalRequirement,
     candidates: Sequence[MatchableProduct],
+    *,
+    brand_catalog: BrandCatalog | None = None,
 ) -> MatchDecision:
     """Type 2 only accepts an exact SKU/code or exact brand and model match.
 
@@ -186,20 +237,35 @@ def decide_identified_product_matches(
     eligible = [candidate for candidate in candidates if is_eligible_matching_product(candidate)]
     matches = _identifier_matches(requirement, eligible)
     recall_stage = RecallStage.EXACT_IDENTIFIER
+    ambiguous_brand = False
+    canonical_brand: str | None = None
     if not matches:
-        matches = _brand_model_matches(requirement, eligible)
+        brand_model_matches = _brand_model_matches(
+            requirement,
+            eligible,
+            brand_catalog=brand_catalog,
+        )
+        matches = list(brand_model_matches.candidates)
+        ambiguous_brand = brand_model_matches.ambiguous_brand
+        canonical_brand = brand_model_matches.canonical_brand
         recall_stage = RecallStage.BRAND_MODEL
     if not matches:
+        reason = (
+            "品牌信息同时命中多个受控品牌，无法安全确定同品。"
+            if ambiguous_brand
+            else "未找到 SKU 或品牌型号完全一致的可用商品。"
+        )
         return MatchDecision(
             status=BidItemMatchStatus.NO_MATCH,
             candidates=(),
-            reason="未找到 SKU 或品牌型号完全一致的可用商品。",
+            reason=reason,
         )
     return _build_decision(
         requirement,
         matches,
         recall_stage,
         prefer_lowest_price=True,
+        canonical_brand=canonical_brand,
     )
 
 
@@ -232,17 +298,156 @@ def _identifier_matches(
 def _brand_model_matches(
     requirement: CanonicalRequirement,
     candidates: Sequence[MatchableProduct],
-) -> list[MatchableProduct]:
-    brand = normalize_match_text(requirement.brand)
+    *,
+    brand_catalog: BrandCatalog | None = None,
+) -> _BrandModelMatches:
     model = normalize_match_text(requirement.model)
-    if not brand or not model:
-        return []
-    return [
-        candidate
-        for candidate in candidates
-        if normalize_match_text(candidate.brand) == brand
-        and normalize_match_text(candidate.model) == model
+    requirement_aliases = _brand_aliases(requirement.brand)
+    if not requirement_aliases or not model:
+        return _BrandModelMatches(())
+
+    normalized_requirement_brand = normalize_match_text(requirement.brand)
+    requirement_key = _strip_brand_modifiers(normalized_requirement_brand)
+    catalog = brand_catalog if brand_catalog is not None else build_brand_catalog(candidates)
+    matched_groups = [
+        group
+        for group in catalog
+        if _brand_group_matches_requirement(
+            group,
+            requirement_aliases,
+            requirement_key,
+            allow_embedded=requirement_key != normalized_requirement_brand,
+        )
     ]
+    if len(matched_groups) != 1:
+        return _BrandModelMatches((), ambiguous_brand=len(matched_groups) > 1)
+
+    matched_brand_keys = matched_groups[0].member_keys
+    return _BrandModelMatches(
+        tuple(
+            candidate
+            for candidate in candidates
+            if normalize_match_text(candidate.brand) in matched_brand_keys
+            and normalize_match_text(candidate.model) == model
+        ),
+        canonical_brand=matched_groups[0].canonical_name,
+    )
+
+
+def build_brand_catalog(
+    candidates: Sequence[MatchableProduct],
+) -> BrandCatalog:
+    """Build one controlled brand-alias catalog for reuse across a matching task."""
+    entries: dict[str, frozenset[str]] = {}
+    for candidate in candidates:
+        if not is_eligible_matching_product(candidate):
+            continue
+        member_key = normalize_match_text(candidate.brand)
+        aliases = _brand_aliases(candidate.brand)
+        if member_key and aliases:
+            entries[member_key] = aliases
+
+    member_keys = list(entries)
+    parents = list(range(len(member_keys)))
+
+    def find(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    alias_owner: dict[str, int] = {}
+    for index, member_key in enumerate(member_keys):
+        for alias in entries[member_key]:
+            owner = alias_owner.setdefault(alias, index)
+            union(index, owner)
+
+    grouped_members: dict[int, set[str]] = {}
+    grouped_aliases: dict[int, set[str]] = {}
+    for index, member_key in enumerate(member_keys):
+        root = find(index)
+        grouped_members.setdefault(root, set()).add(member_key)
+        grouped_aliases.setdefault(root, set()).update(entries[member_key])
+    return tuple(
+        _BrandCatalogGroup(
+            member_keys=frozenset(grouped_members[root]),
+            aliases=frozenset(grouped_aliases[root]),
+            canonical_name=_canonical_brand_name(grouped_aliases[root]),
+        )
+        for root in grouped_members
+    )
+
+
+def _canonical_brand_name(aliases: set[str]) -> str:
+    chinese_aliases = [
+        alias
+        for alias in aliases
+        if re.fullmatch(r"[\u3400-\u9fff]+", alias) and len(alias) >= 2
+    ]
+    if chinese_aliases:
+        return min(chinese_aliases, key=lambda alias: (len(alias), alias))
+    return min(aliases, key=lambda alias: (len(alias), alias))
+
+
+def _brand_aliases(value: str | None) -> frozenset[str]:
+    normalized = normalize_match_text(value)
+    if not normalized:
+        return frozenset()
+    stripped = _strip_brand_modifiers(normalized)
+    aliases = {normalized, stripped}
+    aliases.update(
+        alias
+        for alias in _BRAND_SCRIPT_PATTERN.findall(stripped)
+        if _is_meaningful_brand_alias(alias)
+    )
+    return frozenset(alias for alias in aliases if alias)
+
+
+def _strip_brand_modifiers(value: str) -> str:
+    result = value
+    changed = True
+    while changed and result:
+        changed = False
+        for suffix in _BRAND_SUFFIXES:
+            if result.endswith(suffix) and len(result) > len(suffix) + 1:
+                result = result[: -len(suffix)]
+                changed = True
+                break
+    return result
+
+
+def _brand_group_matches_requirement(
+    group: _BrandCatalogGroup,
+    requirement_aliases: frozenset[str],
+    requirement_key: str,
+    *,
+    allow_embedded: bool,
+) -> bool:
+    if group.aliases & requirement_aliases:
+        return True
+    if not allow_embedded:
+        return False
+    return any(
+        _is_safe_embedded_brand_alias(alias, requirement_key) for alias in group.aliases
+    )
+
+
+def _is_safe_embedded_brand_alias(alias: str, requirement_key: str) -> bool:
+    if alias not in requirement_key:
+        return False
+    return _is_meaningful_brand_alias(alias, embedded=True)
+
+
+def _is_meaningful_brand_alias(alias: str, *, embedded: bool = False) -> bool:
+    has_cjk = bool(re.search(r"[\u3400-\u9fff]", alias))
+    minimum_length = 2 if has_cjk else 3 if embedded else 2
+    return len(alias) >= minimum_length
 
 
 def _fallback_matches(
@@ -301,9 +506,18 @@ def _build_decision(
     recall_stage: RecallStage,
     *,
     prefer_lowest_price: bool = False,
+    canonical_brand: str | None = None,
 ) -> MatchDecision:
     scored = [
-        (_score_candidate(requirement, candidate, recall_stage), candidate.cost_price)
+        (
+            _score_candidate(
+                requirement,
+                candidate,
+                recall_stage,
+                canonical_brand=canonical_brand,
+            ),
+            candidate.cost_price,
+        )
         for candidate in matches
     ]
     if prefer_lowest_price:
@@ -326,6 +540,7 @@ def _build_decision(
             rank=index,
             recall_stage=candidate.recall_stage,
             signals=candidate.signals,
+            canonical_brand=candidate.canonical_brand,
         )
         for index, (candidate, _) in enumerate(ranked[:_MAX_CANDIDATES], start=1)
     )
@@ -338,8 +553,16 @@ def _score_candidate(
     requirement: CanonicalRequirement,
     candidate: MatchableProduct,
     recall_stage: RecallStage,
+    *,
+    canonical_brand: str | None = None,
 ) -> ScoredCandidate:
-    signals = tuple(_score_signals(requirement, candidate))
+    signals_list = _score_signals(requirement, candidate)
+    if (
+        recall_stage is RecallStage.BRAND_MODEL
+        and not any(signal.field is MatchSignalField.BRAND for signal in signals_list)
+    ):
+        signals_list.append(MatchSignal(MatchSignalField.BRAND, 20, "CANONICAL_ALIAS"))
+    signals = tuple(signals_list)
     return ScoredCandidate(
         product_id=candidate.id,
         supplier_id=candidate.supplier_id,
@@ -347,6 +570,7 @@ def _score_candidate(
         rank=0,
         recall_stage=recall_stage,
         signals=signals,
+        canonical_brand=canonical_brand,
     )
 
 
