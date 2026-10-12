@@ -111,6 +111,17 @@ describe("product import api", () => {
     )
   })
 
+  it("repeats each exact SKU in the product list query", async () => {
+    http.get.mockResolvedValue({ items: [] })
+    const { productApi } = await import("./catalog")
+
+    await productApi.list({ skus: ["SKU-1", "SKU-2"] })
+
+    expect(http.get).toHaveBeenCalledWith(
+      "/api/v1/products?skus=SKU-1&skus=SKU-2",
+    )
+  })
+
   it("repeats each direct category selection in the product list query", async () => {
     http.get.mockResolvedValue({ items: [] })
     const { productApi } = await import("./catalog")

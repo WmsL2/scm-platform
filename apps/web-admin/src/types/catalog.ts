@@ -68,6 +68,7 @@ export interface ProductListParams {
   page?: number
   page_size?: number
   keyword?: string
+  skus?: string[]
   company_name?: string
   company_names?: string[]
   purchasing_agent?: string

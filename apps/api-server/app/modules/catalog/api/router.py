@@ -87,6 +87,7 @@ async def list_products(
     session: SessionDep,
     page_params: Annotated[PageParams, Depends()],
     keyword: Annotated[str | None, Query(max_length=255)] = None,
+    skus: Annotated[list[str] | None, Query()] = None,
     company_name: Annotated[str | None, Query(max_length=255)] = None,
     purchasing_agent: Annotated[str | None, Query(max_length=128)] = None,
     brand: Annotated[str | None, Query(max_length=128)] = None,
@@ -120,6 +121,7 @@ async def list_products(
         await ProductService(session).list(
             page_params,
             keyword=keyword,
+            skus=skus or [],
             company_name=company_name,
             purchasing_agent=purchasing_agent,
             brand=brand,
@@ -155,6 +157,7 @@ async def product_selection_ids(
     current: Annotated[CurrentUser, Depends(require_permission("product:list"))],
     session: SessionDep,
     keyword: Annotated[str | None, Query(max_length=255)] = None,
+    skus: Annotated[list[str] | None, Query()] = None,
     company_name: Annotated[str | None, Query(max_length=255)] = None,
     purchasing_agent: Annotated[str | None, Query(max_length=128)] = None,
     brand: Annotated[str | None, Query(max_length=128)] = None,
@@ -186,6 +189,7 @@ async def product_selection_ids(
         raise AppError("AUTH_FORBIDDEN", "Permission denied", 403)
     ids = await ProductService(session).selection_ids(
         keyword=keyword,
+        skus=skus or [],
         company_name=company_name,
         purchasing_agent=purchasing_agent,
         brand=brand,

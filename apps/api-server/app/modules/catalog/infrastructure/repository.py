@@ -475,6 +475,7 @@ class ProductRepository:
         self,
         *,
         keyword: str | None,
+        skus: List[str],
         company_name: str | None,
         purchasing_agent: str | None,
         brand: str | None,
@@ -540,6 +541,13 @@ class ProductRepository:
             )
             statement = statement.where(criteria)
             count_statement = count_statement.where(criteria)
+        if skus:
+            # Historical Excel imports may retain invisible surrounding whitespace.
+            # SKU remains an exact identifier, but list lookup must compare its
+            # trimmed stored value with the normalized query values.
+            sku_criterion = func.trim(Product.sku).in_(skus)
+            statement = statement.where(sku_criterion)
+            count_statement = count_statement.where(sku_criterion)
         category_selection_criteria: List[ColumnElement[bool]] = []
         if category_level1_names:
             category_selection_criteria.append(
@@ -647,6 +655,7 @@ class ProductRepository:
         page_params: PageParams,
         *,
         keyword: str | None,
+        skus: List[str],
         company_name: str | None,
         purchasing_agent: str | None,
         brand: str | None,
@@ -678,6 +687,7 @@ class ProductRepository:
     ) -> tuple[list[Product], int]:
         statement, count_statement = self._filtered_statements(
             keyword=keyword,
+            skus=skus,
             company_name=company_name,
             purchasing_agent=purchasing_agent,
             brand=brand,
@@ -725,6 +735,7 @@ class ProductRepository:
         self,
         *,
         keyword: str | None,
+        skus: List[str],
         company_name: str | None,
         purchasing_agent: str | None,
         brand: str | None,
@@ -757,6 +768,7 @@ class ProductRepository:
     ) -> List[uuid.UUID]:
         statement, _ = self._filtered_statements(
             keyword=keyword,
+            skus=skus,
             company_name=company_name,
             purchasing_agent=purchasing_agent,
             brand=brand,

@@ -40,6 +40,7 @@ from app.modules.supplier.infrastructure.repository import SupplierRepository
 from app.modules.system.repository import UserRepository
 
 PRODUCT_EXPORT_SELECTION_LIMIT = 5000
+MULTI_SKU_FILTER_LIMIT = 500
 
 
 class ProductService:
@@ -55,6 +56,7 @@ class ProductService:
         page_params: PageParams,
         *,
         keyword: str | None,
+        skus: List[str],
         company_name: str | None,
         purchasing_agent: str | None,
         brand: str | None,
@@ -94,6 +96,7 @@ class ProductService:
         products, total = await self.repository.list(
             page_params,
             keyword=keyword.strip() if keyword else None,
+            skus=self._normalize_skus(skus),
             company_name=company_name.strip() if company_name else None,
             purchasing_agent=purchasing_agent.strip() if purchasing_agent else None,
             brand=brand.strip() if brand else None,
@@ -143,6 +146,7 @@ class ProductService:
         self,
         *,
         keyword: str | None,
+        skus: List[str],
         company_name: str | None,
         purchasing_agent: str | None,
         brand: str | None,
@@ -181,6 +185,7 @@ class ProductService:
         )
         ids = await self.repository.selection_ids(
             keyword=keyword.strip() if keyword else None,
+            skus=self._normalize_skus(skus),
             company_name=company_name.strip() if company_name else None,
             purchasing_agent=purchasing_agent.strip() if purchasing_agent else None,
             brand=brand.strip() if brand else None,
@@ -230,6 +235,21 @@ class ProductService:
             raise AppError(
                 "PRODUCT_FILTER_SELECTION_LIMIT_EXCEEDED",
                 "A product filter accepts at most 50 selections",
+                422,
+            )
+        return result
+
+    @staticmethod
+    def _normalize_skus(values: List[str]) -> List[str]:
+        result: List[str] = []
+        for value in values:
+            normalized = value.strip()
+            if normalized and normalized not in result:
+                result.append(normalized)
+        if len(result) > MULTI_SKU_FILTER_LIMIT:
+            raise AppError(
+                "PRODUCT_MULTI_SKU_FILTER_LIMIT_EXCEEDED",
+                "一次最多查询 500 个 SKU。",
                 422,
             )
         return result

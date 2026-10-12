@@ -395,6 +395,33 @@ async def test_product_api_lists_details_and_updates_cost_independently() -> Non
                 item["id"] for item in multi_value_filtered.json()["data"]["items"]
             }
 
+            async with SessionLocal() as session:
+                product = await session.get(Product, product_id)
+                assert product is not None
+                product.sku = " SKU-1 "
+                await session.commit()
+
+            multi_sku_filtered = await client.get(
+                "/api/v1/products",
+                params=[("skus", "SKU-1"), ("skus", "SKU-404"), ("skus", " SKU-1 ")],
+                headers=headers,
+            )
+            assert multi_sku_filtered.status_code == 200
+            assert {item["id"] for item in multi_sku_filtered.json()["data"]["items"]} == {
+                str(product_id)
+            }
+
+            multi_sku_selection = await client.get(
+                "/api/v1/products/selection-ids",
+                params=[("skus", "SKU-1"), ("skus", "SKU-404")],
+                headers=headers,
+            )
+            assert multi_sku_selection.status_code == 200
+            assert multi_sku_selection.json()["data"] == {
+                "ids": [str(product_id)],
+                "total": 1,
+            }
+
             company_options = await client.get(
                 "/api/v1/products/filter-options?field=COMPANY&keyword=众诚",
                 headers=headers,

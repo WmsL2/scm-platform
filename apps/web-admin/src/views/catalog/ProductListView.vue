@@ -29,6 +29,7 @@ import {
   productMutationRefreshPage,
   type ProductMutationRefreshOptions,
 } from "./productListRefresh"
+import { parseMultipleSkus } from "./productMultiSkuFilter"
 import {
   derivedLevel1Keys,
   derivedLevel2Keys,
@@ -117,6 +118,7 @@ const productFilterOptionCache = new Map<string, ProductFilterOption>()
 const productFilterSearchSequence = { COMPANY: 0, PURCHASING_AGENT: 0, BRAND: 0, SUPPLIER: 0 }
 const filters = reactive({
   keyword: "",
+  skus: "",
   source_supplier_id: typeof route.query.source_supplier_id === "string" ? route.query.source_supplier_id : "",
   cost_price_min: "",
   cost_price_max: "",
@@ -222,6 +224,7 @@ function syncSelection(rows: ProductListItem[]): void {
 function productListParams(targetPage?: number): ProductListParams {
   return {
     keyword: filters.keyword,
+    skus: parseMultipleSkus(filters.skus),
     company_names: productFilterSelections.COMPANY,
     purchasing_agents: productFilterSelections.PURCHASING_AGENT,
     brands: productFilterSelections.BRAND,
@@ -344,7 +347,7 @@ function searchProducts(): void {
 function reset(): void {
   selectedProductIds.value.clear()
   Object.assign(filters, {
-    keyword: "", source_supplier_id: "", cost_price_min: "", cost_price_max: "", agreement_price_min: "",
+    keyword: "", skus: "", source_supplier_id: "", cost_price_min: "", cost_price_max: "", agreement_price_min: "",
     agreement_price_max: "", jd_price_min: "", jd_price_max: "", profit_min: "", profit_max: "", discount_rate_min: "", discount_rate_max: "", sales_volume_min: "",
     sales_volume_max: "", is_featured: undefined, status: "ACTIVE",
   })
@@ -941,6 +944,17 @@ onMounted(async () => {
             placeholder="相机、数码、品牌、SKU、类目等"
             style="width: 240px"
             @keyup.enter="searchProducts"
+          />
+        </el-form-item>
+        <el-form-item label="多个 SKU">
+          <el-input
+            v-model="filters.skus"
+            type="textarea"
+            :autosize="{ minRows: 1, maxRows: 3 }"
+            clearable
+            placeholder="多个 SKU 用空格、逗号或换行分隔"
+            style="width: 300px"
+            @keydown.ctrl.enter.prevent="searchProducts"
           />
         </el-form-item>
         <el-form-item v-if="auth.hasPermission('product:disable')" label="商品状态">
