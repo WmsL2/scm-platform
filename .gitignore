@@ -22,3 +22,7 @@ local-data/*
 
 # Codex 本地开发素材（客户 PPT 原始文件，禁止提交）
 /.codex-assets/
+
+# v4 fidelity candidates are private until material and visual review approve
+# public distribution. Never stage a candidate by accident.
+/assets/ppt-templates/*_CLEAN_v4.pptx

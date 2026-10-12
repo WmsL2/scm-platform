@@ -16,12 +16,12 @@ from pptx.util import Inches, Pt
 
 from app.common.contracts import AppError
 from app.modules.recommendation.application.ppt_template_manifest import (
-    PPTX_SLOT_MANIFESTS,
     SLOT_BODY,
     SLOT_IMAGE_PREFIX,
     SLOT_PRICE,
     SLOT_TITLE,
     PptxSlotManifest,
+    get_pptx_manifest,
 )
 from app.modules.recommendation.application.ppt_template_registry import (
     get_ppt_template,
@@ -54,9 +54,7 @@ class PptRenderer:
         template_code: str = "SYSTEM_DEFAULT",
         template_version: str | None = None,
     ) -> bytes:
-        template = get_ppt_template(template_code)
-        if template_version is not None and template.version != template_version:
-            raise AppError("PPT_TEMPLATE_VERSION_UNAVAILABLE", "所选 PPT 模板版本不可用", 409)
+        template = get_ppt_template(template_code, template_version)
         self._template_code = template.code
         if template.code != "SYSTEM_DEFAULT":
             # Business decks are real PPTX templates, not approximations drawn on a
@@ -86,7 +84,13 @@ class PptRenderer:
         images: Mapping[str, bytes],
         template: Any,
     ) -> bytes:
-        manifest = PPTX_SLOT_MANIFESTS[template.code]
+        manifest = get_pptx_manifest(template.code, template.version)
+        if manifest is None:
+            raise AppError("PPT_TEMPLATE_ASSET_UNAVAILABLE", "所选 PPT 模板资产不可用", 409)
+        if template.version == "4":
+            from app.modules.recommendation.application.ppt_renderer_v4 import render_v4
+
+            return render_v4(source, images=images, template=template, manifest=manifest)
         presentation = Presentation(str(resolve_ppt_template_asset(template)))
         prototype = presentation.slides[manifest.product_slide_index]
         cover = (
