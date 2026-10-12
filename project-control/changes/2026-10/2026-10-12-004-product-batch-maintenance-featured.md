@@ -34,6 +34,7 @@ Let an operator change selected Product Master records together, including batch
 
 ## Verification
 
+- 2026-10-12 CI follow-up: sorted the migration imports and aligned the Product schema regression assertion with `is_featured`, so repository-wide Ruff and pytest can complete.
 - Backend Product API tests: `25 passed`.
 - Backend Ruff and Mypy: passed.
 - Alembic head: `20261012_0054`; local development database upgraded to that revision.
