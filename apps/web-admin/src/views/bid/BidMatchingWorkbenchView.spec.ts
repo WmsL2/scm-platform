@@ -15,6 +15,7 @@ describe("BidMatchingWorkbenchView", () => {
     expect(source).toContain("选品单价不能高于需求限价")
     expect(source).toContain("其他原因必须填写说明")
     expect(source).toContain("['UNIQUE_MATCH', 'MULTIPLE_MATCH', 'SELECTED']")
+    expect(source).toContain("查看全部匹配")
     expect(source).toContain("terminal.value")
   })
   it("renders Type 2 as a read-only AI-assisted exact-first comparison result", () => {
@@ -23,7 +24,7 @@ describe("BidMatchingWorkbenchView", () => {
     expect(source).toContain("同类型替代")
     expect(source).toContain("row.current_selection?.note")
     expect(source).toContain('v-if="isType1" label="处理"')
-    expect(source).toContain("isType2 ? '最低报价' : '选中单价'")
+    expect(source).toContain("isType2 ? '最低报价' : '自动报价'")
     expect(source).toContain("async function exportResult()")
     expect(source).toContain("导出回填表")
   })
@@ -38,6 +39,7 @@ describe("BidMatchingWorkbenchView", () => {
   it("waits for explicit user confirmation before starting like Type 4", () => {
     expect(source).toContain("project?.status === 'IMPORTED'")
     expect(source).toContain('["SELECTING", "READY"].includes(status)')
+    expect(source).toContain("全部命中商品将逐行导出")
     expect(source).toContain("客户需求已解析。请确认后点击")
     expect(source).toContain('@click="startMatching"')
     expect(source).not.toContain("onMounted(() => void startMatching())")

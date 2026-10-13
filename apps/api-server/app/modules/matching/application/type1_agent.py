@@ -104,7 +104,7 @@ class Type1TemplateMappingSuggestion(BaseModel):
 class Type1CandidateContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    candidate_key: str = Field(pattern=r"^P\d{2}$")
+    candidate_key: str = Field(pattern=r"^P\d+$")
     product_name: str | None = None
     brand: str | None = None
     model: str | None = None
