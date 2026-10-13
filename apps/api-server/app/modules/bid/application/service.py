@@ -69,38 +69,58 @@ _BUILTIN_TEMPLATE_PROFILES: tuple[dict[str, object], ...] = (
         "header_row": 2,
         "required_headers": ("物料代码", "物料名称", "规格型号", "需报价物料", "供应商报价"),
         "import_mapping": {
-            "buyer_item_code": "物料代码", "product_name": "物料名称",
-            "model": "规格型号", "specification": "长描述", "category_text": "小类名称",
-            "unit": "计量单位", "max_price": "限价调整",
+            "buyer_item_code": "物料代码",
+            "product_name": "物料名称",
+            "model": "规格型号",
+            "specification": "长描述",
+            "category_text": "小类名称",
+            "unit": "计量单位",
+            "max_price": "限价调整",
         },
         "export_mapping": {
-            "selected_unit_price": "供应商报价", "sku": "商品编码（sku）",
-            "brand": "报价品牌", "model": "商品型号", "unit": "报价单位", "note": "备注",
+            "selected_unit_price": "供应商报价",
+            "sku": "商品编码（sku）",
+            "brand": "报价品牌",
+            "model": "商品型号",
+            "unit": "报价单位",
+            "note": "备注",
         },
     },
     {
         "recommendation_type": BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT,
-        "code": "TYPE2_BEIJING_TOBACCO", "name": "类型2·北京烟草品牌型号表",
-        "sheet_name": "Sheet1", "header_row": 2,
+        "code": "TYPE2_BEIJING_TOBACCO",
+        "name": "类型2·北京烟草品牌型号表",
+        "sheet_name": "Sheet1",
+        "header_row": 2,
         "required_headers": ("商品通用名称", "品牌", "型号", "商品报价（单价）"),
         "import_mapping": {
-            "product_name": "商品通用名称", "brand": "品牌", "model": "型号",
-            "specification": "适用打印机型号", "quantity": "预计数量",
-            "unit": "计量单位", "max_price": "单价最高限价（元）",
+            "product_name": "商品通用名称",
+            "brand": "品牌",
+            "model": "型号",
+            "specification": "适用打印机型号",
+            "quantity": "预计数量",
+            "unit": "计量单位",
+            "max_price": "单价最高限价（元）",
         },
         "export_mapping": {"selected_unit_price": "商品报价（单价）", "note": "备注"},
     },
     {
         "recommendation_type": BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT,
-        "code": "TYPE2_GUANGMING_PRODUCT_LIST", "name": "类型2·光明商业产品清单",
-        "sheet_name": "产品清单", "header_row": 1,
+        "code": "TYPE2_GUANGMING_PRODUCT_LIST",
+        "name": "类型2·光明商业产品清单",
+        "sheet_name": "产品清单",
+        "header_row": 1,
         "required_headers": ("后台大类", "品牌", "sku", "是否同品", "协议价"),
         "import_mapping": {
-            "category_text": "后台小类", "brand": "品牌", "product_name": "商品名称#1",
-            "buyer_item_code": "sku", "max_price": "产品价格",
+            "category_text": "后台小类",
+            "brand": "品牌",
+            "product_name": "商品名称#1",
+            "buyer_item_code": "sku",
+            "max_price": "产品价格",
         },
         "export_mapping": {
-            "is_same_product": "是否同品", "product_name": "商品名称#2",
+            "is_same_product": "是否同品",
+            "product_name": "商品名称#2",
             "selected_unit_price": "协议价",
         },
     },
@@ -142,18 +162,15 @@ class BidProjectService:
             raise AppError("BID_PROJECT_INVALID_TIME_RANGE", "项目开始时间不能晚于截止时间", 422)
         using_system_recommendation_template = False
         if recommendation_type is BidRecommendationType.TYPE_3_CATEGORY:
-            if (not remark or len(remark.strip()) < 20) and recommendation_template_bytes:
-                remark = self._type3_requirement_from_workbook(recommendation_template_bytes)
-            if recommendation_template_bytes is None:
-                if not remark or len(remark.strip()) < 20:
-                    raise AppError(
-                        "CATEGORY_RECOMMENDATION_REQUIREMENT_REQUIRED",
-                        "类型 3 未上传客户模板时，必须填写至少 20 个字符的类目推品需求",
-                        422,
-                    )
-                recommendation_template_bytes = _PRODUCT_MASTER_TEMPLATE_PATH.read_bytes()
-                recommendation_template_filename = "商品大表标准导出模板.xlsx"
-                using_system_recommendation_template = True
+            # Type 3 must retain the customer's workbook.  Its category nodes are
+            # selected explicitly in the dedicated Type-3 workspace; never turn
+            # a guessed cell scan into the customer's remark/requirement.
+            if recommendation_template_filename is None or recommendation_template_bytes is None:
+                raise AppError(
+                    "TYPE3_WORKBOOK_REQUIRED",
+                    "类型 3 必须上传客户 Excel，以便选择 Sheet、类目及对应导出区域",
+                    422,
+                )
         if project_type == BidProjectType.FILTER_RECOMMENDATION:
             if (
                 recommendation_template_filename is not None
@@ -594,10 +611,7 @@ class BidProjectService:
             if template is None:
                 raise AppError("BID_TEMPLATE_NOT_FOUND", "项目模板不存在", 409)
             resolved_statuses = [BidItemStatus.SELECTED.value, BidItemStatus.NO_QUOTE.value]
-            if (
-                project.recommendation_type
-                == BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value
-            ):
+            if project.recommendation_type == BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value:
                 # Type 2 is complete after deterministic comparison: an unmatched row
                 # is an explicit result and remains blank in the customer's workbook.
                 resolved_statuses.append(BidItemStatus.NO_MATCH.value)
@@ -903,43 +917,6 @@ class BidProjectService:
         finally:
             workbook.close()
 
-    @staticmethod
-    def _type3_requirement_from_workbook(file_bytes: bytes) -> str:
-        """Read explicit category labels only; this is deterministic, not AI header guessing."""
-        try:
-            workbook = load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
-        except Exception as exc:
-            raise AppError("BID_EXCEL_PARSE_FAILED", "Excel 文件无法读取", 422) from exc
-        try:
-            categories: list[str] = []
-            demand_sheets = [
-                sheet for sheet in workbook.worksheets if "参考" not in sheet.title
-            ] or list(workbook.worksheets)
-            for sheet in demand_sheets:
-                for row in sheet.iter_rows(min_col=1, max_col=min(sheet.max_column, 5)):
-                    for cell in row:
-                        value = BidProjectService._text(cell.value)
-                        if value and _TYPE3_CATEGORY_PATTERN.match(value):
-                            normalized = re.sub(r"^\s*\d+(?:\.\d+){2}\s+", "", value).strip()
-                            if normalized and normalized not in categories:
-                                categories.append(normalized)
-                        if len(categories) >= 80:
-                            break
-                    if len(categories) >= 80:
-                        break
-                if len(categories) >= 80:
-                    break
-        finally:
-            workbook.close()
-        if not categories:
-            raise AppError(
-                "CATEGORY_RECOMMENDATION_CATEGORY_MISSING",
-                "类型 3 模板中未识别到明确的三级类目，请在需求说明中填写类目",
-                422,
-            )
-        requirement = "指定三级类目推品：" + "、".join(categories)
-        return requirement[:5000]
-
     def _build_export(
         self,
         original_bytes: bytes,
@@ -972,9 +949,9 @@ class BidProjectService:
                     "is_same_product": self._same_selected_product(item, product),
                 }
                 for field, header in template.export_mapping.items():
-                    sheet.cell(
-                        item.source_row_number, header_columns[header]
-                    ).value = values.get(field)
+                    sheet.cell(item.source_row_number, header_columns[header]).value = values.get(
+                        field
+                    )
             output = BytesIO()
             workbook.save(output)
             return output.getvalue()

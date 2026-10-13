@@ -52,7 +52,7 @@ const form = reactive({
 const projectTypeOptions: Array<{ value: BidRecommendationType; projectType: BidProjectType; title: string; description: string; needsRecommendationPermission?: boolean }> = [
   { value: "TYPE_1_SPECIFICATION", projectType: "FILTER_RECOMMENDATION", title: "类型 1 · 规格参数匹配", description: "上传物料规格表，逐行匹配满足参数和限价的商品。" },
   { value: "TYPE_2_IDENTIFIED_PRODUCT", projectType: "FILTER_RECOMMENDATION", title: "类型 2 · 指定商品报价", description: "按品牌、型号或 SKU 识别同品，并回填客户原表。" },
-  { value: "TYPE_3_CATEGORY", projectType: "FREE_RECOMMENDATION", title: "类型 3 · 指定类目推品", description: "按客户三级类目批量筛选；无模板时按商品大表导出。", needsRecommendationPermission: true },
+  { value: "TYPE_3_CATEGORY", projectType: "FREE_RECOMMENDATION", title: "类型 3 · 指定类目推品", description: "上传客户 Excel，在独立工作台手选 Sheet 和一级/二级/三级类目后按 Sheet 导出。", needsRecommendationPermission: true },
   { value: "TYPE_4_FREE", projectType: "FREE_RECOMMENDATION", title: "类型 4 · 自由推品 Agent", description: "填写场景需求并上传本项目的推荐结果模板。", needsRecommendationPermission: true },
   { value: "TYPE_5_PPT", projectType: "PPT_SOLUTION", title: "类型 5 · PPT 方案", description: "AI 理解需求推荐商品，人工选品和组套后生成可编辑 PPT。", needsRecommendationPermission: true },
 ]
@@ -134,8 +134,8 @@ async function create() {
   if (["TYPE_1_SPECIFICATION", "TYPE_2_IDENTIFIED_PRODUCT"].includes(form.recommendation_type) && !businessFile.value) {
     return ElMessage.error("请选择客户需求 Excel")
   }
-  if (form.recommendation_type === "TYPE_3_CATEGORY" && !recommendationTemplate.value && form.remark.trim().length < 20) {
-    return ElMessage.error("类型 3 未上传客户模板时，请填写至少 20 个字符的类目推品需求")
+  if (form.recommendation_type === "TYPE_3_CATEGORY" && !recommendationTemplate.value) {
+    return ElMessage.error("类型 3 必须上传客户 Excel，以便选择 Sheet、类目及导出区域")
   }
   if (form.recommendation_type === "TYPE_4_FREE") {
     if (form.remark.trim().length < 20) return ElMessage.error("自由推品需求说明不能少于 20 个字符")
@@ -164,7 +164,7 @@ async function create() {
     const isType2 = result.recommendation_type === "TYPE_2_IDENTIFIED_PRODUCT"
     const isMatchingType = ["TYPE_1_SPECIFICATION", "TYPE_2_IDENTIFIED_PRODUCT"].includes(result.recommendation_type ?? "")
     ElMessage.success(isCategory
-      ? recommendationTemplate.value ? "类型 3 项目创建成功，请确认客户模板字段映射。" : "类型 3 项目创建成功，已启用商品大表标准导出模板。"
+      ? "类型 3 项目创建成功，请在独立工作台选择 Sheet 和类目。"
       : isFree ? "自由推品项目创建成功，请确认模板字段映射。" : isPpt
       ? "PPT 方案项目创建成功，可以开始生成商品推荐。" : result.import_status === "PARSED"
       ? isType2 ? "指定商品项目创建成功，请在工作台确认后开始比价。" : "规格参数项目创建成功，请在工作台确认后开始匹配。"
@@ -172,7 +172,8 @@ async function create() {
         ? "项目已创建，但当前 Excel 未识别到模板，需要完成模板配置。"
         : `项目已创建，但 Excel 解析失败：${result.import_error ?? "未知错误"}`)
     createVisible.value = false
-    if (isFree) await router.push(`/bid-projects/${result.id}/recommendation`)
+    if (isCategory) await router.push(`/bid-projects/${result.id}/type3-recommendation`)
+    else if (isFree) await router.push(`/bid-projects/${result.id}/recommendation`)
     else if (isPpt) await router.push(`/bid-projects/${result.id}/ppt-solution`)
     else if (isMatchingType) await router.push(`/bid-projects/${result.id}/workbench`)
     else await load(1)
@@ -233,7 +234,7 @@ onMounted(() => {
         <el-table-column prop="processed_item_count" label="匹配处理数" />
         <el-table-column prop="start_at" label="开始时间" min-width="170" />
         <el-table-column prop="deadline_at" label="截止时间" min-width="170" />
-        <el-table-column label="操作"><template #default="{ row }"><RouterLink :to="row.project_type === 'FREE_RECOMMENDATION' ? `/bid-projects/${row.id}/recommendation` : row.project_type === 'PPT_SOLUTION' ? `/bid-projects/${row.id}/ppt-solution` : `/bid-projects/${row.id}/workbench`"><el-button link type="primary">{{ row.project_type === 'FILTER_RECOMMENDATION' ? '进入工作台' : '详情' }}</el-button></RouterLink></template></el-table-column>
+        <el-table-column label="操作"><template #default="{ row }"><RouterLink :to="row.recommendation_type === 'TYPE_3_CATEGORY' ? `/bid-projects/${row.id}/type3-recommendation` : row.project_type === 'FREE_RECOMMENDATION' ? `/bid-projects/${row.id}/recommendation` : row.project_type === 'PPT_SOLUTION' ? `/bid-projects/${row.id}/ppt-solution` : `/bid-projects/${row.id}/workbench`"><el-button link type="primary">{{ row.project_type === 'FILTER_RECOMMENDATION' ? '进入工作台' : '详情' }}</el-button></RouterLink></template></el-table-column>
       </el-table>
       <el-pagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next" :total="total" @current-change="load" @size-change="() => load(1)" />
     </el-card>
@@ -253,7 +254,7 @@ onMounted(() => {
         <el-form-item v-if="['TYPE_1_SPECIFICATION', 'TYPE_2_IDENTIFIED_PRODUCT'].includes(form.recommendation_type)" label="客户需求 Excel *" class="full">
           <div class="upload-control"><el-upload ref="businessUpload" :auto-upload="false" :limit="1" :show-file-list="false" accept=".xlsx" :on-change="chooseBusinessFile"><el-button>选择 .xlsx 文件</el-button></el-upload><div v-if="businessFile" class="selected-file"><span>{{ businessFile.name }}</span><el-button link type="danger" @click="clearBusinessFile">移除</el-button></div></div>
         </el-form-item>
-        <el-form-item v-if="['TYPE_3_CATEGORY', 'TYPE_4_FREE'].includes(form.recommendation_type)" :label="form.recommendation_type === 'TYPE_3_CATEGORY' ? '客户类目/结果模板（可选）' : '自由推品结果模板 *'" class="full">
+        <el-form-item v-if="['TYPE_3_CATEGORY', 'TYPE_4_FREE'].includes(form.recommendation_type)" :label="form.recommendation_type === 'TYPE_3_CATEGORY' ? '客户 Excel（类目选择与按 Sheet 导出）*' : '自由推品结果模板 *'" class="full">
           <div class="upload-control"><el-upload ref="recommendationUpload" :auto-upload="false" :limit="1" :show-file-list="false" accept=".xlsx" :on-change="chooseRecommendationTemplate"><el-button>选择 .xlsx 模板</el-button></el-upload><div v-if="recommendationTemplate" class="selected-file"><span>{{ recommendationTemplate.name }}</span><el-button link type="danger" @click="clearRecommendationTemplate">移除</el-button></div></div>
         </el-form-item>
         <el-form-item :label="['TYPE_3_CATEGORY', 'TYPE_4_FREE', 'TYPE_5_PPT'].includes(form.recommendation_type) ? '推品需求说明' : '备注'" class="full">

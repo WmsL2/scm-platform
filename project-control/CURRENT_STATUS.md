@@ -5,6 +5,16 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-09
 
+> 2026-10-13：类型 3 “指定类目推品”改为独立 Sheet 类目工作流，不再共用类型 4 的 Run、Agent、候选或导出链路。项目必须上传客户 Excel；用户在独立页面按 Sheet 手选一级/二级/三级节点，备注原文独立保存并由类型 3 AI 解析硬条件。后端冻结真实类目目录，AI 仅回传签发 key；候选和确认按来源 Sheet 隔离，导出按不同 Sheet 回填到同一原工作簿。Revision `20261013_0055`，新增独立表。静态检查、迁移链检查、前端类型检查/生产构建通过；真实 DeepSeek、开发库升级与浏览器验收待执行。
+
+> 2026-10-13：类型 3 选择页改为 Sheet 侧栏、当前 Sheet 搜索和分页（20/30/50/100），可全选当前页；已选类目跨分页、跨 Sheet 保留，避免把整个工作簿的节点一次性铺在页面上。
+
+> 2026-10-13：类型 3 当前自动识别范围固定为所选 Sheet 前 120 行、前 40 列；页面显示该规则，并支持在当前 Sheet 手工补充一级/二级/三级类目（每 Sheet 最多 50 个）。无新增 Migration；后端静态检查、定向测试及前端生产构建通过。
+
+> 2026-10-13：修复类型 3 工作台的可恢复编辑与重新生成候选。保存的 Sheet/类目（含手工补充节点）会在刷新后回显；手工节点可关闭移除并同步取消勾选，保存空选择会清空已存配置。项目已在 `SELECTING` 时重新生成候选会保持该状态，避免错误回退到 `MATCHING` 而触发“项目状态不能这样变更”；生成中重复点击会被忽略，同文案错误提示合并显示。新增受 `recommendation:detail` 保护的已保存选择读取 API，无 Migration；后端静态检查、前端类型检查和生产构建通过，真实浏览器/DeepSeek 验收待执行。
+
+> 2026-10-13：修复类型 3 候选 JSON 落库：商品 `date` 快照统一转 ISO 字符串，避免 `Object of type date is not JSON serializable`。创建 Run、执行内联 AI、读取结果使用独立数据库会话；执行器会结束读取 Run 产生的隐式只读事务，保证后续解析/候选持久化/失败状态分别提交，不再让 Run 永久停在 `QUEUED` 或在已关闭事务中二次报错 500。新增回归测试，无 Migration、API 或权限变化；真实浏览器/DeepSeek 验收待执行。
+
 > 2026-10-12：商品主数据列表新增“多个 SKU”精确查询。可粘贴以空格、中英文逗号、分号或换行分隔的 SKU，自动去重并忽略历史 SKU 值两端空白后按任一 SKU 命中，最多 500 个；与状态、主推、类目等其他筛选继续按 AND 组合，并同步用于“全选全部商品”。无 Migration、权限或匹配/推荐逻辑变化。
 
 > 2026-10-12：修正商品主推/批量维护 Migration `20261012_0054` 的导入排序，避免 GitHub CI 在 Ruff 阶段提前终止；Schema、API、UI 和业务规则均不变。
