@@ -20,6 +20,6 @@
 
 ## 后果
 
-- Revision `20261013_0055` 为 `scm_bid_project` 增加 `output_mapping`、`output_mapping_confirmed_by`、`output_mapping_confirmed_at`。
+- Revision `20261013_0056` 为 `scm_bid_project` 增加 `output_mapping`、`output_mapping_confirmed_by`、`output_mapping_confirmed_at`；它依赖主分支类型 3 的 `20261013_0055`。
 - 新增读取和确认项目回填映射 API；读取使用 `bid:detail`，确认使用 `bid:update`，不新增权限码。
 - 类型 1 与类型 2 继续使用各自 Agent、Prompt 和输出字段集合，只复用项目级确认基础设施。

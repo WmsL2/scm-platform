@@ -146,18 +146,15 @@ class BidProjectService:
             raise AppError("BID_PROJECT_INVALID_TIME_RANGE", "项目开始时间不能晚于截止时间", 422)
         using_system_recommendation_template = False
         if recommendation_type is BidRecommendationType.TYPE_3_CATEGORY:
-            if (not remark or len(remark.strip()) < 20) and recommendation_template_bytes:
-                remark = self._type3_requirement_from_workbook(recommendation_template_bytes)
-            if recommendation_template_bytes is None:
-                if not remark or len(remark.strip()) < 20:
-                    raise AppError(
-                        "CATEGORY_RECOMMENDATION_REQUIREMENT_REQUIRED",
-                        "类型 3 未上传客户模板时，必须填写至少 20 个字符的类目推品需求",
-                        422,
-                    )
-                recommendation_template_bytes = _PRODUCT_MASTER_TEMPLATE_PATH.read_bytes()
-                recommendation_template_filename = "商品大表标准导出模板.xlsx"
-                using_system_recommendation_template = True
+            # Type 3 must retain the customer's workbook.  Its category nodes are
+            # selected explicitly in the dedicated Type-3 workspace; never turn
+            # a guessed cell scan into the customer's remark/requirement.
+            if recommendation_template_filename is None or recommendation_template_bytes is None:
+                raise AppError(
+                    "TYPE3_WORKBOOK_REQUIRED",
+                    "类型 3 必须上传客户 Excel，以便选择 Sheet、类目及对应导出区域",
+                    422,
+                )
         if project_type == BidProjectType.FILTER_RECOMMENDATION:
             if (
                 recommendation_template_filename is not None

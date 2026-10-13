@@ -80,7 +80,7 @@
 
 当前分支 `feat/type1-type2-output-mapping-review` 仍有本次未提交改动；尚未要求提交或推送。
 
-本次新增 Revision `20261013_0055`，为项目保存独立的回填映射、确认人和确认时间；新增 `GET/PUT /api/v1/bid-projects/{id}/output-mapping`，并在类型 1/2 工作台提供 AI 预填、人工修正和确认。输入映射与回填映射已隔离，人工修改不会影响匹配。
+本次新增 Revision `20261013_0056`，依赖主分支类型 3 的 `20261013_0055`，为项目保存独立的回填映射、确认人和确认时间；新增 `GET/PUT /api/v1/bid-projects/{id}/output-mapping`，并在类型 1/2 工作台提供 AI 预填、人工修正和确认。输入映射与回填映射已隔离，人工修改不会影响匹配。
 
 已执行且通过的相关后端检查：
 
@@ -90,7 +90,7 @@
 .\.venv\Scripts\python.exe -m pytest tests/bid tests/matching -q
 ```
 
-最新结果：Ruff、mypy 通过；后端 pytest 为 `392 passed`；前端 Vitest 为 `179 passed`，类型检查和生产构建通过。本机数据库已升级到 `20261013_0055`，运行中的 API `/health/live` 和 `/health/ready` 正常，OpenAPI 已包含回填映射 GET/PUT。Windows 上 pytest 退出清理临时目录时仍出现无关的 `WinError 5`，不影响测试用例通过结论。
+合并主分支后最新结果：Ruff、mypy 通过；后端 pytest 为 `405 passed`；前端 Vitest 为 `179 passed`，类型检查通过。本机数据库已无损校正并升级至单 Head `20261013_0056`：既有项目回填映射列和数据保留，类型 3 四张新表已创建。运行中 API 健康检查仍需重启服务后验证。Windows 上 pytest 退出清理临时目录时仍出现无关的 `WinError 5`，不影响测试用例通过结论。
 
 真实 265 行类型 1 首次执行曾返回 502：项目已安全回到 `IMPORTED`，真实首行及首批 10 行最小 DeepSeek 调用均成功，失败范围确定为并发批次偶发结构/合同不完整。现已将类型 1 单批收敛为 5 行，业务合同错误自动纠正重试一次，并保存安全诊断摘要供后续定位。
 
