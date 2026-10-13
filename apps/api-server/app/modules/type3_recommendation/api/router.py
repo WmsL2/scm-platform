@@ -198,6 +198,20 @@ async def complete_selection(
 
 
 @router.post(
+    "/{project_id}/runs/{run_id}/commands/reopen-selection",
+    response_model=ApiResponse[bool],
+)
+async def reopen_selection(
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    current: Annotated[CurrentUser, Depends(require_permission("recommendation:review"))],
+    session: SessionDep,
+) -> ApiResponse[bool]:
+    await Type3RecommendationService(session).reopen_selection(project_id, run_id, current.user_id)
+    return success(True)
+
+
+@router.post(
     "/{project_id}/runs/{run_id}/exports", response_model=ApiResponse[BidProjectFileResponse]
 )
 async def export(

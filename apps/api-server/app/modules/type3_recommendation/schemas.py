@@ -115,6 +115,7 @@ class Type3RunSheetSummary(BaseModel):
 class Type3RunResponse(BaseModel):
     id: UUID
     project_id: UUID
+    project_status: str | None = None
     status: str
     raw_remark_snapshot: str
     parsed_remark: Type3RemarkAnalysis | None = None

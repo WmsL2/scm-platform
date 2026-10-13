@@ -289,7 +289,7 @@ class Type3RecommendationService:
             self.session.add(run)
             await self.session.flush()
             await self.session.refresh(run)
-        return self._run_response(run)
+        return self._run_response(run, project_status=project.status)
 
     async def save_and_start(
         self,
@@ -302,7 +302,7 @@ class Type3RecommendationService:
         return await self.start(project_id, actor_id)
 
     async def list_runs(self, project_id: uuid.UUID) -> list[Type3RunResponse]:
-        await self._project(project_id)
+        project = await self._project(project_id)
         rows = list(
             (
                 await self.session.scalars(
@@ -312,10 +312,12 @@ class Type3RecommendationService:
                 )
             ).all()
         )
-        return [self._run_response(row) for row in rows]
+        return [self._run_response(row, project_status=project.status) for row in rows]
 
     async def get_run(self, run_id: uuid.UUID) -> Type3RunResponse:
-        return self._run_response(await self._run(run_id))
+        run = await self._run(run_id)
+        project = await self._project(run.project_id)
+        return self._run_response(run, project_status=project.status)
 
     async def prepare_for_category_mapping(
         self,
@@ -552,6 +554,54 @@ class Type3RecommendationService:
                 raise AppError("TYPE3_SELECTION_NOT_ALLOWED", "当前项目状态不能完成选品", 409)
             project.updated_by = actor_id
             run.status = "CONFIRMED"
+
+    async def reopen_selection(
+        self, project_id: uuid.UUID, run_id: uuid.UUID, actor_id: uuid.UUID
+    ) -> None:
+        """Return a completed Type-3 project to manual selection without losing history."""
+        async with transaction_scope(self.session):
+            project = await self._project(project_id, for_update=True)
+            run = await self._run(run_id, for_update=True)
+            if run.project_id != project.id:
+                raise AppError("TYPE3_RUN_NOT_FOUND", "类型 3 推品任务不存在", 404)
+            if project.status not in {
+                BidProjectStatus.READY.value,
+                BidProjectStatus.EXPORTED.value,
+            }:
+                raise AppError(
+                    "TYPE3_SELECTION_REOPEN_NOT_ALLOWED", "当前项目状态不能返回调整选品", 409
+                )
+            confirmed = int(
+                await self.session.scalar(
+                    select(func.count(Type3Candidate.id)).where(
+                        Type3Candidate.run_id == run.id,
+                        Type3Candidate.confirmed_at.is_not(None),
+                    )
+                )
+                or 0
+            )
+            if not confirmed:
+                raise AppError(
+                    "TYPE3_SELECTION_CONFIRMATION_REQUIRED",
+                    "当前任务没有已选商品，不能返回调整",
+                    409,
+                )
+
+            previous_status = project.status
+            project.status = BidProjectStatus.SELECTING.value
+            project.updated_by = actor_id
+            if run.status == "EXPORTED":
+                run.status = "CONFIRMED"
+            self.session.add(
+                BidProjectEvent(
+                    project_id=project.id,
+                    actor_id=actor_id,
+                    event_type="TYPE3_SELECTION_REOPENED",
+                    from_status=previous_status,
+                    to_status=project.status,
+                    note="返回人工选品，后续按 Sheet 导出将生成新版本",
+                )
+            )
 
     async def export(
         self, project_id: uuid.UUID, run_id: uuid.UUID, actor_id: uuid.UUID
@@ -956,7 +1006,7 @@ class Type3RecommendationService:
         )
 
     @staticmethod
-    def _run_response(run: Type3Run) -> Type3RunResponse:
+    def _run_response(run: Type3Run, *, project_status: str | None = None) -> Type3RunResponse:
         sheet_summaries: list[Type3RunSheetSummary] = []
         for sheet in run.sheet_snapshot:
             if not isinstance(sheet, dict):
@@ -973,6 +1023,7 @@ class Type3RecommendationService:
         return Type3RunResponse(
             id=run.id,
             project_id=run.project_id,
+            project_status=project_status,
             status=run.status,
             raw_remark_snapshot=run.raw_remark_snapshot,
             parsed_remark=Type3RemarkAnalysis.model_validate(run.parsed_remark)

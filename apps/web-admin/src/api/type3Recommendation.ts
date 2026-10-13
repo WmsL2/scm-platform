@@ -9,7 +9,7 @@ export interface Type3OutputColumn { column_index: number; header: string; dupli
 export interface Type3SheetOutputStructure { sheet_name: string; header_row: number; max_row: number; columns: Type3OutputColumn[] }
 export interface Type3ExportField { key: string; label: string }
 export interface Type3RunSheetSummary { sheet_name: string; selected_node_count: number }
-export interface Type3Run { id: string; project_id: string; status: string; raw_remark_snapshot: string; error: string | null; sheet_summaries: Type3RunSheetSummary[]; created_at: string }
+export interface Type3Run { id: string; project_id: string; project_status: string | null; status: string; raw_remark_snapshot: string; error: string | null; sheet_summaries: Type3RunSheetSummary[]; created_at: string }
 export interface Type3Candidate { id: string; sheet_name: string; rank: number; product_snapshot: Record<string, unknown>; supplier_snapshot: Record<string, unknown>; price_snapshot: Record<string, unknown>; confirmed_at: string | null }
 export interface Type3CandidatePage { items: Type3Candidate[]; total: number; confirmed_total: number; page: number; page_size: number }
 export interface Type3CandidateSheetSummary { sheet_name: string; total: number; confirmed_total: number }
@@ -29,6 +29,7 @@ export const type3RecommendationApi = {
   confirm: (candidateIds: string[]) => http.post<boolean>(`${base}/candidates/confirm`, candidateIds),
   confirmCandidates: (runId: string, payload: Type3CandidateConfirmation) => http.post<number>(`${base}/runs/${runId}/candidate-confirmations`, payload),
   completeSelection: (projectId: string, runId: string) => http.post<boolean>(`${base}/${projectId}/runs/${runId}/commands/complete-selection`),
+  reopenSelection: (projectId: string, runId: string) => http.post<boolean>(`${base}/${projectId}/runs/${runId}/commands/reopen-selection`),
   export: (projectId: string, runId: string) => http.post<{ id: string; original_filename: string }>(`${base}/${projectId}/runs/${runId}/exports`),
   download: (runId: string, fileId: string) => http.getBlob(`${base}/runs/${runId}/exports/${fileId}/download`),
 }
