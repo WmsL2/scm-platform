@@ -22,6 +22,10 @@ from app.modules.bid.infrastructure.models import (
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.matching.application.service import MatchingService
+from app.modules.matching.application.type1_agent import (
+    Type1BatchMatchResult,
+    Type1RequirementContext,
+)
 from app.modules.matching.application.type2_agent import (
     Type2BatchMatchResult,
     Type2RequirementContext,
@@ -99,6 +103,45 @@ class Type2DecisionStub:
                     }
                 )
         return Type2BatchMatchResult.model_validate({"items": items})
+
+
+class Type1DecisionStub:
+    def __init__(self, marker: str) -> None:
+        self.marker = marker
+        self.received: list[Type1RequirementContext] = []
+
+    async def match_batch(
+        self,
+        requirements: list[Type1RequirementContext],
+        *,
+        project_remark: str | None,
+    ) -> Type1BatchMatchResult:
+        self.received.extend(requirements)
+        return Type1BatchMatchResult.model_validate(
+            {
+                "items": [
+                    {
+                        "requirement_key": requirement.requirement_key,
+                        "candidate_keys": (
+                            []
+                            if requirement.source_row.get("场景") == "无匹配"
+                            else [
+                                candidate.candidate_key
+                                for candidate in requirement.candidates
+                                if candidate.product_remark
+                                and candidate.product_remark.startswith(self.marker)
+                            ]
+                        ),
+                        "no_match_reason": (
+                            "规格明确不匹配"
+                            if requirement.source_row.get("场景") == "无匹配"
+                            else None
+                        ),
+                    }
+                    for requirement in requirements
+                ]
+            }
+        )
 
 
 @pytest.mark.asyncio
@@ -301,6 +344,146 @@ async def test_type2_automatically_selects_lowest_cost_and_finishes_with_unmatch
         assert refreshed_project.status == BidProjectStatus.READY.value
         assert refreshed_project.processed_item_count == 2
         await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_type1_ai_keeps_all_quotable_matches_and_allows_unmatched() -> None:
+    actor_id = uuid.uuid4()
+    token = uuid.uuid4().hex
+    supplier = Supplier(
+        supplier_code=f"T{token[:11]}",
+        supplier_name=f"类型1自动选择供应商-{token}",
+        main_brands="得力",
+        advantage="办公设备",
+        archive_status=ArchiveStatus.ARCHIVED.value,
+        cooperation_status=CooperationStatus.NORMAL.value,
+    )
+    project = BidProject(
+        project_code=f"BID{token[:12]}",
+        project_name="类型1自动选择测试",
+        buyer_name="测试买家",
+        status=BidProjectStatus.IMPORTED.value,
+        import_status=BidImportStatus.PARSED.value,
+        recommendation_type=BidRecommendationType.TYPE_1_SPECIFICATION.value,
+        total_item_count=2,
+        processed_item_count=0,
+        created_by=actor_id,
+    )
+
+    async with SessionLocal() as session:
+        session.add_all([supplier, project])
+        await session.flush()
+        product = Product(
+            source_supplier_id=supplier.id,
+            sku=f"TYPE1-{token[:8]}",
+            brand="得力",
+            model="787",
+            product_name=f"{token} 得力787电话机",
+            product_specification="固定电话，办公家用，来电显示，白色",
+            category_level3_name="电话机",
+            cost_price=Decimal("65.0000"),
+            remark=f"{token}-MATCH-1",
+            status=ProductStatus.ACTIVE,
+        )
+        second_product = Product(
+            source_supplier_id=supplier.id,
+            sku=f"TYPE1B-{token[:8]}",
+            brand="得力",
+            model="787B",
+            product_name=f"{token} 得力787B电话机",
+            product_specification="固定电话，办公家用，来电显示，白色",
+            category_level3_name="电话机",
+            cost_price=Decimal("66.0000"),
+            remark=f"{token}-MATCH-2",
+            status=ProductStatus.ACTIVE,
+        )
+        matched_item = BidProjectItem(
+            project_id=project.id,
+            sheet_name="物料清单",
+            source_row_number=2,
+            source_data={"物料名称": f"{token} 电话机", "规格": "固定电话 白色"},
+            product_name=f"{token} 电话机",
+            specification="固定电话 白色",
+            category_text="电话机",
+            max_price=Decimal("70.0000"),
+            status=BidItemStatus.PENDING.value,
+        )
+        unmatched_item = BidProjectItem(
+            project_id=project.id,
+            sheet_name="物料清单",
+            source_row_number=3,
+            source_data={"场景": "无匹配", "物料名称": f"{token} 不存在商品"},
+            product_name=f"{token} 不存在商品",
+            specification="完全不存在的规格要求",
+            status=BidItemStatus.PENDING.value,
+        )
+        session.add_all([product, second_product, matched_item, unmatched_item])
+        await session.flush()
+
+        project_id = project.id
+        project_item_ids = [matched_item.id, unmatched_item.id]
+        product_ids = [product.id, second_product.id]
+        supplier_id = supplier.id
+        matched_item_id = matched_item.id
+        unmatched_item_id = unmatched_item.id
+        await session.commit()
+
+        agent = Type1DecisionStub(token)
+        async with session.begin():
+            await MatchingService(session, type1_agent=agent).start(  # type: ignore[arg-type]
+                project_id, actor_id
+            )
+        session.expire_all()
+        matched_item = await session.get(BidProjectItem, matched_item_id)
+        unmatched_item = await session.get(BidProjectItem, unmatched_item_id)
+        refreshed_project = await session.get(BidProject, project_id)
+        assert matched_item is not None
+        assert unmatched_item is not None
+        assert refreshed_project is not None
+        selections = list(
+            (
+                await session.scalars(
+                    select(BidItemSelection).where(
+                        BidItemSelection.project_item_id == matched_item_id
+                    )
+                )
+            ).all()
+        )
+
+        assert len(selections) == 2
+        assert {selection.product_id for selection in selections} == set(product_ids)
+        assert {selection.selected_unit_price for selection in selections} == {
+            Decimal("65.0000"),
+            Decimal("66.0000"),
+        }
+        assert matched_item.status == BidItemStatus.SELECTED.value
+        assert unmatched_item.status == BidItemStatus.NO_MATCH.value
+        assert refreshed_project.status == BidProjectStatus.READY.value
+
+        await session.execute(
+            update(BidProjectItem)
+            .where(BidProjectItem.id.in_(project_item_ids))
+            .values(current_selection_id=None)
+        )
+        await session.execute(
+            delete(BidItemSelection).where(
+                BidItemSelection.project_item_id.in_(project_item_ids)
+            )
+        )
+        await session.execute(
+            delete(MatchCandidate).where(MatchCandidate.project_item_id.in_(project_item_ids))
+        )
+        await session.execute(delete(MatchTask).where(MatchTask.project_id == project_id))
+        await session.execute(
+            delete(BidProjectEvent).where(BidProjectEvent.project_id == project_id)
+        )
+        await session.execute(
+            delete(BidProjectItem).where(BidProjectItem.id.in_(project_item_ids))
+        )
+        await session.execute(delete(BidProject).where(BidProject.id == project_id))
+        await session.execute(delete(Product).where(Product.id.in_(product_ids)))
+        await session.execute(delete(Supplier).where(Supplier.id == supplier_id))
+        await session.commit()
 
 
 @pytest.mark.asyncio

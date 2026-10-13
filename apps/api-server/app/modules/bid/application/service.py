@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import uuid
+from copy import copy
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from openpyxl import load_workbook
+from openpyxl.formula.translate import Translator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -660,13 +662,17 @@ class BidProjectService:
         status: BidItemStatus | None,
         keyword: str | None = None,
     ) -> PageResult[BidProjectItemResponse]:
-        await self._project_or_404(project_id)
+        project = await self._project_or_404(project_id)
         rows, total = await self.repository.item_page(
             project_id,
             page=page_params.page,
             page_size=page_params.page_size,
             status=status.value if status else None,
             keyword=keyword.strip() or None if keyword else None,
+            matched_first=(
+                project.recommendation_type
+                == BidRecommendationType.TYPE_1_SPECIFICATION.value
+            ),
         )
         return PageResult(
             items=[
@@ -724,12 +730,12 @@ class BidProjectService:
             if template is None:
                 raise AppError("BID_TEMPLATE_NOT_FOUND", "项目模板不存在", 409)
             resolved_statuses = [BidItemStatus.SELECTED.value, BidItemStatus.NO_QUOTE.value]
-            if (
-                project.recommendation_type
-                == BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value
-            ):
-                # Type 2 is complete after deterministic comparison: an unmatched row
-                # is an explicit result and remains blank in the customer's workbook.
+            if project.recommendation_type in {
+                BidRecommendationType.TYPE_1_SPECIFICATION.value,
+                BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value,
+            }:
+                # For Types 1 and 2 an unmatched row is an explicit automatic result;
+                # it remains blank in the customer's workbook and does not block export.
                 resolved_statuses.append(BidItemStatus.NO_MATCH.value)
             unresolved_count = await self.session.scalar(
                 select(func.count())
@@ -744,9 +750,20 @@ class BidProjectService:
             original = await self.repository.original_file(project_id)
             if original is None:
                 raise AppError("BID_PROJECT_ORIGINAL_NOT_FOUND", "项目原始文件不存在", 409)
-            selections = await self.repository.export_rows(project_id)
+            is_type1 = (
+                project.recommendation_type
+                == BidRecommendationType.TYPE_1_SPECIFICATION.value
+            )
+            selections = (
+                await self.repository.type1_export_rows(project_id)
+                if is_type1
+                else await self.repository.export_rows(project_id)
+            )
             content = self._build_export(
-                await self.storage.read(original.storage_key), template, selections
+                await self.storage.read(original.storage_key),
+                template,
+                selections,
+                expand_multiple_rows=is_type1,
             )
             version = await self.repository.next_export_version(project_id)
             filename = f"{project.project_code}-报价文件-V{version}.xlsx"
@@ -954,6 +971,19 @@ class BidProjectService:
                 if not set(required_headers).issubset(header_values):
                     continue
                 fingerprint = self._fingerprint(sheet_name, header_row, headers)
+                configured_export_mapping = cast(
+                    dict[str, str], profile["export_mapping"]
+                )
+                resolved_export_mapping = {
+                    field: resolved_header
+                    for field, configured_header in configured_export_mapping.items()
+                    if (
+                        resolved_header := self._resolve_export_header(
+                            field, configured_header, headers
+                        )
+                    )
+                    is not None
+                }
                 return BidTemplate(
                     template_code=f"{profile['code']}-{fingerprint[:12]}",
                     template_name=str(profile["name"]),
@@ -962,7 +992,7 @@ class BidProjectService:
                     header_row=header_row,
                     data_start_row=header_row + 1,
                     import_mapping=cast(dict[str, str], profile["import_mapping"]),
-                    export_mapping=cast(dict[str, str], profile["export_mapping"]),
+                    export_mapping=resolved_export_mapping,
                     fingerprint=fingerprint,
                     is_active=True,
                 )
@@ -1083,6 +1113,8 @@ class BidProjectService:
         original_bytes: bytes,
         template: BidTemplate,
         selections: list[tuple[BidProjectItem, Any]],
+        *,
+        expand_multiple_rows: bool = False,
     ) -> bytes:
         if not template.export_mapping.get("selected_unit_price"):
             raise AppError("BID_EXPORT_PRICE_COLUMN_MISSING", "模板未配置报价写入列", 409)
@@ -1093,9 +1125,18 @@ class BidProjectService:
             header_columns = {
                 key: index + 1 for key, index in self._header_columns(headers).items()
             }
-            if any(header not in header_columns for header in template.export_mapping.values()):
+            resolved_export_mapping = {
+                field: self._resolve_export_header(field, configured_header, headers)
+                for field, configured_header in template.export_mapping.items()
+            }
+            if any(header is None for header in resolved_export_mapping.values()):
                 raise AppError("BID_EXPORT_COLUMN_MISSING", "原始文件缺少已配置的结果写入列", 409)
-            for item, selection in selections:
+            export_rows = (
+                self._expand_type1_export_rows(sheet, selections)
+                if expand_multiple_rows
+                else [(item.source_row_number, item, selection) for item, selection in selections]
+            )
+            for target_row_number, item, selection in export_rows:
                 product = selection.product_snapshot or {}
                 supplier = selection.supplier_snapshot or {}
                 values = {
@@ -1119,8 +1160,10 @@ class BidProjectService:
                         "price_valid_until"
                     ),
                 }
-                for field, header in template.export_mapping.items():
-                    target = sheet.cell(item.source_row_number, header_columns[header])
+                for field, resolved_header in resolved_export_mapping.items():
+                    assert resolved_header is not None
+                    header = resolved_header
+                    target = sheet.cell(target_row_number, header_columns[header])
                     if target.value is None or not str(target.value).strip():
                         target.value = values.get(field)
             output = BytesIO()
@@ -1128,6 +1171,58 @@ class BidProjectService:
             return output.getvalue()
         finally:
             workbook.close()
+
+    @staticmethod
+    def _expand_type1_export_rows(
+        sheet: Any,
+        selections: list[tuple[BidProjectItem, Any]],
+    ) -> list[tuple[int, BidProjectItem, Any]]:
+        grouped: dict[int, list[tuple[BidProjectItem, Any]]] = {}
+        for item, selection in selections:
+            grouped.setdefault(item.source_row_number, []).append((item, selection))
+
+        for source_row_number in sorted(grouped, reverse=True):
+            extra_count = len(grouped[source_row_number]) - 1
+            if extra_count <= 0:
+                continue
+            sheet.insert_rows(source_row_number + 1, amount=extra_count)
+            source_dimension = sheet.row_dimensions[source_row_number]
+            for offset in range(1, extra_count + 1):
+                target_row_number = source_row_number + offset
+                target_dimension = sheet.row_dimensions[target_row_number]
+                target_dimension.height = source_dimension.height
+                target_dimension.hidden = source_dimension.hidden
+                target_dimension.outlineLevel = source_dimension.outlineLevel
+                for column in range(1, sheet.max_column + 1):
+                    source_cell = sheet.cell(source_row_number, column)
+                    target_cell = sheet.cell(target_row_number, column)
+                    value = source_cell.value
+                    if isinstance(value, str) and value.startswith("="):
+                        try:
+                            value = Translator(
+                                value, origin=source_cell.coordinate
+                            ).translate_formula(target_cell.coordinate)
+                        except ValueError:
+                            pass
+                    target_cell.value = value
+                    if source_cell.has_style:
+                        target_cell._style = copy(source_cell._style)
+                    if source_cell.hyperlink:
+                        target_cell._hyperlink = copy(source_cell.hyperlink)
+                    if source_cell.comment:
+                        target_cell.comment = copy(source_cell.comment)
+
+        expanded: list[tuple[int, BidProjectItem, Any]] = []
+        inserted_before = 0
+        for source_row_number in sorted(grouped):
+            matches = grouped[source_row_number]
+            target_start = source_row_number + inserted_before
+            expanded.extend(
+                (target_start + offset, item, selection)
+                for offset, (item, selection) in enumerate(matches)
+            )
+            inserted_before += len(matches) - 1
+        return expanded
 
     async def _project_or_404(self, project_id: uuid.UUID, *, lock: bool = False) -> BidProject:
         project = await self.repository.project_by_id(project_id, lock=lock)
@@ -1262,6 +1357,46 @@ class BidProjectService:
             if totals[header] > 1:
                 columns[f"{header}#{counts[header]}"] = index
         return columns
+
+    @classmethod
+    def _resolve_export_header(
+        cls,
+        field: str,
+        configured_header: str,
+        headers: list[str | None],
+    ) -> str | None:
+        available_headers = tuple(cls._header_columns(headers))
+        if configured_header in available_headers:
+            return configured_header
+
+        configured_key = cls._layout_insensitive_header(configured_header)
+        layout_matches = [
+            header
+            for header in available_headers
+            if cls._layout_insensitive_header(header) == configured_key
+        ]
+        if len(layout_matches) == 1:
+            return layout_matches[0]
+
+        semantic_prefixes = {
+            "discount_compliance": ("是否满足平台承诺折扣率",),
+            "price_valid_until": ("价格有效期",),
+        }
+        prefixes = tuple(
+            cls._layout_insensitive_header(prefix)
+            for prefix in semantic_prefixes.get(field, ())
+        )
+        semantic_matches = [
+            header
+            for header in available_headers
+            if prefixes
+            and cls._layout_insensitive_header(header).startswith(prefixes)
+        ]
+        return semantic_matches[0] if len(semantic_matches) == 1 else None
+
+    @staticmethod
+    def _layout_insensitive_header(value: str) -> str:
+        return re.sub(r"\s+", "", value).casefold()
 
     @staticmethod
     def _same_selected_product(item: BidProjectItem, product: dict[str, object]) -> str:

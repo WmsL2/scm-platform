@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 from io import BytesIO
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -248,7 +249,12 @@ async def download_bid_project_file(
     return StreamingResponse(
         BytesIO(content),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{file.original_filename}"'},
+        headers={
+            "Content-Disposition": (
+                "attachment; "
+                f"filename*=UTF-8''{quote(file.original_filename, safe='')}"
+            )
+        },
     )
 
 

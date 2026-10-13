@@ -44,12 +44,13 @@ const form = reactive({
 const editableStatuses = ["IMPORTED", "MATCHING", "SELECTING", "READY", "EXPORTED"]
 const canEdit = computed(() => auth.hasPermission("bid:update") && editableStatuses.includes(project.value?.status ?? ""))
 const canVoid = computed(() => auth.hasPermission("bid:void") && editableStatuses.includes(project.value?.status ?? ""))
+const isType1 = computed(() => project.value?.recommendation_type === "TYPE_1_SPECIFICATION")
 const isType2 = computed(() => project.value?.recommendation_type === "TYPE_2_IDENTIFIED_PRODUCT")
 const canStartMatching = computed(() => {
   const status = project.value?.status ?? ""
   return project.value?.import_status === "PARSED"
     && auth.hasPermission("bid:match")
-    && (status === "IMPORTED" || (isType2.value && ["SELECTING", "READY"].includes(status)))
+    && (status === "IMPORTED" || ((isType1.value || isType2.value) && ["SELECTING", "READY"].includes(status)))
 })
 const canExport = computed(() => ["READY", "EXPORTED"].includes(project.value?.status ?? "") && auth.hasPermission("bid:export"))
 const canSubmit = computed(() => project.value?.status === "EXPORTED" && auth.hasPermission("bid:submit"))
