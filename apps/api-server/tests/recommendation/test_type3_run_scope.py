@@ -1,7 +1,10 @@
 from datetime import datetime
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
+
+import pytest
 
 from app.modules.type3_recommendation.application.service import Type3RecommendationService
 from app.modules.type3_recommendation.infrastructure.models import Type3Run
@@ -38,3 +41,20 @@ def test_type3_run_response_exposes_frozen_sheet_scope() -> None:
         ("家用电器", 1),
         ("个护健康", 2),
     ]
+
+
+@pytest.mark.asyncio
+async def test_type3_get_run_returns_current_project_status() -> None:
+    project = SimpleNamespace(id=uuid4(), status="SELECTING")
+    run = SimpleNamespace(id=uuid4(), project_id=project.id)
+    session = MagicMock()
+    service = Type3RecommendationService(session)
+    service._run = AsyncMock(return_value=run)  # type: ignore[method-assign]
+    service._project = AsyncMock(return_value=project)  # type: ignore[method-assign]
+    response = MagicMock()
+    service._run_response = MagicMock(return_value=response)  # type: ignore[method-assign]
+
+    result = await service.get_run(run.id)
+
+    assert result is response
+    service._run_response.assert_called_once_with(run, project_status="SELECTING")

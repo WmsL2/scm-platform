@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-13
 
+> 2026-10-13：补齐类型 3 完成选品后无法返回待选品的缺口。项目处于 `READY` 或 `EXPORTED` 时，可通过类型 3 专用 API 和工作台“返回调整选品”按钮回到 `SELECTING`；已确认候选、历史导出和 Sheet 快照保留，原 `EXPORTED` Run 回到 `CONFIRMED`，后续导出继续生成新版本。Run 列表新增只读项目状态；启动生成后页面会以该列表的最新 Run 替换创建响应，避免候选已生成但仍使用旧 `MATCHING` 状态而隐藏“完成选品”。复用 `recommendation:review`，无新增权限或 Migration；自动化回归、Ruff、Mypy 和前端生产构建通过，真实浏览器验收待执行。
+
 > 2026-10-13：类型 1/2 工作台新增客户原表回填字段确认。每个新项目都由对应类型 Agent 基于本次工作簿重新识别输入列和结果列；即使 Sheet、表头和指纹相同，也不再复用数据库中其他项目的模板或内置客户模板，每个项目生成独立映射快照。已删除历史“88折”、有效期等具体回填表头，AI 无法唯一识别时留空交由人工选择。左侧默认仅显示以 AI 报价列为起点的连续待回填结果区，不再展示此前的序号、物料、限价、采购量等输入列；AI 漏识别列可从当前原表全部真实表头人工补充。待回填列可映射到商品大表全部 43 个正式导出字段及类型专属结果字段，Selection 同步冻结完整商品快照；用户至少确认报价单价列后才能开始匹配或导出。项目级 `output_mapping` 与输入映射完全隔离，只控制 ORIGINAL 原表写入位置，不改变类型 1 规格匹配、类型 2 品牌型号同品判断。Revision `20261013_0056`；新增 `GET/PUT /api/v1/bid-projects/{id}/output-mapping`，权限复用 `bid:detail` / `bid:update`（ADR-0061）。真实 DeepSeek 与浏览器端到端验收待执行。
 
 > 2026-10-13：修复类型 3 独立 Migration `20261013_0055` 在 GitHub 后端 CI 的全量 Ruff 失败。此前压缩为单行的 Alembic 表、索引和 downgrade 调用已等价展开为符合 100 字符规范的调用，并修正导入分组；不改表、字段、约束、Revision 依赖或升级/降级顺序。CI 同款 Ruff、Mypy、单 Head 检查和完整 pytest 已通过；无 API、UI、权限或新增 Migration。
