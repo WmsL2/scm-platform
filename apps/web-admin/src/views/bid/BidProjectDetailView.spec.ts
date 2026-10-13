@@ -11,10 +11,11 @@ describe("BidProjectDetailView", () => {
     expect(source).toContain('auth.hasPermission("bid:result")')
   })
 
-  it("allows an old Type 2 review-state project to rerun automatic lowest-price matching", () => {
+  it("allows old Type 1 and Type 2 review-state projects to rerun matching", () => {
+    expect(source).toContain('project.value?.recommendation_type === "TYPE_1_SPECIFICATION"')
     expect(source).toContain('project.value?.recommendation_type === "TYPE_2_IDENTIFIED_PRODUCT"')
-    expect(source).toContain('isType2.value && status === "SELECTING"')
-    expect(source).toContain('"执行最低价匹配"')
+    expect(source).toContain('(isType1.value || isType2.value) && ["SELECTING", "READY"].includes(status)')
+    expect(source).toContain('"执行 AI 同品比价"')
   })
 
   it("keeps edit and void permissions while terminal projects expose no lifecycle controls", () => {

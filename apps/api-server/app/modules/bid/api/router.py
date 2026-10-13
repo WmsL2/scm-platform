@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 from io import BytesIO
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import ApiResponse, AppError, PageParams, PageResult, success
 from app.core.database import FunctionSessionDep, get_db_session
+from app.integrations.deepseek.client import DeepSeekClient
 from app.modules.auth.dependencies import require_permission, require_permission_before_response
 from app.modules.auth.schemas import CurrentUser
 from app.modules.bid.application.service import BidProjectService
@@ -30,6 +32,8 @@ from app.modules.bid.schemas import (
     BidSubmitRequest,
     BidVoidRequest,
 )
+from app.modules.matching.application.type1_agent import Type1Agent
+from app.modules.matching.application.type2_agent import Type2Agent
 from app.modules.recommendation.template.schemas import (
     RecommendationTemplateFileResponse,
     RecommendationTemplateMappingResponse,
@@ -61,7 +65,11 @@ async def create_bid_project(
     ):
         raise AppError("AUTH_FORBIDDEN", "Permission denied", 403)
     return success(
-        await BidProjectService(session).create(
+        await BidProjectService(
+            session,
+            type1_agent=Type1Agent(DeepSeekClient()),
+            type2_agent=Type2Agent(DeepSeekClient()),
+        ).create(
             project_name=project_name,
             buyer_name=buyer_name,
             start_at=start_at,
@@ -241,7 +249,12 @@ async def download_bid_project_file(
     return StreamingResponse(
         BytesIO(content),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{file.original_filename}"'},
+        headers={
+            "Content-Disposition": (
+                "attachment; "
+                f"filename*=UTF-8''{quote(file.original_filename, safe='')}"
+            )
+        },
     )
 
 

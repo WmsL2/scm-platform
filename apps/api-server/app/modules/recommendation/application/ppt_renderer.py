@@ -91,6 +91,14 @@ class PptRenderer:
             from app.modules.recommendation.application.ppt_renderer_v4 import render_v4
 
             return render_v4(source, images=images, template=template, manifest=manifest)
+        if template.version == "5" and template.code == "JD_DETAIL_RED":
+            from app.modules.recommendation.application.ppt_official_template_v5 import (
+                render_jd_detail_red_v5,
+            )
+
+            return render_jd_detail_red_v5(
+                source, images=images, template=template, manifest=manifest
+            )
         presentation = Presentation(str(resolve_ppt_template_asset(template)))
         prototype = presentation.slides[manifest.product_slide_index]
         cover = (
