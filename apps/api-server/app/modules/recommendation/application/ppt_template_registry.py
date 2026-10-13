@@ -84,7 +84,12 @@ def resolve_ppt_template_asset(template: PptTemplateDefinition) -> Path:
     settings = get_settings()
     # Explicit deployment configuration is strict, so a mount/configuration error
     # continues to fail safely rather than falling back to another source.
-    asset_root = settings.ppt_template_asset_dir or (PROJECT_ROOT / "assets" / "ppt-templates")
+    # Formal v5 assets intentionally remain private. They may only be served
+    # from an explicitly configured approved asset mount, never from the public
+    # repository fallback used by v3 assets.
+    asset_root = settings.ppt_template_asset_dir
+    if asset_root is None and template.version != "5":
+        asset_root = PROJECT_ROOT / "assets" / "ppt-templates"
     path = asset_root / manifest.clean_filename if asset_root is not None else None
     if path is None or not path.is_file():
         raise AppError("PPT_TEMPLATE_ASSET_UNAVAILABLE", "所选 PPT 模板资产不可用", 409)
