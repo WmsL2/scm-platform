@@ -90,6 +90,7 @@ class Product(Base):
         Index("ix_scm_product_status_jd_price", "status", "jd_price"),
         Index("ix_scm_product_status_profit", "status", "profit"),
         Index("ix_scm_product_status_company_name", "status", "company_name"),
+        Index("ix_scm_product_status_is_featured", "status", "is_featured"),
         Index("ix_scm_product_discount_rate", "discount_rate"),
         Index("ix_scm_product_sales_volume", "sales_volume"),
         Index(
@@ -165,6 +166,9 @@ class Product(Base):
     tax_category: Mapped[str | None] = mapped_column(String(255), nullable=True)
     shipping_courier: Mapped[str | None] = mapped_column(String(255), nullable=True)
     after_sales_policy: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_featured: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
     status: Mapped[ProductStatus] = mapped_column(
         String(16), nullable=False, server_default=ProductStatus.ACTIVE.value
     )

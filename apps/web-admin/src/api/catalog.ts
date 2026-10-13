@@ -1,6 +1,9 @@
 import { http } from "../shared/http/runtime"
 import type {
   ProductCategoryFilterOption,
+  ProductBatchLifecycleResult,
+  ProductBatchUpdatePayload,
+  ProductBatchUpdateResult,
   ProductCategoryFilterOptionPage,
   ProductFilterOptionField,
   ProductFilterOptionPage,
@@ -78,6 +81,22 @@ export const productApi = {
 
   update(id: string, payload: ProductUpdatePayload): Promise<ProductDetail> {
     return http.patch<ProductDetail, ProductUpdatePayload>(path(`/${id}`), payload)
+  },
+
+  batchUpdate(payload: ProductBatchUpdatePayload): Promise<ProductBatchUpdateResult> {
+    return http.patch<ProductBatchUpdateResult, ProductBatchUpdatePayload>(path("/batch"), payload)
+  },
+
+  batchDisable(productIds: string[]): Promise<ProductBatchLifecycleResult> {
+    return http.post<ProductBatchLifecycleResult>(path("/commands/batch-disable"), {
+      product_ids: productIds,
+    })
+  },
+
+  batchEnable(productIds: string[]): Promise<ProductBatchLifecycleResult> {
+    return http.post<ProductBatchLifecycleResult>(path("/commands/batch-enable"), {
+      product_ids: productIds,
+    })
   },
 
   updateImage(id: string, file: File): Promise<ProductDetail> {

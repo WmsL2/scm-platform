@@ -19,6 +19,9 @@ from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Product, ProductPurgeAudit
 from app.modules.catalog.infrastructure.repository import ProductRepository
 from app.modules.catalog.schemas import (
+    ProductBatchLifecycleResponse,
+    ProductBatchUpdateRequest,
+    ProductBatchUpdateResponse,
     ProductCategoryFilterOptionPageResponse,
     ProductCategoryFilterOptionResponse,
     ProductCostUpdateRequest,
@@ -37,6 +40,7 @@ from app.modules.supplier.infrastructure.repository import SupplierRepository
 from app.modules.system.repository import UserRepository
 
 PRODUCT_EXPORT_SELECTION_LIMIT = 5000
+MULTI_SKU_FILTER_LIMIT = 500
 
 
 class ProductService:
@@ -52,6 +56,7 @@ class ProductService:
         page_params: PageParams,
         *,
         keyword: str | None,
+        skus: List[str],
         company_name: str | None,
         purchasing_agent: str | None,
         brand: str | None,
@@ -76,6 +81,7 @@ class ProductService:
         discount_rate_max: Decimal | None,
         sales_volume_min: int | None,
         sales_volume_max: int | None,
+        is_featured: bool | None,
         status: ProductStatus,
     ) -> PageResult[ProductListItem]:
         self._validate_range("cost_price", cost_price_min, cost_price_max)
@@ -90,6 +96,7 @@ class ProductService:
         products, total = await self.repository.list(
             page_params,
             keyword=keyword.strip() if keyword else None,
+            skus=self._normalize_skus(skus),
             company_name=company_name.strip() if company_name else None,
             purchasing_agent=purchasing_agent.strip() if purchasing_agent else None,
             brand=brand.strip() if brand else None,
@@ -116,6 +123,7 @@ class ProductService:
             discount_rate_max=discount_rate_max,
             sales_volume_min=sales_volume_min,
             sales_volume_max=sales_volume_max,
+            is_featured=is_featured,
             status=status,
         )
 
@@ -138,6 +146,7 @@ class ProductService:
         self,
         *,
         keyword: str | None,
+        skus: List[str],
         company_name: str | None,
         purchasing_agent: str | None,
         brand: str | None,
@@ -162,6 +171,7 @@ class ProductService:
         discount_rate_max: Decimal | None,
         sales_volume_min: int | None,
         sales_volume_max: int | None,
+        is_featured: bool | None,
         status: ProductStatus,
     ) -> List[uuid.UUID]:
         self._validate_range("cost_price", cost_price_min, cost_price_max)
@@ -175,6 +185,7 @@ class ProductService:
         )
         ids = await self.repository.selection_ids(
             keyword=keyword.strip() if keyword else None,
+            skus=self._normalize_skus(skus),
             company_name=company_name.strip() if company_name else None,
             purchasing_agent=purchasing_agent.strip() if purchasing_agent else None,
             brand=brand.strip() if brand else None,
@@ -201,6 +212,7 @@ class ProductService:
             discount_rate_max=discount_rate_max,
             sales_volume_min=sales_volume_min,
             sales_volume_max=sales_volume_max,
+            is_featured=is_featured,
             status=status,
             limit=PRODUCT_EXPORT_SELECTION_LIMIT + 1,
         )
@@ -223,6 +235,21 @@ class ProductService:
             raise AppError(
                 "PRODUCT_FILTER_SELECTION_LIMIT_EXCEEDED",
                 "A product filter accepts at most 50 selections",
+                422,
+            )
+        return result
+
+    @staticmethod
+    def _normalize_skus(values: List[str]) -> List[str]:
+        result: List[str] = []
+        for value in values:
+            normalized = value.strip()
+            if normalized and normalized not in result:
+                result.append(normalized)
+        if len(result) > MULTI_SKU_FILTER_LIMIT:
+            raise AppError(
+                "PRODUCT_MULTI_SKU_FILTER_LIMIT_EXCEEDED",
+                "一次最多查询 500 个 SKU。",
                 422,
             )
         return result
@@ -349,6 +376,25 @@ class ProductService:
             await self.session.flush()
             return await self._detail(product)
 
+    async def batch_update(
+        self, payload: ProductBatchUpdateRequest, actor_id: uuid.UUID
+    ) -> ProductBatchUpdateResponse:
+        update_values = payload.updates.model_dump(exclude_unset=True)
+        async with transaction_scope(self.session):
+            products = await self.repository.active_by_ids_for_update(payload.product_ids)
+            if len(products) != len(payload.product_ids):
+                raise AppError(
+                    "PRODUCT_BATCH_PRODUCT_UNAVAILABLE",
+                    "部分商品已停用、来源供应商不可用或不存在，请刷新列表后重试。",
+                    409,
+                )
+            for product in products:
+                for field, value in update_values.items():
+                    setattr(product, field, value)
+                product.updated_by = actor_id
+            await self.session.flush()
+        return ProductBatchUpdateResponse(updated_count=len(products))
+
     async def update_cost(
         self,
         product_id: uuid.UUID,
@@ -444,6 +490,25 @@ class ProductService:
             product.updated_by = actor_id
         return ProductLifecycleResponse(id=product.id, status=product.status)
 
+    async def batch_disable(
+        self, product_ids: List[uuid.UUID], actor_id: uuid.UUID
+    ) -> ProductBatchLifecycleResponse:
+        async with transaction_scope(self.session):
+            products = await self.repository.by_ids_any_status_for_update(product_ids)
+            if len(products) != len(product_ids):
+                raise AppError("PRODUCT_NOT_FOUND", "Product not found", 404)
+            if any(product.status != ProductStatus.ACTIVE for product in products):
+                raise AppError("PRODUCT_NOT_ACTIVE", "Product is not active", 409)
+            disabled_at = datetime.now()
+            for product in products:
+                product.status = ProductStatus.DISABLED
+                product.disabled_by = actor_id
+                product.disabled_at = disabled_at
+                product.updated_by = actor_id
+        return ProductBatchLifecycleResponse(
+            updated_count=len(products), status=ProductStatus.DISABLED
+        )
+
     async def enable(self, product_id: uuid.UUID, actor_id: uuid.UUID) -> ProductLifecycleResponse:
         async with transaction_scope(self.session):
             product = await self.repository.by_id_any_status_for_update(product_id)
@@ -463,6 +528,33 @@ class ProductService:
             product.disabled_at = None
             product.updated_by = actor_id
         return ProductLifecycleResponse(id=product.id, status=product.status)
+
+    async def batch_enable(
+        self, product_ids: List[uuid.UUID], actor_id: uuid.UUID
+    ) -> ProductBatchLifecycleResponse:
+        async with transaction_scope(self.session):
+            products = await self.repository.by_ids_any_status_for_update(product_ids)
+            if len(products) != len(product_ids):
+                raise AppError("PRODUCT_NOT_FOUND", "Product not found", 404)
+            if any(product.status != ProductStatus.DISABLED for product in products):
+                raise AppError("PRODUCT_NOT_DISABLED", "Product is not disabled", 409)
+            suppliers = await self.supplier_repository.eligible_source_suppliers_by_ids_for_update(
+                {product.source_supplier_id for product in products}
+            )
+            if len(suppliers) != len({product.source_supplier_id for product in products}):
+                raise AppError(
+                    "PRODUCT_SOURCE_SUPPLIER_INELIGIBLE",
+                    "The source supplier must be archived, normal and non-deleted before enabling",
+                    409,
+                )
+            for product in products:
+                product.status = ProductStatus.ACTIVE
+                product.disabled_by = None
+                product.disabled_at = None
+                product.updated_by = actor_id
+        return ProductBatchLifecycleResponse(
+            updated_count=len(products), status=ProductStatus.ACTIVE
+        )
 
     async def purge(self, product_id: uuid.UUID, actor_id: uuid.UUID) -> ProductPurgeResponse:
         try:
@@ -543,6 +635,7 @@ class ProductService:
             shipping_courier=product.shipping_courier,
             after_sales_policy=product.after_sales_policy,
             remark=product.remark,
+            is_featured=product.is_featured,
             status=product.status,
             created_by=product.created_by,
             created_by_username=usernames.get(product.created_by)
@@ -605,6 +698,7 @@ class ProductService:
             tax_category=product.tax_category,
             shipping_courier=product.shipping_courier,
             after_sales_policy=product.after_sales_policy,
+            is_featured=product.is_featured,
             status=product.status,
             created_at=product.created_at,
             updated_at=product.updated_at,

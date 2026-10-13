@@ -395,6 +395,33 @@ async def test_product_api_lists_details_and_updates_cost_independently() -> Non
                 item["id"] for item in multi_value_filtered.json()["data"]["items"]
             }
 
+            async with SessionLocal() as session:
+                product = await session.get(Product, product_id)
+                assert product is not None
+                product.sku = " SKU-1 "
+                await session.commit()
+
+            multi_sku_filtered = await client.get(
+                "/api/v1/products",
+                params=[("skus", "SKU-1"), ("skus", "SKU-404"), ("skus", " SKU-1 ")],
+                headers=headers,
+            )
+            assert multi_sku_filtered.status_code == 200
+            assert {item["id"] for item in multi_sku_filtered.json()["data"]["items"]} == {
+                str(product_id)
+            }
+
+            multi_sku_selection = await client.get(
+                "/api/v1/products/selection-ids",
+                params=[("skus", "SKU-1"), ("skus", "SKU-404")],
+                headers=headers,
+            )
+            assert multi_sku_selection.status_code == 200
+            assert multi_sku_selection.json()["data"] == {
+                "ids": [str(product_id)],
+                "total": 1,
+            }
+
             company_options = await client.get(
                 "/api/v1/products/filter-options?field=COMPANY&keyword=众诚",
                 headers=headers,
@@ -749,6 +776,103 @@ async def test_product_disable_enable_and_purge_follow_lifecycle_rules() -> None
         await cleanup_user(user_id)
 
 
+async def test_product_batch_update_featured_and_lifecycle_are_atomic() -> None:
+    user_id, headers = await create_product_user(
+        ("product:list", "product:update", "product:disable")
+    )
+    supplier_id, category_id, product_id = await create_product_fixture()
+    second_product_id = uuid.uuid4()
+    try:
+        async with SessionLocal() as session:
+            session.add(
+                Product(
+                    id=second_product_id,
+                    product_name="第二件批量商品",
+                    sku="SKU-BATCH-2",
+                    source_supplier_id=supplier_id,
+                    cost_price=Decimal("20.0000"),
+                )
+            )
+            await session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            empty_updates = await client.patch(
+                "/api/v1/products/batch",
+                headers=headers,
+                json={"product_ids": [str(product_id)], "updates": {}},
+            )
+            assert empty_updates.status_code == 422
+
+            updated = await client.patch(
+                "/api/v1/products/batch",
+                headers=headers,
+                json={
+                    "product_ids": [str(product_id), str(second_product_id)],
+                    "updates": {
+                        "company_name": "批量修改公司",
+                        "brand": "批量品牌",
+                        "category_level1_name": "批量一级",
+                        "category_level2_name": "批量二级",
+                        "category_level3_name": "批量三级",
+                        "purchasing_agent": "批量采销员",
+                        "is_featured": True,
+                    },
+                },
+            )
+            assert updated.status_code == 200
+            assert updated.json()["data"] == {"updated_count": 2}
+
+            featured = await client.get("/api/v1/products?is_featured=true", headers=headers)
+            assert featured.status_code == 200
+            assert {item["id"] for item in featured.json()["data"]["items"]} >= {
+                str(product_id), str(second_product_id)
+            }
+
+            disabled = await client.post(
+                "/api/v1/products/commands/batch-disable",
+                headers=headers,
+                json={"product_ids": [str(product_id), str(second_product_id)]},
+            )
+            assert disabled.status_code == 200
+            assert disabled.json()["data"] == {"updated_count": 2, "status": "DISABLED"}
+
+            invalid_disable = await client.post(
+                "/api/v1/products/commands/batch-disable",
+                headers=headers,
+                json={"product_ids": [str(product_id), str(second_product_id)]},
+            )
+            assert invalid_disable.status_code == 409
+            assert invalid_disable.json()["code"] == "PRODUCT_NOT_ACTIVE"
+
+            enabled = await client.post(
+                "/api/v1/products/commands/batch-enable",
+                headers=headers,
+                json={"product_ids": [str(product_id), str(second_product_id)]},
+            )
+            assert enabled.status_code == 200
+            assert enabled.json()["data"] == {"updated_count": 2, "status": "ACTIVE"}
+
+        async with SessionLocal() as session:
+            products = list(
+                (
+                    await session.scalars(
+                        select(Product).where(Product.id.in_((product_id, second_product_id)))
+                    )
+                ).all()
+            )
+            assert len(products) == 2
+            assert all(product.is_featured for product in products)
+            assert all(product.company_name == "批量修改公司" for product in products)
+            assert all(product.updated_by == user_id for product in products)
+            assert all(product.status == ProductStatus.ACTIVE for product in products)
+    finally:
+        async with SessionLocal() as session:
+            await session.execute(delete(Product).where(Product.id == second_product_id))
+            await session.commit()
+        await cleanup_fixture(supplier_id, category_id, product_id)
+        await cleanup_user(user_id)
+
+
 async def test_product_export_validates_selection_and_preserves_values() -> None:
     user_id, headers = await create_product_user(("product:list",))
     supplier_id, category_id, product_id = await create_product_fixture()
@@ -937,8 +1061,10 @@ async def test_product_selection_ids_reuses_active_supplier_visibility() -> None
             supplier.cooperation_status = "STOPPED"
             await session.commit()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            listing = await client.get("/api/v1/products", headers=headers)
-            selected = await client.get("/api/v1/products/selection-ids", headers=headers)
+                listing = await client.get("/api/v1/products?keyword=商品成本价测试", headers=headers)
+                selected = await client.get(
+                    "/api/v1/products/selection-ids?keyword=商品成本价测试", headers=headers
+                )
         assert listing.status_code == 200
         assert selected.status_code == 200
         assert str(product_id) not in {item["id"] for item in listing.json()["data"]["items"]}
