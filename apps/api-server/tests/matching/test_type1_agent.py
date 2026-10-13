@@ -75,6 +75,20 @@ async def test_type1_template_agent_uses_fixed_reference_semantics_and_notes() -
     assert "行备注或特殊备注" in prompt
 
 
+def test_type1_template_mapping_allows_human_fallback_for_output_column() -> None:
+    mapping = Type1TemplateMappingSuggestion.model_validate(
+        {
+            "sheet_name": "需求明细",
+            "header_row": 1,
+            "data_start_row": 2,
+            "input_mapping": {"product_name": "商品名称"},
+            "output_mapping": {"selected_unit_price": None},
+        }
+    )
+
+    assert mapping.output_mapping.selected_unit_price is None
+
+
 @pytest.mark.asyncio
 async def test_type1_match_agent_treats_missing_product_fields_as_unknown() -> None:
     context = Type1RequirementContext(

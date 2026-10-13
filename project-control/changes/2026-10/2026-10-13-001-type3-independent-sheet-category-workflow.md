@@ -1,6 +1,6 @@
 # 类型 3 独立 Sheet 类目推品
 
-日期：2026-10-13  
+日期：2026-10-13
 状态：IMPLEMENTED / REAL_ACCEPTANCE_PENDING
 
 ## 变更

@@ -21,6 +21,8 @@ from app.modules.bid.domain.lifecycle import (
     BidRecommendationType,
 )
 from app.modules.bid.schemas import (
+    BidOutputMappingResponse,
+    BidOutputMappingUpdateRequest,
     BidProjectCreateResponse,
     BidProjectDetailResponse,
     BidProjectFileResponse,
@@ -201,6 +203,35 @@ async def get_bid_project(
     session: SessionDep,
 ) -> ApiResponse[BidProjectDetailResponse]:
     return success(await BidProjectService(session).get(project_id))
+
+
+@router.get(
+    "/{project_id}/output-mapping",
+    response_model=ApiResponse[BidOutputMappingResponse],
+)
+async def get_bid_output_mapping(
+    project_id: uuid.UUID,
+    _: Annotated[CurrentUser, Depends(require_permission("bid:detail"))],
+    session: SessionDep,
+) -> ApiResponse[BidOutputMappingResponse]:
+    return success(await BidProjectService(session).output_mapping(project_id))
+
+
+@router.put(
+    "/{project_id}/output-mapping",
+    response_model=ApiResponse[BidOutputMappingResponse],
+)
+async def put_bid_output_mapping(
+    project_id: uuid.UUID,
+    payload: BidOutputMappingUpdateRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("bid:update"))],
+    session: SessionDep,
+) -> ApiResponse[BidOutputMappingResponse]:
+    return success(
+        await BidProjectService(session).update_output_mapping(
+            project_id, payload, current.user_id
+        )
+    )
 
 
 @router.patch("/{project_id}", response_model=ApiResponse[BidProjectDetailResponse])

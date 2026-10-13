@@ -1,8 +1,8 @@
 # Handoff：类型 2 收尾、项目进度与协作偏好
 
 日期：2026-10-13  
-当前分支：`feat/type2-ai-agent`  
-状态：类型 1/2 固定参考字段及商品侧缺失信息规则已完成代码与自动化验证，真实 DeepSeek 和浏览器验收待执行。
+当前分支：`feat/type1-type2-output-mapping-review`
+状态：类型 1/2 固定参考字段、商品侧缺失信息规则及项目级回填字段确认已完成代码与自动化验证，真实 DeepSeek 和浏览器验收待执行。
 
 ## 一、用户业务目标
 
@@ -29,7 +29,7 @@
 
 ### 仍待真实验收或后续能力
 
-- 类型 1：未知客户模板已支持专属 AI 自动映射；可视化人工修正映射页面未完成。
+- 类型 1/2：每个新项目都由各自专属 AI 解析本次上传文件，不按表头指纹复用其他项目模板；工作台默认只显示以 AI 报价列为起点的连续待回填结果区，漏识别列可从本次原表人工补充。真实陌生模板识别准确度仍待 DeepSeek/浏览器验收。
 - 类型 3：多 Sheet 自动分流、B/C 品 95/90 折、三级类目 100 件及每品牌 10 SKU 的确定性校验，需先确认商品主数据来源字段。
 - 类型 4/5：需以真实 DeepSeek、真实浏览器和实际业务文件做端到端验收；类型 5 私有高保真 PPT 资产仍受授权与人工视觉验收约束。
 - 生产异步运行器 ARQ 尚未配置；本地 `inline` TaskQueue 可用于开发验收。
@@ -78,18 +78,9 @@
 
 ## 五、当前本地改动与验证状态
 
-当前分支包含一次本地提交 `d7787da chore: 初始化类型2 AI Agent改造`，此外仍有未提交改动；尚未要求提交或推送。
+当前分支 `feat/type1-type2-output-mapping-review` 仍有本次未提交改动；尚未要求提交或推送。
 
-主要未提交文件包括：
-
-- `apps/api-server/app/modules/matching/application/type2_agent.py`
-- `apps/api-server/app/modules/matching/application/type1_agent.py`
-- `apps/api-server/app/modules/matching/application/service.py`
-- 类型 2 相关后端测试与投标工作台前端文件
-- `docs/19-recommendation-types-1-3.md`
-- `project-control/CURRENT_STATUS.md`
-- `project-control/modules/matching.md`
-- 本目录下类型 2 Agent、性能、动态折扣的 Change Record，以及 `ADR-0058`。
+本次新增 Revision `20261013_0056`，依赖主分支类型 3 的 `20261013_0055`，为项目保存独立的回填映射、确认人和确认时间；新增 `GET/PUT /api/v1/bid-projects/{id}/output-mapping`，并在类型 1/2 工作台提供 AI 预填、人工修正和确认。输入映射与回填映射已隔离，人工修改不会影响匹配。
 
 已执行且通过的相关后端检查：
 
@@ -99,7 +90,7 @@
 .\.venv\Scripts\python.exe -m pytest tests/bid tests/matching -q
 ```
 
-最新结果：Ruff、mypy 通过；pytest 为 `53 passed`；前端类型检查与工作台定向 Vitest 为 `10 passed`。Windows 上 pytest 退出清理临时目录时仍出现无关的 `WinError 5`，不影响测试用例通过结论。
+合并主分支后最新结果：Ruff、mypy 通过；后端 pytest 为 `405 passed`；前端 Vitest 为 `179 passed`，类型检查通过。本机数据库已无损校正并升级至单 Head `20261013_0056`：既有项目回填映射列和数据保留，类型 3 四张新表已创建。运行中 API 健康检查仍需重启服务后验证。Windows 上 pytest 退出清理临时目录时仍出现无关的 `WinError 5`，不影响测试用例通过结论。
 
 真实 265 行类型 1 首次执行曾返回 502：项目已安全回到 `IMPORTED`，真实首行及首批 10 行最小 DeepSeek 调用均成功，失败范围确定为并发批次偶发结构/合同不完整。现已将类型 1 单批收敛为 5 行，业务合同错误自动纠正重试一次，并保存安全诊断摘要供后续定位。
 
@@ -118,6 +109,6 @@
 
 ## 七、下一步建议顺序
 
-1. 在 DeepSeek 服务可用时，用本次两份固定参考模板完成浏览器端上传、显式开始、结果查看、类型 1 人工确认、类型 2 最低合规价、原表导出和下载。
+1. 在 DeepSeek 服务可用时，用本次两份固定参考模板完成浏览器端上传、回填字段 AI 预填与人工确认、显式开始、结果查看、类型 1 全量命中、类型 2 最低合规价、原表导出和下载。
 2. 真实验收同时覆盖“商品侧字段缺失仍可匹配”和“已有事实明确冲突不可匹配”。
 3. 验收通过后再由用户决定提交信息与推送时机。
