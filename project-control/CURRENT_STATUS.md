@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-13
 
+> 2026-10-13：修复类型 3 独立 Migration `20261013_0055` 在 GitHub 后端 CI 的全量 Ruff 失败。此前压缩为单行的 Alembic 表、索引和 downgrade 调用已等价展开为符合 100 字符规范的调用，并修正导入分组；不改表、字段、约束、Revision 依赖或升级/降级顺序。CI 同款 Ruff、Mypy、单 Head 检查和完整 pytest 已通过；无 API、UI、权限或新增 Migration。
+
 > 2026-10-13：Type-5 正式 PPT 模板 1 `JD_DETAIL_RED` 私有 v5 单品试点完成开发及代码复审。基于客户正式空白模板实现字段映射、固定内容保留、缺失字段留空、图片填充及安全文本容量校验；长 SKU、品牌、物流和卖点超限均受控拒绝，折扣率格式已修复。Recommendation 回归测试 152 passed。v5 仅通过受控私有资产显式使用，不改变线上默认 v3；历史 v3/v4 和其他模板不变。组合模式尚未开放，正式 Office 视觉验收及私有资产部署仍待完成。无数据库、API、UI、权限、推荐或报价规则变更。
 
 > 2026-10-13：按两份固定参考模板调整类型 1/2。类型 1 新增独立 `Type1Agent`、结构化合同、未知模板字段识别与规格候选复核编排，核心参考字段为三级类目、商品名称、规格型号/规格参数、主要技术要求、限价，并读取非空行备注、特殊要求和项目备注；初版采用人工单选，随后已由 ADR-0060 改为全部合规命中商品逐行输出。类型 2 支持从独立列或商品名称/参数全文中受控提取唯一品牌型号；商品侧字段不存在、为空或未提及只视为未知，不再据此排除，已有品牌、型号或商品事实明确冲突仍排除。预计数量与空白结果列不参加同品判断，替代仍仅在明确允许且没有合规原品时开放。类型 1/2 各自封装 Prompt、合同和编排，仅共享底层设施。无 Migration、API 路径或权限变化（ADR-0058、ADR-0059、ADR-0060）；自动化回归已完成，真实 DeepSeek 与浏览器端到端验收待执行。
