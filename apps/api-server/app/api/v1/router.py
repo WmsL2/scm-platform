@@ -11,6 +11,7 @@ from app.modules.matching.api.router import router as matching_router
 from app.modules.recommendation.api.ppt_router import router as ppt_solution_router
 from app.modules.recommendation.api.recommendation_router import router as recommendation_router
 from app.modules.supplier.api.router import router as supplier_router
+from app.modules.type3_recommendation.api.router import router as type3_recommendation_router
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(auth_router)
@@ -23,4 +24,5 @@ router.include_router(dashboard_router)
 router.include_router(bid_project_router)
 router.include_router(matching_router)
 router.include_router(recommendation_router)
+router.include_router(type3_recommendation_router)
 router.include_router(ppt_solution_router)
