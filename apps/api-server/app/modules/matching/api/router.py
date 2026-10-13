@@ -8,9 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import ApiResponse, success
 from app.core.database import get_db_session
+from app.integrations.deepseek.client import DeepSeekClient
 from app.modules.auth.dependencies import require_permission
 from app.modules.auth.schemas import CurrentUser
 from app.modules.matching.application.service import MatchingService
+from app.modules.matching.application.type1_agent import Type1Agent
+from app.modules.matching.application.type2_agent import Type2Agent
 from app.modules.matching.schemas import (
     BidItemCandidateResponse,
     BidItemSelectionCreateRequest,
@@ -31,7 +34,13 @@ async def start_matching(
     current: Annotated[CurrentUser, Depends(require_permission("bid:match"))],
     session: SessionDep,
 ) -> ApiResponse[StartMatchingResponse]:
-    return success(await MatchingService(session).start(project_id, current.user_id))
+    return success(
+        await MatchingService(
+            session,
+            type1_agent=Type1Agent(DeepSeekClient()),
+            type2_agent=Type2Agent(DeepSeekClient()),
+        ).start(project_id, current.user_id)
+    )
 
 
 @router.get(

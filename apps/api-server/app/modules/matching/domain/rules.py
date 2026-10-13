@@ -384,6 +384,62 @@ def build_brand_catalog(
     )
 
 
+def resolve_controlled_brand_from_text(
+    value: str | None, brand_catalog: BrandCatalog
+) -> str | None:
+    """Resolve an embedded brand only when one controlled catalog group is hit."""
+    normalized = normalize_match_text(value)
+    if not normalized:
+        return None
+    matched_groups = [
+        group
+        for group in brand_catalog
+        if any(
+            _is_safe_embedded_brand_alias(alias, normalized)
+            for alias in group.aliases
+        )
+    ]
+    if len(matched_groups) != 1:
+        return None
+    return matched_groups[0].canonical_name
+
+
+def resolve_controlled_model_from_text(
+    value: str | None, candidates: Sequence[MatchableProduct]
+) -> str | None:
+    """Resolve a model embedded in product/parameter text without guessing."""
+    if not value:
+        return None
+    normalized_value = unicodedata.normalize("NFKC", value).casefold()
+    labeled = re.search(
+        r"(?:型号|model)\s*[:：]?\s*([a-z0-9][a-z0-9._/\-]{1,40})",
+        normalized_value,
+    )
+    models_by_key: dict[str, str] = {}
+    for candidate in candidates:
+        key = normalize_match_text(candidate.model)
+        if key and candidate.model:
+            models_by_key.setdefault(key, candidate.model)
+    if labeled:
+        labeled_key = normalize_match_text(labeled.group(1))
+        if labeled_key in models_by_key:
+            return models_by_key[labeled_key]
+
+    compact = normalize_match_text(value)
+    matched_keys = {
+        key
+        for key in models_by_key
+        if len(key) >= 3 and not key.isdecimal() and key in compact
+    }
+    if len(matched_keys) == 1:
+        return models_by_key[next(iter(matched_keys))]
+    if matched_keys:
+        longest = max(matched_keys, key=len)
+        if all(key in longest for key in matched_keys):
+            return models_by_key[longest]
+    return None
+
+
 def _canonical_brand_name(aliases: set[str]) -> str:
     chinese_aliases = [
         alias

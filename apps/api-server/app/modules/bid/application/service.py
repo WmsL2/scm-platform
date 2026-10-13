@@ -17,6 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.contracts import AppError, PageParams, PageResult
 from app.core.transaction import transaction_scope
 from app.infrastructure.adapters import ObjectStorage, get_object_storage
+from app.integrations.deepseek.client import (
+    DeepSeekConfigurationError,
+    DeepSeekProviderError,
+    DeepSeekStructuredOutputError,
+)
 from app.modules.bid.domain.lifecycle import (
     BidFileType,
     BidImportStatus,
@@ -44,6 +49,16 @@ from app.modules.bid.schemas import (
     BidProjectItemResponse,
     BidProjectListItem,
     BidProjectStatusResponse,
+)
+from app.modules.matching.application.type1_agent import (
+    Type1Agent,
+    Type1AgentContractError,
+    Type1TemplateMappingSuggestion,
+)
+from app.modules.matching.application.type2_agent import (
+    Type2Agent,
+    Type2AgentContractError,
+    Type2TemplateMappingSuggestion,
 )
 from app.modules.recommendation.template.models import RecommendationTemplateMapping
 from app.modules.recommendation.template.schemas import (
@@ -87,8 +102,15 @@ _BUILTIN_TEMPLATE_PROFILES: tuple[dict[str, object], ...] = (
             "product_name": "商品通用名称", "brand": "品牌", "model": "型号",
             "specification": "适用打印机型号", "quantity": "预计数量",
             "unit": "计量单位", "max_price": "单价最高限价（元）",
+            "color": "颜色", "compatible_model": "适用打印机型号",
+            "capacity": "打印量", "packaging": "包装规格", "row_note": "备注",
         },
-        "export_mapping": {"selected_unit_price": "商品报价（单价）", "note": "备注"},
+        "export_mapping": {
+            "selected_unit_price": "商品报价（单价）",
+            "discount_compliance": "是否满足平台承诺折扣率（88折）",
+            "price_valid_until": "价格有效期 至少到12.31",
+            "note": "备注",
+        },
     },
     {
         "recommendation_type": BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT,
@@ -108,10 +130,18 @@ _BUILTIN_TEMPLATE_PROFILES: tuple[dict[str, object], ...] = (
 
 
 class BidProjectService:
-    def __init__(self, session: AsyncSession, storage: ObjectStorage | None = None) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        storage: ObjectStorage | None = None,
+        type1_agent: Type1Agent | None = None,
+        type2_agent: Type2Agent | None = None,
+    ) -> None:
         self.session = session
         self.storage = storage or get_object_storage()
         self.repository = BidProjectRepository(session)
+        self.type1_agent = type1_agent
+        self.type2_agent = type2_agent
 
     async def create(
         self,
@@ -204,6 +234,81 @@ class BidProjectService:
             assert file_bytes is not None
             try:
                 template = await self._recognize_template(file_bytes, recommendation_type)
+                if (
+                    template is None
+                    and (
+                        (
+                            recommendation_type
+                            is BidRecommendationType.TYPE_1_SPECIFICATION
+                            and self.type1_agent is not None
+                        )
+                        or (
+                            recommendation_type
+                            is BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT
+                            and self.type2_agent is not None
+                        )
+                    )
+                ):
+                    suggestion: (
+                        Type1TemplateMappingSuggestion | Type2TemplateMappingSuggestion
+                    )
+                    if (
+                        recommendation_type is BidRecommendationType.TYPE_1_SPECIFICATION
+                        and self.type1_agent is not None
+                    ):
+                        suggestion = await self.type1_agent.suggest_template_mapping(
+                            file_bytes, project_remark=remark
+                        )
+                        template_prefix = "TYPE1_AI"
+                        template_name = "类型1·AI识别客户规格报价表"
+                    elif (
+                        recommendation_type
+                        is BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT
+                        and self.type2_agent is not None
+                    ):
+                        suggestion = await self.type2_agent.suggest_template_mapping(
+                            file_bytes, project_remark=remark
+                        )
+                        template_prefix = "TYPE2_AI"
+                        template_name = "类型2·AI识别客户品牌型号报价表"
+                    else:  # pragma: no cover - guarded by the outer condition
+                        raise AssertionError("unreachable recommendation type")
+                    mapping_workbook = load_workbook(
+                        BytesIO(file_bytes), read_only=True, data_only=False
+                    )
+                    try:
+                        headers = [
+                            self._text(cell.value)
+                            for cell in mapping_workbook[suggestion.sheet_name][
+                                suggestion.header_row
+                            ]
+                        ]
+                    finally:
+                        mapping_workbook.close()
+                    fingerprint = self._fingerprint(
+                        suggestion.sheet_name, suggestion.header_row, headers
+                    )
+                    template = BidTemplate(
+                        template_code=f"{template_prefix}_{fingerprint[:12].upper()}",
+                        template_name=template_name,
+                        version=1,
+                        sheet_name=suggestion.sheet_name,
+                        header_row=suggestion.header_row,
+                        data_start_row=suggestion.data_start_row,
+                        import_mapping={
+                            key: value
+                            for key, value in suggestion.input_mapping.model_dump().items()
+                            if value
+                        },
+                        export_mapping={
+                            key: value
+                            for key, value in suggestion.output_mapping.model_dump().items()
+                            if value
+                        },
+                        fingerprint=fingerprint,
+                        is_active=True,
+                        created_by=actor_id,
+                    )
                 if template is not None:
                     parsed_rows = self._parse_rows(file_bytes, template)
                     import_status = BidImportStatus.PARSED.value
@@ -211,6 +316,31 @@ class BidProjectService:
             except AppError as exc:
                 import_status = BidImportStatus.FAILED.value
                 import_error = exc.message
+            except DeepSeekConfigurationError as exc:
+                business_label = (
+                    "类型1"
+                    if recommendation_type is BidRecommendationType.TYPE_1_SPECIFICATION
+                    else "类型2"
+                )
+                import_error = f"{business_label} AI 模板识别暂不可用：{exc}"
+            except (
+                DeepSeekStructuredOutputError,
+                Type1AgentContractError,
+                Type2AgentContractError,
+            ):
+                business_label = (
+                    "类型1"
+                    if recommendation_type is BidRecommendationType.TYPE_1_SPECIFICATION
+                    else "类型2"
+                )
+                import_error = f"{business_label} AI 未能安全识别模板字段，请检查表头或稍后重试"
+            except DeepSeekProviderError as exc:
+                business_label = (
+                    "类型1"
+                    if recommendation_type is BidRecommendationType.TYPE_1_SPECIFICATION
+                    else "类型2"
+                )
+                import_error = f"{business_label} AI 模板识别失败：{exc}"
         else:
             import_status = BidImportStatus.NOT_REQUIRED.value
             import_error = None
@@ -880,6 +1010,9 @@ class BidProjectService:
                     key: self._text(source_data.get(header))
                     for key, header in template.import_mapping.items()
                 }
+                specification = self._join_nonempty_text(
+                    parsed.get("specification"), parsed.get("technical_requirements")
+                )
                 rows.append(
                     {
                         "sheet_name": template.sheet_name,
@@ -888,7 +1021,7 @@ class BidProjectService:
                         "product_name": parsed.get("product_name"),
                         "brand": parsed.get("brand"),
                         "model": parsed.get("model"),
-                        "specification": parsed.get("specification"),
+                        "specification": specification,
                         "category_text": parsed.get("category_text"),
                         "quantity": self._decimal(parsed.get("quantity")),
                         "unit": parsed.get("unit"),
@@ -902,6 +1035,11 @@ class BidProjectService:
             return rows
         finally:
             workbook.close()
+
+    @staticmethod
+    def _join_nonempty_text(*values: str | None) -> str | None:
+        parts = [value.strip() for value in values if value and value.strip()]
+        return "；".join(dict.fromkeys(parts)) or None
 
     @staticmethod
     def _type3_requirement_from_workbook(file_bytes: bytes) -> str:
@@ -969,12 +1107,22 @@ class BidProjectService:
                     "unit": item.unit,
                     "supplier_name": supplier.get("supplier_name"),
                     "note": selection.note,
-                    "is_same_product": self._same_selected_product(item, product),
+                    "is_same_product": (
+                        "否"
+                        if product.get("type2_match_type") == "TYPE2_AI_SUBSTITUTE"
+                        else self._same_selected_product(item, product)
+                    ),
+                    "discount_compliance": (selection.price_snapshot or {}).get(
+                        "discount_compliance"
+                    ),
+                    "price_valid_until": (selection.price_snapshot or {}).get(
+                        "price_valid_until"
+                    ),
                 }
                 for field, header in template.export_mapping.items():
-                    sheet.cell(
-                        item.source_row_number, header_columns[header]
-                    ).value = values.get(field)
+                    target = sheet.cell(item.source_row_number, header_columns[header])
+                    if target.value is None or not str(target.value).strip():
+                        target.value = values.get(field)
             output = BytesIO()
             workbook.save(output)
             return output.getvalue()
