@@ -53,7 +53,12 @@ async def execute_type3_agent_inline(run_id: UUID, service: Type3RecommendationS
             system_prompt=(
                 "你是受控类目翻译器。客户已人工从Excel选择类目节点；你只能把每个 node_id 映射到"
                 "category_catalog 中已有的 category_key。不得增加类目、不得遗漏 node_id。"
-                "名称相近时可选择同义/上下级真实类目；没有可靠匹配时返回空数组。严格输出 JSON。"
+                "Excel 节点可能是一级、二级、三级，也可能是上位、集合或泛称，名称不要求与数据库完全一致。"
+                "当一个节点表达的是一组商品用途或一个上位类目时，应返回该范围内全部用途相关、可推荐的"
+                "真实三级类目 key（可为多个）；例如“洁牙用具”应覆盖目录中用途相符的冲牙器、电动牙刷等，"
+                "而不是因没有同名节点返回空数组。类似地，饮水电器、烹饪锅具等泛类目也应映射至各自相关"
+                "的真实末级类目。不要因名称字面相近选择用途无关的类目；只有目录内确实没有合理同义、上下级"
+                "或用途归属时才返回空数组。每个 node_id 必须恰好返回一项。严格输出 JSON。"
             ),
             user_prompt=f"selected_nodes={nodes}\ncategory_catalog={frozen['catalog']}",
             response_model=Type3CategoryMatchResponse,

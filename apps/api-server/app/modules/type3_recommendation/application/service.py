@@ -24,7 +24,10 @@ from app.modules.bid.domain.lifecycle import (
 )
 from app.modules.bid.infrastructure.models import BidProject, BidProjectEvent, BidProjectFile
 from app.modules.bid.schemas import BidProjectFileResponse
-from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMN_KEYS
+from app.modules.catalog.application.product_export_columns import (
+    PRODUCT_EXPORT_COLUMN_KEYS,
+    PRODUCT_EXPORT_COLUMNS,
+)
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
@@ -36,11 +39,17 @@ from app.modules.type3_recommendation.infrastructure.models import (
     Type3SheetConfig,
 )
 from app.modules.type3_recommendation.schemas import (
+    Type3CandidateConfirmationRequest,
     Type3CandidatePage,
     Type3CandidateResponse,
+    Type3CandidateSheetSummary,
+    Type3ExportField,
     Type3Node,
+    Type3OutputColumn,
     Type3RemarkAnalysis,
     Type3RunResponse,
+    Type3RunSheetSummary,
+    Type3SheetOutputStructure,
     Type3SheetPreview,
     Type3SheetSelectionRequest,
     Type3TemplatePreview,
@@ -91,6 +100,39 @@ class Type3RecommendationService:
         workbook_bytes = await self.storage.read(file.storage_key)
         return Type3TemplatePreview(template_file_id=file.id, sheets=self._inspect(workbook_bytes))
 
+    async def sheet_output_structure(
+        self, project_id: uuid.UUID, sheet_name: str, header_row: int
+    ) -> Type3SheetOutputStructure:
+        """Read one Type-3 workbook Sheet's actual output headers for manual mapping."""
+        _project, file = await self._project_and_template(project_id)
+        try:
+            workbook = load_workbook(BytesIO(await self.storage.read(file.storage_key)), read_only=True)
+        except Exception as exc:
+            raise AppError("TYPE3_WORKBOOK_INVALID", "类型 3 工作簿无法读取", 422) from exc
+        try:
+            if sheet_name not in workbook.sheetnames:
+                raise AppError("TYPE3_SHEET_NOT_FOUND", "所选工作表已不存在", 422)
+            sheet = workbook[sheet_name]
+            if header_row > sheet.max_row:
+                raise AppError("TYPE3_HEADER_ROW_INVALID", "表头行超出工作表范围", 422)
+            return Type3SheetOutputStructure(
+                sheet_name=sheet.title,
+                header_row=header_row,
+                max_row=sheet.max_row,
+                columns=self._output_columns(sheet, header_row),
+            )
+        finally:
+            workbook.close()
+
+    @staticmethod
+    def export_fields() -> list[Type3ExportField]:
+        """Type-3's own field catalogue for mapping its independently exported workbook."""
+        return [Type3ExportField(key=item.key, label=item.header) for item in PRODUCT_EXPORT_COLUMNS]
+
+    async def available_export_fields(self, project_id: uuid.UUID) -> list[Type3ExportField]:
+        await self._project(project_id)
+        return self.export_fields()
+
     async def save_sheet_selection(
         self, project_id: uuid.UUID, payload: Type3SheetSelectionRequest, actor_id: uuid.UUID
     ) -> list[Type3SheetPreview]:
@@ -111,6 +153,10 @@ class Type3RecommendationService:
             )
             for row in existing:
                 await self.session.delete(row)
+            # The replacement payload can contain the same (project_id, sheet_name)
+            # as a deleted row.  MySQL enforces that unique key immediately, so flush
+            # deletes before staging replacement inserts in this transaction.
+            await self.session.flush()
             saved: list[Type3SheetPreview] = []
             for sheet in payload.sheets:
                 actual = preview.get(sheet.sheet_name)
@@ -131,6 +177,7 @@ class Type3RecommendationService:
                     raise AppError(
                         "TYPE3_OUTPUT_REGION_INVALID", "数据起始行必须位于表头行之后", 422
                     )
+                self._validate_output_mapping(sheet.mapping_json, actual.max_column)
                 self.session.add(
                     Type3SheetConfig(
                         project_id=project.id,
@@ -178,6 +225,8 @@ class Type3RecommendationService:
                 sheet_name=row.sheet_name,
                 header_row=row.header_row,
                 data_start_row=row.data_start_row,
+                max_row=0,
+                max_column=0,
                 mapping_json=row.mapping_json,
                 nodes=[Type3Node.model_validate(node) for node in row.selected_nodes],
             )
@@ -241,6 +290,16 @@ class Type3RecommendationService:
             await self.session.flush()
             await self.session.refresh(run)
         return self._run_response(run)
+
+    async def save_and_start(
+        self,
+        project_id: uuid.UUID,
+        payload: Type3SheetSelectionRequest,
+        actor_id: uuid.UUID,
+    ) -> Type3RunResponse:
+        """Persist exactly the submitted multi-Sheet selection, then freeze that same state."""
+        await self.save_sheet_selection(project_id, payload, actor_id)
+        return await self.start(project_id, actor_id)
 
     async def list_runs(self, project_id: uuid.UUID) -> list[Type3RunResponse]:
         await self._project(project_id)
@@ -318,6 +377,15 @@ class Type3RecommendationService:
                     "AI 返回了未签发类目或遗漏了用户所选类目",
                     422,
                 )
+            # Keep the issued-key mapping with this run.  It lets us audit a broad Excel
+            # node that intentionally expands to multiple real terminal categories without
+            # ever letting AI return an arbitrary database category.
+            catalog_snapshot = dict(run.category_catalog_snapshot or {})
+            catalog_snapshot["matches"] = [
+                {"node_id": node_id, "category_keys": category_matches[node_id]}
+                for node_id in sorted(category_matches)
+            ]
+            run.category_catalog_snapshot = catalog_snapshot
             for sheet in sheets:
                 paths = [
                     issued[key]
@@ -380,6 +448,30 @@ class Type3RecommendationService:
             confirmed_total=confirmed,
         )
 
+    async def candidate_sheets(self, run_id: uuid.UUID) -> list[Type3CandidateSheetSummary]:
+        """Return source-Sheet counters without loading all candidates into the browser."""
+        await self._run(run_id)
+        rows = (
+            await self.session.execute(
+                select(
+                    Type3Candidate.sheet_name,
+                    func.count(Type3Candidate.id),
+                    func.sum(Type3Candidate.confirmed_at.is_not(None)),
+                )
+                .where(Type3Candidate.run_id == run_id)
+                .group_by(Type3Candidate.sheet_name)
+                .order_by(Type3Candidate.sheet_name)
+            )
+        ).all()
+        return [
+            Type3CandidateSheetSummary(
+                sheet_name=sheet_name,
+                total=int(total),
+                confirmed_total=int(confirmed_total or 0),
+            )
+            for sheet_name, total, confirmed_total in rows
+        ]
+
     async def confirm(self, candidate_ids: list[uuid.UUID], actor_id: uuid.UUID) -> None:
         async with transaction_scope(self.session):
             rows = list(
@@ -396,6 +488,40 @@ class Type3RecommendationService:
             now = datetime.now(UTC).replace(tzinfo=None)
             for row in rows:
                 row.confirmed_by, row.confirmed_at = actor_id, now
+
+    async def confirm_candidates(
+        self,
+        run_id: uuid.UUID,
+        payload: Type3CandidateConfirmationRequest,
+        actor_id: uuid.UUID,
+    ) -> int:
+        """Confirm selected candidates, or all pending candidates within the current Sheet."""
+        async with transaction_scope(self.session):
+            await self._run(run_id, for_update=True)
+            condition = [
+                Type3Candidate.run_id == run_id,
+                Type3Candidate.confirmed_at.is_(None),
+            ]
+            if payload.select_all_unconfirmed:
+                if payload.sheet_name:
+                    condition.append(Type3Candidate.sheet_name == payload.sheet_name)
+                if payload.excluded_candidate_ids:
+                    condition.append(Type3Candidate.id.not_in(payload.excluded_candidate_ids))
+            else:
+                condition.append(Type3Candidate.id.in_(payload.candidate_ids))
+            rows = list(
+                (
+                    await self.session.scalars(
+                        select(Type3Candidate).where(*condition).with_for_update()
+                    )
+                ).all()
+            )
+            if not payload.select_all_unconfirmed and len(rows) != len(payload.candidate_ids):
+                raise AppError("TYPE3_CANDIDATE_NOT_FOUND", "存在不存在或已确认的类型 3 候选商品", 404)
+            now = datetime.now(UTC).replace(tzinfo=None)
+            for row in rows:
+                row.confirmed_by, row.confirmed_at = actor_id, now
+            return len(rows)
 
     async def complete_selection(
         self, project_id: uuid.UUID, run_id: uuid.UUID, actor_id: uuid.UUID
@@ -617,6 +743,8 @@ class Type3RecommendationService:
                         sheet_name=sheet.title,
                         header_row=header_row,
                         data_start_row=header_row + 1,
+                        max_row=sheet.max_row,
+                        max_column=sheet.max_column,
                         mapping_json=mapping,
                         nodes=nodes,
                     )
@@ -636,6 +764,45 @@ class Type3RecommendationService:
             if columns:
                 return number, {"version": 2, "columns": columns}
         return 1, {"version": 2, "columns": []}
+
+    @staticmethod
+    def _output_columns(sheet: Any, header_row: int) -> list[Type3OutputColumn]:
+        cells = next(
+            sheet.iter_rows(min_row=header_row, max_row=header_row, max_col=sheet.max_column),
+            (),
+        )
+        headers = [str(cell.value).strip() if cell.value is not None else "" for cell in cells]
+        counts = {header: headers.count(header) for header in set(headers) if header}
+        return [
+            Type3OutputColumn(
+                column_index=index,
+                header=header,
+                duplicate=counts[header] > 1,
+            )
+            for index, header in enumerate(headers, start=1)
+            if header
+        ]
+
+    @staticmethod
+    def _validate_output_mapping(mapping_json: dict[str, object], max_column: int) -> None:
+        columns = mapping_json.get("columns") if isinstance(mapping_json, dict) else None
+        if not isinstance(columns, list):
+            raise AppError("TYPE3_EXPORT_MAPPING_INVALID", "导出字段映射格式不正确", 422)
+        indexes: set[int] = set()
+        for mapping in columns:
+            if not isinstance(mapping, dict):
+                raise AppError("TYPE3_EXPORT_MAPPING_INVALID", "导出字段映射格式不正确", 422)
+            column, field = mapping.get("column_index"), mapping.get("field_key")
+            if (
+                not isinstance(column, int)
+                or column < 1
+                or column > max_column
+                or column in indexes
+                or not isinstance(field, str)
+                or field not in PRODUCT_EXPORT_COLUMN_KEYS
+            ):
+                raise AppError("TYPE3_EXPORT_MAPPING_INVALID", "导出字段映射包含无效列或字段", 422)
+            indexes.add(column)
 
     async def _catalog(self, analysis: Type3RemarkAnalysis) -> list[dict[str, object]]:
         rows = await self._eligible(analysis, [])
@@ -790,6 +957,19 @@ class Type3RecommendationService:
 
     @staticmethod
     def _run_response(run: Type3Run) -> Type3RunResponse:
+        sheet_summaries: list[Type3RunSheetSummary] = []
+        for sheet in run.sheet_snapshot:
+            if not isinstance(sheet, dict):
+                continue
+            sheet_name, selected_nodes = sheet.get("sheet_name"), sheet.get("selected_nodes")
+            if not isinstance(sheet_name, str) or not isinstance(selected_nodes, list):
+                continue
+            if selected_nodes:
+                sheet_summaries.append(
+                    Type3RunSheetSummary(
+                        sheet_name=sheet_name, selected_node_count=len(selected_nodes)
+                    )
+                )
         return Type3RunResponse(
             id=run.id,
             project_id=run.project_id,
@@ -802,6 +982,7 @@ class Type3RecommendationService:
             provider=run.provider,
             model=run.model,
             prompt_version=run.prompt_version,
+            sheet_summaries=sheet_summaries,
             created_at=run.created_at,
             updated_at=run.updated_at,
         )

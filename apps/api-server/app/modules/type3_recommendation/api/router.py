@@ -6,7 +6,7 @@ from io import BytesIO
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,8 +18,12 @@ from app.modules.bid.schemas import BidProjectFileResponse
 from app.modules.type3_recommendation.application.agent import execute_type3_agent_inline
 from app.modules.type3_recommendation.application.service import Type3RecommendationService
 from app.modules.type3_recommendation.schemas import (
+    Type3CandidateConfirmationRequest,
     Type3CandidatePage,
+    Type3CandidateSheetSummary,
+    Type3ExportField,
     Type3RunResponse,
+    Type3SheetOutputStructure,
     Type3SheetPreview,
     Type3SheetSelectionRequest,
     Type3TemplatePreview,
@@ -36,6 +40,35 @@ async def template_preview(
     session: SessionDep,
 ) -> ApiResponse[Type3TemplatePreview]:
     return success(await Type3RecommendationService(session).preview(project_id))
+
+
+@router.get(
+    "/{project_id}/sheet-output-structure",
+    response_model=ApiResponse[Type3SheetOutputStructure],
+)
+async def sheet_output_structure(
+    project_id: uuid.UUID,
+    sheet_name: str,
+    header_row: Annotated[int, Query(ge=1)],
+    _: Annotated[CurrentUser, Depends(require_permission("recommendation:detail"))],
+    session: SessionDep,
+) -> ApiResponse[Type3SheetOutputStructure]:
+    return success(
+        await Type3RecommendationService(session).sheet_output_structure(
+            project_id, sheet_name, header_row
+        )
+    )
+
+
+@router.get(
+    "/{project_id}/export-fields", response_model=ApiResponse[list[Type3ExportField]]
+)
+async def export_fields(
+    project_id: uuid.UUID,
+    _: Annotated[CurrentUser, Depends(require_permission("recommendation:detail"))],
+    session: SessionDep,
+) -> ApiResponse[list[Type3ExportField]]:
+    return success(await Type3RecommendationService(session).available_export_fields(project_id))
 
 
 @router.get(
@@ -56,7 +89,7 @@ async def save_sheet_selections(
     project_id: uuid.UUID,
     payload: Type3SheetSelectionRequest,
     current: Annotated[CurrentUser, Depends(require_permission("recommendation:create"))],
-    session: SessionDep,
+    session: FunctionSessionDep,
 ) -> ApiResponse[list[Type3SheetPreview]]:
     return success(
         await Type3RecommendationService(session).save_sheet_selection(
@@ -68,12 +101,15 @@ async def save_sheet_selections(
 @router.post("/{project_id}/runs", response_model=ApiResponse[Type3RunResponse])
 async def start(
     project_id: uuid.UUID,
+    payload: Type3SheetSelectionRequest,
     current: Annotated[CurrentUser, Depends(require_permission("recommendation:run"))],
 ) -> ApiResponse[Type3RunResponse]:
-    # The run must commit before the inline AI work starts.  The executor then owns a
-    # separate transaction so a candidate-persistence failure can safely mark this Run FAILED.
-    async with SessionLocal() as create_session:
-        run = await Type3RecommendationService(create_session).start(project_id, current.user_id)
+    # Persist the posted selection and create its Run in the same committed transaction.
+    # The inline executor therefore can never observe a previous Sheet configuration.
+    async with SessionLocal.begin() as create_session:
+        run = await Type3RecommendationService(create_session).save_and_start(
+            project_id, payload, current.user_id
+        )
     async with SessionLocal() as execution_session:
         await execute_type3_agent_inline(
             run.id, Type3RecommendationService(execution_session)
@@ -111,6 +147,18 @@ async def candidates(
     return success(await Type3RecommendationService(session).candidates(run_id, sheet_name, page))
 
 
+@router.get(
+    "/runs/{run_id}/candidate-sheets",
+    response_model=ApiResponse[list[Type3CandidateSheetSummary]],
+)
+async def candidate_sheets(
+    run_id: uuid.UUID,
+    _: Annotated[CurrentUser, Depends(require_permission("recommendation:detail"))],
+    session: SessionDep,
+) -> ApiResponse[list[Type3CandidateSheetSummary]]:
+    return success(await Type3RecommendationService(session).candidate_sheets(run_id))
+
+
 @router.post("/candidates/confirm", response_model=ApiResponse[bool])
 async def confirm(
     candidate_ids: list[uuid.UUID],
@@ -119,6 +167,20 @@ async def confirm(
 ) -> ApiResponse[bool]:
     await Type3RecommendationService(session).confirm(candidate_ids, current.user_id)
     return success(True)
+
+
+@router.post("/runs/{run_id}/candidate-confirmations", response_model=ApiResponse[int])
+async def confirm_candidates(
+    run_id: uuid.UUID,
+    payload: Type3CandidateConfirmationRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("recommendation:review"))],
+    session: SessionDep,
+) -> ApiResponse[int]:
+    return success(
+        await Type3RecommendationService(session).confirm_candidates(
+            run_id, payload, current.user_id
+        )
+    )
 
 
 @router.post(

@@ -21,6 +21,8 @@ class Type3SheetPreview(BaseModel):
     sheet_name: str
     header_row: int
     data_start_row: int
+    max_row: int
+    max_column: int
     mapping_json: dict[str, object]
     nodes: list[Type3Node]
 
@@ -28,6 +30,24 @@ class Type3SheetPreview(BaseModel):
 class Type3TemplatePreview(BaseModel):
     template_file_id: UUID
     sheets: list[Type3SheetPreview]
+
+
+class Type3OutputColumn(BaseModel):
+    column_index: int = Field(ge=1)
+    header: str
+    duplicate: bool
+
+
+class Type3SheetOutputStructure(BaseModel):
+    sheet_name: str
+    header_row: int = Field(ge=1)
+    max_row: int
+    columns: list[Type3OutputColumn]
+
+
+class Type3ExportField(BaseModel):
+    key: str
+    label: str
 
 
 class Type3SheetSelection(Type3SheetPreview):
@@ -85,6 +105,13 @@ class Type3CategoryMatchResponse(BaseModel):
     matches: list[Type3CategoryMatch]
 
 
+class Type3RunSheetSummary(BaseModel):
+    """The exact user-selected Sheet scope frozen into one Type-3 Run."""
+
+    sheet_name: str
+    selected_node_count: int = Field(ge=1)
+
+
 class Type3RunResponse(BaseModel):
     id: UUID
     project_id: UUID
@@ -95,6 +122,7 @@ class Type3RunResponse(BaseModel):
     provider: str | None = None
     model: str | None = None
     prompt_version: str | None = None
+    sheet_summaries: list[Type3RunSheetSummary] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -116,3 +144,36 @@ class Type3CandidatePage(BaseModel):
     page: int
     page_size: int
     confirmed_total: int
+
+
+class Type3CandidateSheetSummary(BaseModel):
+    """Candidate counts for one source worksheet in an independent Type-3 Run."""
+
+    sheet_name: str
+    total: int
+    confirmed_total: int
+
+
+class Type3CandidateConfirmationRequest(BaseModel):
+    """A Type-3-only confirmation scope; it never uses Type-4 confirmation contracts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_ids: list[UUID] = Field(default_factory=list, max_length=500)
+    select_all_unconfirmed: bool = False
+    excluded_candidate_ids: list[UUID] = Field(default_factory=list, max_length=500)
+    sheet_name: str | None = Field(default=None, max_length=255)
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> "Type3CandidateConfirmationRequest":
+        if not self.select_all_unconfirmed and not self.candidate_ids:
+            raise ValueError(
+                "candidate_ids is required unless selecting all unconfirmed candidates"
+            )
+        if self.select_all_unconfirmed and self.candidate_ids:
+            raise ValueError("candidate_ids cannot be combined with select_all_unconfirmed")
+        if len(set(self.candidate_ids)) != len(self.candidate_ids):
+            raise ValueError("candidate_ids must be unique")
+        if len(set(self.excluded_candidate_ids)) != len(self.excluded_candidate_ids):
+            raise ValueError("excluded_candidate_ids must be unique")
+        return self
