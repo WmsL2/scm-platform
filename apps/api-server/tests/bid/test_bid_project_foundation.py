@@ -1,11 +1,13 @@
 import inspect
 import uuid
 from datetime import datetime, timedelta
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from sqlalchemy import select
 
 from app.common.contracts import AppError, PageParams
@@ -142,6 +144,85 @@ async def test_quote_export_loads_database_timestamp_before_building_response(
         assert exported.created_at is not None
         assert exported.original_filename.endswith(".xlsx")
         await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_type2_export_only_fills_blank_result_cells(tmp_path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "报价明细"
+    sheet.append(["型号", "商品报价", "是否满足88折", "备注"])
+    sheet.append(["LT1821", None, None, None])
+    sheet.append(["TN9999", "客户原值", None, "客户已有备注"])
+    source = BytesIO()
+    workbook.save(source)
+    workbook.close()
+
+    template = BidTemplate(
+        template_code="type2-export-test",
+        template_name="类型2导出测试",
+        version=1,
+        sheet_name="报价明细",
+        header_row=1,
+        data_start_row=2,
+        import_mapping={"model": "型号"},
+        export_mapping={
+            "selected_unit_price": "商品报价",
+            "discount_compliance": "是否满足88折",
+            "note": "备注",
+        },
+        fingerprint="test",
+    )
+    selections = [
+        (
+            SimpleNamespace(
+                source_row_number=2,
+                unit="支",
+                buyer_item_code=None,
+                brand=None,
+                model="LT1821",
+            ),
+            SimpleNamespace(
+                selected_unit_price=Decimal("88.0000"),
+                product_snapshot={"type2_match_type": "TYPE2_AI_EXACT"},
+                supplier_snapshot={},
+                price_snapshot={"discount_compliance": "是"},
+                note="类型2 AI 判定完全同品",
+            ),
+        ),
+        (
+            SimpleNamespace(
+                source_row_number=3,
+                unit="支",
+                buyer_item_code=None,
+                brand=None,
+                model="TN9999",
+            ),
+            SimpleNamespace(
+                selected_unit_price=Decimal("66.0000"),
+                product_snapshot={"type2_match_type": "TYPE2_AI_SUBSTITUTE"},
+                supplier_snapshot={},
+                price_snapshot={"discount_compliance": "是"},
+                note="同类型商品替代：型号不同",
+            ),
+        ),
+    ]
+
+    async with SessionLocal() as session:
+        service = BidProjectService(session, LocalFileStorage(tmp_path))
+        result = service._build_export(source.getvalue(), template, selections)
+
+    exported = load_workbook(BytesIO(result), data_only=False)
+    try:
+        result_sheet = exported["报价明细"]
+        assert result_sheet["B2"].value == 88
+        assert result_sheet["C2"].value == "是"
+        assert result_sheet["D2"].value == "类型2 AI 判定完全同品"
+        assert result_sheet["B3"].value == "客户原值"
+        assert result_sheet["C3"].value == "是"
+        assert result_sheet["D3"].value == "客户已有备注"
+    finally:
+        exported.close()
 
 
 @pytest.mark.asyncio

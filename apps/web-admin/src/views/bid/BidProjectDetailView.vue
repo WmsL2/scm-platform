@@ -49,7 +49,7 @@ const canStartMatching = computed(() => {
   const status = project.value?.status ?? ""
   return project.value?.import_status === "PARSED"
     && auth.hasPermission("bid:match")
-    && (status === "IMPORTED" || (isType2.value && status === "SELECTING"))
+    && (status === "IMPORTED" || (isType2.value && ["SELECTING", "READY"].includes(status)))
 })
 const canExport = computed(() => ["READY", "EXPORTED"].includes(project.value?.status ?? "") && auth.hasPermission("bid:export"))
 const canSubmit = computed(() => project.value?.status === "EXPORTED" && auth.hasPermission("bid:submit"))
@@ -137,13 +137,13 @@ async function startMatching() {
   try {
     await ElMessageBox.confirm(
       isType2.value
-        ? "将按 SKU 或品牌型号匹配商品，并自动选择当前成本价最低且不超过限价的商品。是否继续？"
+        ? "系统将先按客户 SKU 或品牌+型号匹配，再由 AI 复核颜色、适用机型、容量、包装和备注等附加条件。是否继续？"
         : "将对已解析需求行启动商品匹配，是否继续？",
       isType2.value ? "执行指定商品比价" : "开始商品匹配",
     )
     saving.value = true
     await bidApi.startMatching(id)
-    ElMessage.success(isType2.value ? "指定商品比价完成，已自动选择最低报价" : "商品匹配完成")
+    ElMessage.success(isType2.value ? "类型 2 AI 同品比价完成" : "商品匹配完成")
     await load()
     if (isType2.value) await router.push(`/bid-projects/${id}/workbench`)
   } catch (error) {
@@ -216,7 +216,7 @@ onMounted(() => void load())
       <el-button type="primary" @click="router.push(`/bid-projects/${id}/workbench`)">进入匹配工作台</el-button>
       <el-button v-if="canEdit" @click="openEdit">编辑项目信息</el-button>
       <el-button v-if="canVoid" type="danger" @click="voidReason = ''; voidVisible = true">作废项目</el-button>
-      <el-button v-if="canStartMatching" :loading="saving" @click="startMatching">{{ isType2 ? "执行最低价匹配" : "开始匹配" }}</el-button>
+      <el-button v-if="canStartMatching" :loading="saving" @click="startMatching">{{ isType2 ? "执行 AI 同品比价" : "开始匹配" }}</el-button>
       <el-button v-if="canExport" :loading="saving" @click="exportFile">导出报价文件</el-button>
       <el-button v-if="canSubmit" type="primary" @click="submitFile = ''; submitNote = ''; submitVisible = true">提交投标</el-button>
       <el-button v-if="canRecordResult" type="success" @click="recordResult(true)">标记中标</el-button>

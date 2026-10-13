@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import ApiResponse, AppError, PageParams, PageResult, success
 from app.core.database import FunctionSessionDep, get_db_session
+from app.integrations.deepseek.client import DeepSeekClient
 from app.modules.auth.dependencies import require_permission, require_permission_before_response
 from app.modules.auth.schemas import CurrentUser
 from app.modules.bid.application.service import BidProjectService
@@ -30,6 +31,8 @@ from app.modules.bid.schemas import (
     BidSubmitRequest,
     BidVoidRequest,
 )
+from app.modules.matching.application.type1_agent import Type1Agent
+from app.modules.matching.application.type2_agent import Type2Agent
 from app.modules.recommendation.template.schemas import (
     RecommendationTemplateFileResponse,
     RecommendationTemplateMappingResponse,
@@ -61,7 +64,11 @@ async def create_bid_project(
     ):
         raise AppError("AUTH_FORBIDDEN", "Permission denied", 403)
     return success(
-        await BidProjectService(session).create(
+        await BidProjectService(
+            session,
+            type1_agent=Type1Agent(DeepSeekClient()),
+            type2_agent=Type2Agent(DeepSeekClient()),
+        ).create(
             project_name=project_name,
             buyer_name=buyer_name,
             start_at=start_at,
