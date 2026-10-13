@@ -250,6 +250,9 @@ async def test_matching_persists_candidates_selection_snapshot_and_no_quote() ->
         normalized_snapshot = selection.requirement_snapshot["normalized"]
         assert normalized_snapshot["buyer_item_code"] == normalize_match_text(product.sku)
         assert selection.product_snapshot["id"] == str(product.id)
+        assert "company_name" in selection.product_snapshot
+        assert "tax_code" in selection.product_snapshot
+        assert "after_sales_policy" in selection.product_snapshot
         assert selection.supplier_snapshot["id"] == str(supplier.id)
         assert selection.price_snapshot["selected_unit_price"] == "99.0000"
         assert candidate_count is not None

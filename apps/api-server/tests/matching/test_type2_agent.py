@@ -71,6 +71,20 @@ def test_type2_mapping_accepts_brand_and_model_embedded_in_parameter_text() -> N
     assert mapping.input_mapping.specification == "规格型号/参数"
 
 
+def test_type2_template_mapping_allows_human_fallback_for_output_column() -> None:
+    mapping = Type2TemplateMappingSuggestion.model_validate(
+        {
+            "sheet_name": "报价明细",
+            "header_row": 1,
+            "data_start_row": 2,
+            "input_mapping": {"brand": "品牌", "model": "型号"},
+            "output_mapping": {"selected_unit_price": None},
+        }
+    )
+
+    assert mapping.output_mapping.selected_unit_price is None
+
+
 @pytest.mark.asyncio
 async def test_type2_template_agent_maps_real_columns_from_an_unknown_workbook() -> None:
     provider = StubType2Provider(

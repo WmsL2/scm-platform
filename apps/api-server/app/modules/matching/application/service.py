@@ -6,6 +6,7 @@ import re
 import unicodedata
 import uuid
 from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +34,7 @@ from app.modules.bid.infrastructure.models import (
     MatchCandidate,
     MatchTask,
 )
+from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMNS
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.matching.application.type1_agent import (
     TYPE1_PROMPT_VERSION,
@@ -119,6 +121,16 @@ class MatchingService:
         project = await self.session.get(BidProject, project_id)
         if (
             project is not None
+            and project.output_mapping is not None
+            and project.output_mapping_confirmed_at is None
+        ):
+            raise AppError(
+                "BID_OUTPUT_MAPPING_NOT_CONFIRMED",
+                "请先确认客户原表的回填字段映射",
+                409,
+            )
+        if (
+            project is not None
             and project.recommendation_type
             == BidRecommendationType.TYPE_1_SPECIFICATION.value
             and self.type1_agent is not None
@@ -146,6 +158,15 @@ class MatchingService:
             project = await self._project_or_404(project_id)
             if project.import_status != BidImportStatus.PARSED.value:
                 raise AppError("BID_PROJECT_NOT_PARSED", "项目尚未完成需求行解析", 409)
+            if (
+                project.output_mapping is not None
+                and project.output_mapping_confirmed_at is None
+            ):
+                raise AppError(
+                    "BID_OUTPUT_MAPPING_NOT_CONFIRMED",
+                    "请先确认客户原表的回填字段映射",
+                    409,
+                )
             is_type2 = (
                 project.recommendation_type
                 == BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value
@@ -279,7 +300,7 @@ class MatchingService:
                         supplier_id=supplier.id,
                         selected_unit_price=product.cost_price,
                         requirement_snapshot=self._requirement_snapshot(item),
-                        product_snapshot=self._product_snapshot(product),
+                        product_snapshot=self._product_snapshot(product, supplier),
                         supplier_snapshot=self._supplier_snapshot(supplier),
                         price_snapshot=self._price_snapshot(product, product.cost_price),
                         note=(
@@ -552,7 +573,7 @@ class MatchingService:
                         supplier_id=supplier.id,
                         selected_unit_price=product.cost_price,
                         requirement_snapshot=self._requirement_snapshot(item),
-                        product_snapshot=self._product_snapshot(product),
+                        product_snapshot=self._product_snapshot(product, supplier),
                         supplier_snapshot=self._supplier_snapshot(supplier),
                         price_snapshot=self._price_snapshot(product, product.cost_price),
                         note=f"类型1 AI 规格匹配商品（适配顺序 {output_rank}）",
@@ -862,7 +883,7 @@ class MatchingService:
             for item, candidate_model, product, supplier, note, match_method in selection_plans:
                 assert product.cost_price is not None
                 selection_id = uuid.uuid4()
-                product_snapshot = self._product_snapshot(product)
+                product_snapshot = self._product_snapshot(product, supplier)
                 product_snapshot["type2_match_type"] = match_method
                 self.session.add(
                     BidItemSelection(
@@ -1523,7 +1544,7 @@ class MatchingService:
                 supplier_id=supplier.id,
                 selected_unit_price=payload.selected_unit_price,
                 requirement_snapshot=self._requirement_snapshot(item),
-                product_snapshot=self._product_snapshot(product),
+                product_snapshot=self._product_snapshot(product, supplier),
                 supplier_snapshot=self._supplier_snapshot(supplier),
                 price_snapshot=self._price_snapshot(product, payload.selected_unit_price),
                 note=payload.note.strip() if payload.note else None,
@@ -1723,13 +1744,9 @@ class MatchingService:
         }
 
     @staticmethod
-    def _product_snapshot(product: Product) -> dict[str, object]:
-        return {
+    def _product_snapshot(product: Product, supplier: Supplier) -> dict[str, object]:
+        snapshot: dict[str, object] = {
             "id": str(product.id),
-            "sku": product.sku,
-            "brand": product.brand,
-            "model": product.model,
-            "product_name": product.product_name,
             "category_id": None,
             "category_path": " / ".join(
                 value
@@ -1740,13 +1757,21 @@ class MatchingService:
                 )
                 if value
             ),
-            "product_specification": product.product_specification,
-            "packaging_list": product.packaging_list,
-            "discount_rate": (
-                str(product.discount_rate) if product.discount_rate is not None else None
-            ),
             "status": product.status,
         }
+        for column in PRODUCT_EXPORT_COLUMNS:
+            snapshot[column.key] = MatchingService._snapshot_value(
+                column.value(product, supplier)
+            )
+        return snapshot
+
+    @staticmethod
+    def _snapshot_value(value: object | None) -> object:
+        if isinstance(value, Decimal):
+            return str(value)
+        if isinstance(value, (date, datetime)):
+            return value.isoformat()
+        return value
 
     @staticmethod
     def _supplier_snapshot(supplier: Supplier) -> dict[str, object]:

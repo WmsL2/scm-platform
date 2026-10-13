@@ -106,6 +106,13 @@ class BidProject(Base):
     recommendation_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
     import_status: Mapped[str] = mapped_column(String(32), nullable=False)
     import_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_mapping: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
+    output_mapping_confirmed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDChar36(), nullable=True
+    )
+    output_mapping_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
     total_item_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     processed_item_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     submitted_file_id: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)

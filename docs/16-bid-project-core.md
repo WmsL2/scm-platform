@@ -14,6 +14,8 @@
 
 模板保存工作表、表头行、数据起始行、字段映射、报价列映射和指纹。没有识别到模板时，系统保存源文件并将导入状态标记为待映射，不猜测字段。
 
+类型 1/2 新项目每次都由对应类型 Agent 从本次上传工作簿识别结果列并保存为项目级 `output_mapping`，同时记录人工确认人和确认时间。已知模板只可辅助输入解析，不得保存具体客户回填表头；AI 失败时输出映射为空，由用户按当前原表人工确认。项目级回填映射只控制 ORIGINAL 副本的结果写入位置，不参与需求解析或商品匹配，也不回写可复用模板。历史项目没有项目级快照时，其冻结映射也必须重新解析为当前 ORIGINAL 中真实存在的表头，不存在的旧列名直接丢弃。
+
 ## 状态规则
 
 `IMPORTED → MATCHING → SELECTING → READY → EXPORTED → SUBMITTED → WON / LOST`
@@ -34,6 +36,8 @@
 - `GET /api/v1/bid-projects`：项目分页列表。
 - `GET /api/v1/bid-projects/{id}`：项目详情和事件历史。
 - `GET /api/v1/bid-projects/{id}/items`：需求行服务端分页。
+- `GET /api/v1/bid-projects/{id}/output-mapping`：读取类型 1/2 当前客户原表的回填字段预识别结果。
+- `PUT /api/v1/bid-projects/{id}/output-mapping`：人工确认项目级回填字段；报价单价列必填。
 - `GET /api/v1/bid-projects/{id}/files`：文件版本列表。
 - `GET /api/v1/bid-projects/{id}/files/{file_id}/download`：下载文件。
 - `POST /api/v1/bid-projects/{id}/exports`：生成新的报价版本。
