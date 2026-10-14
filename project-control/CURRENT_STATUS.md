@@ -5,6 +5,10 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-14
 
+> 2026-10-14 类型 5 单品推品表新增固定右侧“查看详情”操作列；点击后与组合推品共用一个只读详情弹窗，展示本次 Run 冻结的图片、SKU、品牌、型号、三级类目、规格、卖点、成本价、毛利率、协议价、京东价、折扣率和好评率，不另查或修改商品主数据。无 API、权限或数据库变化，详见 Change 2026-10-14-013；浏览器交互验收待本机前端刷新后执行。
+
+> 2026-10-14 后台任务操作：在 `codex/task-cancel-delete` 实现排队取消和执行中协作式终止。后台任务历史不提供单条删除；项目列表的永久删除要求输入精确项目编号，并拒绝有 PENDING / RUNNING 任务的项目，随后物理删除项目、需求、队列、匹配、推荐、类型 3、PPT、导出、事件及关联文件。终止确认前保留互斥。Revision `20261014_0060` 新增终止请求字段、`20261014_0061` 删除未投用的任务软删除字段；ADR-0066 已同步。队列专项 39 passed、Ruff、Mypy、前端 197 项、类型检查和构建通过；全量后端为 544 passed / 7 failed，失败不在本功能范围，详见 Change 2026-10-14-012。实际页面需 API 与两个 Worker 统一重启后验收，暂未提交/推送。
+
 > 2026-10-14 CI 类型兼容修复：任务列表查询移除固定 `Select[tuple[AsyncTask]]` 标注，由 `select(AsyncTask)` 自动推断实体类型，兼容 SQLAlchemy 2.0/2.1 的查询泛型差异；不改变 SQL、分页、任务状态、API/UI/权限或数据库。验证结果见 Change 2026-10-14-011。
 
 > 2026-10-14 主分支集成：`feat/mysql-task-queue-stability` 合入 `origin/main@8c33d09` 的类型 1/2 输入映射确认、匹配归一化优化和 PPT 模板 1/2 v5 更新，保留持久化队列及用户 `.env.example` 配置。输入确认与排队匹配互斥，回填缓存按 Sheet/表头行隔离，PPT 显式版本参数继续通过 202 队列冻结；队列 ADR 调整为 0065，主分支 ADR-0064 不变。合并前的类型 1～4 用户流程验证不替代新增输入确认步骤的合并后页面验收；本次结果见 Change 2026-10-14-010。

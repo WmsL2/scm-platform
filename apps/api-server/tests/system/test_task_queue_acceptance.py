@@ -11,6 +11,7 @@ import hashlib
 import os
 import socket
 import sys
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -23,6 +24,7 @@ from httpx import ASGITransport, AsyncClient, HTTPError
 from openpyxl import Workbook
 from sqlalchemy import delete, func, select
 
+from app.common.async_work import run_blocking
 from app.common.contracts import AppError
 from app.core.database import SessionLocal
 from app.infrastructure.adapters import get_object_storage
@@ -30,6 +32,7 @@ from app.jobs import recommendation_agent, task_worker
 from app.main import app
 from app.modules.auth.dependencies import get_current_user, get_current_user_before_response
 from app.modules.auth.schemas import CurrentUser
+from app.modules.bid.application.service import BidProjectService
 from app.modules.bid.infrastructure.models import (
     BidItemSelection,
     BidProject,
@@ -211,6 +214,7 @@ async def fixture(kind: AsyncTaskKind):
             "bid:match",
             "bid:detail",
             "bid:update",
+            "bid:void",
             "recommendation:create",
             "recommendation:detail",
             "recommendation:run",
@@ -374,6 +378,363 @@ async def test_http_concurrent_dispatch_cancel_and_state_recovery(kind):
                 assert project.status == "IMPORTED"
                 task = await session.get(AsyncTask, uuid.UUID(data["id"]))
                 assert task.status == "CANCELLED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", list(AsyncTaskKind))
+async def test_running_stop_is_acknowledged_before_new_work(monkeypatch, kind):
+    async with fixture(kind) as (pid, actor, fid, _token, current):
+        rid = uuid.uuid4()
+        payload = {}
+        domain = None
+        async with SessionLocal.begin() as session:
+            if kind == AsyncTaskKind.TYPE3_CANDIDATE_GENERATION:
+                domain = Type3Run(
+                    id=rid,
+                    project_id=pid,
+                    status="ANALYZING",
+                    raw_remark_snapshot="test",
+                    sheet_snapshot=[],
+                    created_by=actor,
+                )
+            elif kind in {AsyncTaskKind.TYPE1_MATCH, AsyncTaskKind.TYPE2_MATCH}:
+                domain = MatchTask(id=rid, project_id=pid, status="RUNNING", created_by=actor)
+            elif kind != AsyncTaskKind.MAPPING_STRUCTURE_ANALYSIS:
+                run = RecommendationRun(
+                    id=rid,
+                    project_id=pid,
+                    status="RANKING",
+                    raw_requirement_snapshot="test",
+                    created_by=actor,
+                )
+                session.add(run)
+                await session.flush()
+                domain = run
+                if kind == AsyncTaskKind.TYPE5_PPT_GENERATION:
+                    domain = PptGenerationTask(
+                        project_id=pid,
+                        run_id=rid,
+                        status="RUNNING",
+                        template_code="SYSTEM_DEFAULT",
+                        template_version="1",
+                        provider="mock",
+                        model="mock",
+                        prompt_version="mock",
+                        created_by=actor,
+                    )
+                    session.add(domain)
+                    await session.flush()
+                    payload["ppt_generation_task_id"] = str(domain.id)
+            if domain is not None:
+                session.add(domain)
+            task = await AsyncTaskService(session).enqueue(
+                AsyncTaskCreate(
+                    project_id=pid,
+                    run_id=rid,
+                    task_kind=kind,
+                    created_by=actor,
+                    payload_json=payload,
+                )
+            )
+            if kind == AsyncTaskKind.MAPPING_STRUCTURE_ANALYSIS:
+                session.add(
+                    MappingAnalysisCache(
+                        project_id=pid,
+                        file_id=fid,
+                        async_task_id=task.id,
+                        analysis_key="stop-test",
+                        status="RUNNING",
+                    )
+                )
+            project = await session.get(BidProject, pid)
+            project.status = "READY" if kind == AsyncTaskKind.TYPE5_PPT_GENERATION else "MATCHING"
+        entered, stopped = asyncio.Event(), asyncio.Event()
+
+        async def blocked(_task):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+
+        monkeypatch.setattr(task_worker, "execute", blocked)
+        worker = asyncio.create_task(task_worker.run_once({kind}, task.id))
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                path = f"/api/v1/bid-projects/async-tasks/{task.id}"
+                first = await client.post(f"{path}/commands/cancel")
+                assert first.status_code == 200, first.text
+                assert first.json()["data"]["status"] == "RUNNING"
+                assert first.json()["data"]["cancel_requested_at"]
+                duplicate = await client.post(f"{path}/commands/cancel")
+                assert duplicate.status_code == 200
+                if kind != AsyncTaskKind.MAPPING_STRUCTURE_ANALYSIS:
+                    async with SessionLocal() as session:
+                        with pytest.raises(AppError) as error:
+                            await AsyncTaskService(session).enqueue(
+                                AsyncTaskCreate(
+                                    project_id=pid,
+                                    task_kind=kind,
+                                    created_by=actor,
+                                )
+                            )
+                        assert error.value.code == "ASYNC_TASK_ALREADY_ACTIVE"
+                assert await asyncio.wait_for(worker, 5)
+                assert stopped.is_set()
+                final = await client.get(path)
+                assert final.json()["data"]["status"] == "CANCELLED"
+                async with SessionLocal() as session:
+                    await AsyncTaskService(session).succeed(task.id, attempt=1)
+                saved_permissions = current.permissions
+                current.permissions = ["bid:detail"]
+                assert (await client.post(f"{path}/commands/cancel")).status_code == 403
+                current.permissions = saved_permissions
+                assert (await client.get(path)).status_code == 200
+                assert (await client.post(f"{path}/commands/retry")).status_code == 409
+                listed = await client.get(f"/api/v1/bid-projects/{pid}/async-tasks")
+                assert listed.json()["data"]["total"] == 1
+            async with SessionLocal() as session:
+                row = await session.get(AsyncTask, task.id)
+                assert row.status == "CANCELLED"
+                assert await session.get(BidProject, pid) is not None
+                assert (await AsyncTaskService(session).latest_for_projects([pid]))[
+                    pid
+                ].id == task.id
+                assert (
+                    await session.scalar(
+                        select(func.count())
+                        .select_from(BidProjectEvent)
+                        .where(
+                            BidProjectEvent.project_id == pid,
+                            BidProjectEvent.event_type == "ASYNC_TASK_CANCEL_REQUESTED",
+                        )
+                    )
+                ) == 1
+                if domain is not None:
+                    row = await session.get(type(domain), domain.id)
+                    assert row.status in {"FAILED", "CANCELLED"}
+        finally:
+            if not worker.done():
+                worker.cancel()
+                await asyncio.gather(worker, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_stopped_mapping_remains_in_task_history():
+    async with fixture(AsyncTaskKind.TYPE3_CANDIDATE_GENERATION) as (pid, actor, fid, *_):
+        args = dict(
+            project_id=pid,
+            file_id=fid,
+            actor_id=actor,
+            analysis_key="TYPE3_TEMPLATE_PREVIEW",
+            payload_json={"analysis_type": "TYPE3_TEMPLATE_PREVIEW"},
+        )
+        async with SessionLocal() as session:
+            task = await MappingAnalysisService(session).cached_or_enqueue(**args)
+            await AsyncTaskService(session).cancel(task.id, actor)
+            await session.commit()
+        async with SessionLocal() as session:
+            cached = await MappingAnalysisService(session).cached_or_enqueue(**args)
+            assert cached.id == task.id
+            assert cached.status == "CANCELLED"
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(AsyncTask)
+                    .where(
+                        AsyncTask.project_id == pid,
+                    )
+                )
+            ) == 1
+
+
+@pytest.mark.asyncio
+async def test_project_purge_physically_removes_database_rows_and_rejects_active_work():
+    async with fixture(AsyncTaskKind.TYPE1_MATCH) as (pid, actor, _fid, _token, _current):
+        async with SessionLocal() as session:
+            task = await AsyncTaskService(session).enqueue(
+                AsyncTaskCreate(
+                    project_id=pid, task_kind=AsyncTaskKind.TYPE1_MATCH, created_by=actor
+                )
+            )
+            project = await session.get(BidProject, pid)
+            project_code = project.project_code
+            with pytest.raises(AppError) as active_error:
+                await BidProjectService(session).purge(pid, project_code, actor)
+            assert active_error.value.code == "BID_PROJECT_PURGE_ACTIVE_TASK"
+            await AsyncTaskService(session).cancel(task.id, actor)
+            await session.commit()
+        async with SessionLocal.begin() as session:
+            with pytest.raises(AppError) as confirm_error:
+                await BidProjectService(session).purge(pid, "BID00000000", actor)
+            assert confirm_error.value.code == "BID_PROJECT_PURGE_CONFIRM_MISMATCH"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.request(
+                "DELETE",
+                f"/api/v1/bid-projects/{pid}",
+                json={"confirm_project_code": project_code},
+            )
+        assert response.status_code == 200
+        assert response.json()["data"] == {"id": str(pid), "status": "PURGED"}
+        async with SessionLocal() as session:
+            assert await session.get(BidProject, pid) is None
+            assert await session.get(AsyncTask, task.id) is None
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(BidProjectFile)
+                    .where(BidProjectFile.project_id == pid)
+                )
+                == 0
+            )
+
+
+@pytest.mark.asyncio
+async def test_expired_stop_request_converges_and_ignores_wrong_attempt():
+    async with fixture(AsyncTaskKind.TYPE1_MATCH) as (pid, actor, *_):
+        async with SessionLocal() as session:
+            task = await AsyncTaskService(session).enqueue(
+                AsyncTaskCreate(
+                    project_id=pid,
+                    task_kind=AsyncTaskKind.TYPE1_MATCH,
+                    created_by=actor,
+                )
+            )
+        async with SessionLocal() as session:
+            await AsyncTaskService(session).claim_next({AsyncTaskKind.TYPE1_MATCH}, task.id)
+        async with SessionLocal() as session:
+            await AsyncTaskService(session).cancel(task.id, actor)
+            await session.commit()
+        async with SessionLocal() as session:
+            await AsyncTaskService(session).acknowledge_cancel(task.id, attempt=2)
+        async with SessionLocal.begin() as session:
+            row = await session.get(AsyncTask, task.id)
+            assert row.status == "RUNNING"
+            row.lease_expires_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=1)
+        async with SessionLocal() as session:
+            await AsyncTaskService(session).recover_stale()
+        async with SessionLocal() as session:
+            assert (await session.get(AsyncTask, task.id)).status == "CANCELLED"
+
+
+@pytest.mark.asyncio
+async def test_blocking_work_drains_before_acknowledging_cancellation():
+    entered, released = asyncio.Event(), threading.Event()
+    finished = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def block():
+        loop.call_soon_threadsafe(entered.set)
+        released.wait(timeout=5)
+        finished.set()
+        return "late output"
+
+    work = asyncio.create_task(run_blocking(block))
+    await asyncio.wait_for(entered.wait(), 2)
+    work.cancel()
+    await asyncio.sleep(0.02)
+    assert not work.done()
+    released.set()
+    with pytest.raises(asyncio.CancelledError):
+        await work
+    assert finished.is_set()
+
+
+@pytest.mark.asyncio
+async def test_real_mapping_stop_waits_for_parser_and_discards_its_output(monkeypatch):
+    async with fixture(AsyncTaskKind.TYPE3_CANDIDATE_GENERATION) as (pid, actor, fid, *_):
+        entered, released = asyncio.Event(), threading.Event()
+        loop = asyncio.get_running_loop()
+        inspect = Type3RecommendationService._inspect
+
+        def block(content):
+            loop.call_soon_threadsafe(entered.set)
+            released.wait(timeout=5)
+            return inspect(content)
+
+        monkeypatch.setattr(Type3RecommendationService, "_inspect", staticmethod(block))
+        async with SessionLocal() as session:
+            task = await MappingAnalysisService(session).cached_or_enqueue(
+                project_id=pid,
+                file_id=fid,
+                actor_id=actor,
+                analysis_key="TYPE3_TEMPLATE_PREVIEW",
+                payload_json={"analysis_type": "TYPE3_TEMPLATE_PREVIEW"},
+            )
+        worker = asyncio.create_task(
+            task_worker.run_once({AsyncTaskKind.MAPPING_STRUCTURE_ANALYSIS}, task.id)
+        )
+        try:
+            await asyncio.wait_for(entered.wait(), 3)
+            async with SessionLocal() as session:
+                await AsyncTaskService(session).cancel(task.id, actor)
+                await session.commit()
+            await asyncio.sleep(1.2)
+            assert not worker.done()
+            async with SessionLocal() as session:
+                assert (await session.get(AsyncTask, task.id)).status == "RUNNING"
+            released.set()
+            assert await asyncio.wait_for(worker, 5)
+            async with SessionLocal() as session:
+                assert (await session.get(AsyncTask, task.id)).status == "CANCELLED"
+                cache = await session.scalar(
+                    select(MappingAnalysisCache).where(
+                        MappingAnalysisCache.async_task_id == task.id
+                    )
+                )
+                assert cache.status == "FAILED" and cache.result_json is None
+        finally:
+            released.set()
+            if not worker.done():
+                worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_real_type4_stop_cancels_provider_and_restores_project(monkeypatch):
+    async with fixture(AsyncTaskKind.TYPE4_RECOMMENDATION_AGENT) as (pid, _actor, *_):
+        entered, stopped = asyncio.Event(), asyncio.Event()
+
+        class BlockedProvider:
+            provider = "mock"
+            model = "mock"
+            prompt_version = "mock"
+
+            async def structured_completion(self, **kwargs):
+                entered.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    stopped.set()
+
+        monkeypatch.setattr(recommendation_agent, "DeepSeekClient", BlockedProvider)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = await client.post(f"/api/v1/recommendation-projects/{pid}/runs")
+            assert created.status_code == 202, created.text
+            task_id = uuid.UUID(created.json()["data"]["id"])
+            worker = asyncio.create_task(
+                task_worker.run_once({AsyncTaskKind.TYPE4_RECOMMENDATION_AGENT}, task_id)
+            )
+            try:
+                await asyncio.wait_for(entered.wait(), 3)
+                requested = await client.post(
+                    f"/api/v1/bid-projects/async-tasks/{task_id}/commands/cancel"
+                )
+                assert requested.status_code == 200
+                assert await asyncio.wait_for(worker, 5)
+                assert stopped.is_set()
+                async with SessionLocal() as session:
+                    task = await session.get(AsyncTask, task_id)
+                    assert task.status == "CANCELLED"
+                    assert (await session.get(RecommendationRun, task.run_id)).status == "CANCELLED"
+                    assert (await session.get(BidProject, pid)).status == "IMPORTED"
+            finally:
+                if not worker.done():
+                    worker.cancel()
+                await asyncio.gather(worker, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -837,6 +1198,7 @@ async def test_workers_execute_in_separate_processes():
                     payload_json={"analysis_type": "TYPE3_TEMPLATE_PREVIEW"},
                 )
             processes = []
+            process_logs: list[tuple[bytes, bytes]] = []
             try:
                 for queue, task_id in [("heavy", heavy.id), ("mapping", mapping.id)]:
                     processes.append(
@@ -854,10 +1216,16 @@ async def test_workers_execute_in_separate_processes():
                         )
                     )
                 for process in processes:
-                    _out, err = await asyncio.wait_for(process.communicate(), 45)
+                    out, err = await asyncio.wait_for(process.communicate(), 45)
+                    process_logs.append((out, err))
                     assert process.returncode == 0, err.decode(errors="replace")
                 async with SessionLocal() as session:
-                    assert (await session.get(AsyncTask, heavy.id)).status == "SUCCEEDED"
+                    assert (await session.get(AsyncTask, heavy.id)).status == "SUCCEEDED", (
+                        "\n".join(
+                            f"stdout:\n{out.decode(errors='replace')}\nstderr:\n{err.decode(errors='replace')}"
+                            for out, err in process_logs
+                        )
+                    )
                     assert (await session.get(AsyncTask, mapping.id)).status == "SUCCEEDED"
                     cache = await MappingAnalysisService(session).require_cached(
                         mpid, mfid, "TYPE3_TEMPLATE_PREVIEW"

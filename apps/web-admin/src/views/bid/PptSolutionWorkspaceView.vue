@@ -10,7 +10,7 @@ import { recommendationApi } from "../../api/recommendation"
 import { HttpError } from "../../shared/http"
 import { useAuthStore } from "../../stores/auth"
 import type { BidProjectDetail } from "../../types/bid"
-import type { PptGenerationTask, PptRecommendationMode, PptSolutionPlan, PptSolutionPlanItem, PptTemplate } from "../../types/pptSolution"
+import type { PptGenerationTask, PptRecommendationMode, PptSolutionPlan, PptTemplate } from "../../types/pptSolution"
 import { type RecommendationCandidate, type RecommendationRun } from "../../types/recommendation"
 import {
   RECOMMENDATION_CANDIDATE_OPTIONAL_COLUMNS,
@@ -19,6 +19,8 @@ import {
   type RecommendationCandidateOptionalColumn,
   type RecommendationCandidateOptionalColumnKey,
 } from "./recommendationCandidateColumns"
+
+type ProductDetailItem = Pick<RecommendationCandidate, "product_snapshot" | "price_snapshot">
 
 const route = useRoute()
 const router = useRouter()
@@ -46,7 +48,7 @@ let runPollTimer: ReturnType<typeof window.setInterval> | undefined
 const candidateColumnStorageKey = "scm.ppt-direct-candidates.visible-columns.v1"
 const selectedCandidateOptionalColumns = ref<RecommendationCandidateOptionalColumnKey[]>(restoreRecommendationCandidateOptionalColumns(localStorage.getItem(candidateColumnStorageKey)))
 const productDetailVisible = ref(false)
-const selectedPlanItem = ref<PptSolutionPlanItem | null>(null)
+const selectedProductDetail = ref<ProductDetailItem | null>(null)
 const priceBandErrors = ref<string[]>([])
 const recommendationConfig = reactive({ recommendation_mode: "SINGLE" as PptRecommendationMode, price_bands: [{ min_price: null as string | null, max_price: "50", item_count: 10 }], fulfillment_deadline: null as string | null })
 
@@ -79,8 +81,8 @@ function formatMoney(value: unknown): string { const numeric = Number(value); re
 function formatPercent(value: unknown): string { const numeric = Number(value); return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(2)}%` : "-" }
 function productValue(candidate: RecommendationCandidate, key: string): string { const value = candidate.product_snapshot[key] ?? candidate.price_snapshot[key]; return value === null || value === undefined || value === "" ? "-" : String(value) }
 function candidateImageUrl(candidate: RecommendationCandidate): string | undefined { const reference = candidate.product_snapshot.image_reference; if (typeof reference !== "string" || !reference) return undefined; if (/^https?:\/\//i.test(reference)) return reference; return `${(import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")}/${reference.replace(/^\//, "")}` }
-function planItemImageUrl(item: PptSolutionPlanItem): string | undefined { const reference = item.product_snapshot.image_reference; if (typeof reference !== "string" || !reference) return undefined; if (/^https?:\/\//i.test(reference)) return reference; return `${(import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")}/${reference.replace(/^\//, "")}` }
-function planItemValue(item: PptSolutionPlanItem, key: string): string { const value = item.product_snapshot[key] ?? item.price_snapshot[key]; return value === null || value === undefined || value === "" ? "-" : String(value) }
+function productDetailImageUrl(item: ProductDetailItem): string | undefined { const reference = item.product_snapshot.image_reference; if (typeof reference !== "string" || !reference) return undefined; if (/^https?:\/\//i.test(reference)) return reference; return `${(import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")}/${reference.replace(/^\//, "")}` }
+function productDetailValue(item: ProductDetailItem, key: string): string { const value = item.product_snapshot[key] ?? item.price_snapshot[key]; return value === null || value === undefined || value === "" ? "-" : String(value) }
 function candidateColumnValue(candidate: RecommendationCandidate, column: RecommendationCandidateOptionalColumn): string { const value = column.key === "supplier_name" ? candidate.supplier_snapshot.supplier_name : candidate.product_snapshot[column.key] ?? candidate.price_snapshot[column.key]; if (value === null || value === undefined || value === "") return "-"; if (column.format === "money") return formatMoney(value); if (column.format === "percent") { const ratio = Number(value); return Number.isFinite(ratio) ? `${(ratio * 100).toFixed(2)}%` : String(value) }; return String(value) }
 function bandLabel(index: number): string { const band = recommendationConfig.price_bands[index]; return isCombinationMode.value ? `${band.min_price ?? 0}–${band.max_price} 元 · AI 生成 ${band.item_count} 组组合` : `${band.min_price ?? 0}–${band.max_price} 元 · AI 匹配 ${band.item_count} 件` }
 function frozenBandCount(index: number): number | null { return frozenPoolStatistics.value?.price_bands.find((item) => item.price_band_index === index + 1)?.frozen_candidate_count ?? null }
@@ -144,7 +146,7 @@ function selectAllUnconfirmedPlans(): void { selectedPlanIds.value = new Set(pla
 function changePlanPage(page: number): void { planPage.value = page }
 function changePlanPageSize(size: number): void { planPageSize.value = size; planPage.value = 1 }
 async function confirmSelectedCombinations(): Promise<void> { const targets = plans.value.filter((plan) => !plan.is_selected && selectedPlanIds.value.has(plan.id)); if (!targets.length) return; acting.value = true; try { for (const plan of targets) await pptSolutionApi.selectPlan(plan.id); resetPlanSelection(); await refreshRun(); ElMessage.success(`已确认 ${targets.length} 组组合`) } catch (error) { ElMessage.error(messageFor(error, "批量确认组合失败")) } finally { acting.value = false } }
-function openPlanItemDetail(item: PptSolutionPlanItem): void { selectedPlanItem.value = item; productDetailVisible.value = true }
+function openProductDetail(item: ProductDetailItem): void { selectedProductDetail.value = item; productDetailVisible.value = true }
 async function completeSelection(): Promise<void> { if (!run.value) return; try { await ElMessageBox.confirm(`确认完成选品？当前已确认 ${run.value.candidate_page?.confirmed_total ?? 0} 件商品。`, "完成选品", { type: "warning" }) } catch { return }; acting.value = true; try { await recommendationApi.completeSelection(projectId, run.value.id); await load(); ElMessage.success("选品已完成，可以生成 PPT") } catch (error) { ElMessage.error(messageFor(error, "完成选品失败")) } finally { acting.value = false } }
 async function reopenSelection(): Promise<void> { if (!run.value) return; acting.value = true; try { await recommendationApi.reopenSelection(projectId, run.value.id); await load() } catch (error) { ElMessage.error(messageFor(error, "返回调整选品失败")) } finally { acting.value = false } }
 function templateKey(item: Pick<PptTemplate, "template_code" | "version">): string { return `${item.template_code}:${item.version}` }
@@ -168,7 +170,7 @@ onBeforeUnmount(stopRunPolling)
       <template #header><div class="card-header"><div><strong>AI 组合推品与人工确认</strong><span class="muted">每组固定 2～4 件，组合总协议价已由后端校验；请选择完整组合后确认。</span></div><div class="selection-actions"><el-button :disabled="!selectionEditable || selectablePlansOnPage.length === 0" @click="setCurrentPlanPageSelected(!planPageAllSelected)">{{ planPageAllSelected ? '取消全选本页' : '全选本页' }}</el-button><el-button :disabled="!selectionEditable || unconfirmedPlanTotal === 0" @click="selectAllUnconfirmedPlans">全选所有待确认组合（{{ unconfirmedPlanTotal }}）</el-button><el-button :disabled="!selectionEditable || selectedPlanCount === 0" @click="resetPlanSelection">清空选择</el-button><el-button type="primary" :disabled="!selectionEditable || selectedPlanCount === 0" :loading="acting" @click="confirmSelectedCombinations">批量确认选中（{{ selectedPlanCount }}）</el-button></div></div></template>
       <div class="band-tags"><el-tag v-for="(_, index) in recommendationConfig.price_bands" :key="index" type="success">{{ bandLabel(index) }}<template v-if="frozenBandCount(index) !== null"> · 冻结来源 {{ frozenBandCount(index) }} 件</template></el-tag><span class="muted">本次冻结候选池 {{ frozenPoolStatistics?.frozen_candidate_count ?? '-' }} 件；AI 已生成 {{ plans.length }} / 目标 {{ requestedCombinationCount }} 组，已确认 {{ run.candidate_page?.confirmed_total ?? 0 }} 件商品</span></div>
       <el-alert v-if="combinationShortfall > 0" type="warning" :closable="false" :title="`当前无重复且总价合规的组合只有 ${plans.length} 组，少于目标 ${requestedCombinationCount} 组；已保留这 ${plans.length} 组供人工确认。`" />
-      <div class="combination-grid"><article v-for="plan in paginatedPlans" :key="plan.id" class="combination-card"><div class="combination-title"><div class="combination-title-main"><el-checkbox :model-value="isPlanSelected(plan)" :disabled="!selectionEditable || plan.is_selected" @change="(value: string | number | boolean) => setPlanSelected(plan, Boolean(value))" /><div><b>{{ plan.name }}</b><span>{{ plan.summary }}</span></div></div><el-tag :type="plan.is_selected ? 'success' : 'info'">{{ plan.is_selected ? '已确认' : '待确认' }}</el-tag></div><el-table :data="plan.items" size="small"><el-table-column type="index" width="52" /><el-table-column label="商品名称" min-width="220" show-overflow-tooltip><template #default="{ row }">{{ row.product_snapshot.product_name ?? '-' }}</template></el-table-column><el-table-column label="三级类目" min-width="140"><template #default="{ row }">{{ row.product_snapshot.category_level3_name ?? '-' }}</template></el-table-column><el-table-column label="协议价" width="120"><template #default="{ row }">{{ formatMoney(row.price_snapshot.agreement_price) }}</template></el-table-column><el-table-column label="操作" width="100" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openPlanItemDetail(row)">查看详情</el-button></template></el-table-column></el-table><div class="combination-actions"><el-button type="primary" :disabled="!selectionEditable || plan.is_selected" :loading="acting" @click="confirmCombination(plan)">{{ plan.is_selected ? '已确认该组合' : '确认该组合' }}</el-button></div></article><el-empty v-if="plans.length === 0" description="暂无可确认的组合" /></div>
+       <div class="combination-grid"><article v-for="plan in paginatedPlans" :key="plan.id" class="combination-card"><div class="combination-title"><div class="combination-title-main"><el-checkbox :model-value="isPlanSelected(plan)" :disabled="!selectionEditable || plan.is_selected" @change="(value: string | number | boolean) => setPlanSelected(plan, Boolean(value))" /><div><b>{{ plan.name }}</b><span>{{ plan.summary }}</span></div></div><el-tag :type="plan.is_selected ? 'success' : 'info'">{{ plan.is_selected ? '已确认' : '待确认' }}</el-tag></div><el-table :data="plan.items" size="small"><el-table-column type="index" width="52" /><el-table-column label="商品名称" min-width="220" show-overflow-tooltip><template #default="{ row }">{{ row.product_snapshot.product_name ?? '-' }}</template></el-table-column><el-table-column label="三级类目" min-width="140"><template #default="{ row }">{{ row.product_snapshot.category_level3_name ?? '-' }}</template></el-table-column><el-table-column label="协议价" width="120"><template #default="{ row }">{{ formatMoney(row.price_snapshot.agreement_price) }}</template></el-table-column><el-table-column label="操作" width="100" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openProductDetail(row)">查看详情</el-button></template></el-table-column></el-table><div class="combination-actions"><el-button type="primary" :disabled="!selectionEditable || plan.is_selected" :loading="acting" @click="confirmCombination(plan)">{{ plan.is_selected ? '已确认该组合' : '确认该组合' }}</el-button></div></article><el-empty v-if="plans.length === 0" description="暂无可确认的组合" /></div>
       <el-pagination v-model:current-page="planPage" v-model:page-size="planPageSize" :page-sizes="[10, 20, 50]" :total="plans.length" layout="total, sizes, prev, pager, next, jumper" @current-change="changePlanPage" @size-change="changePlanPageSize" />
     </el-card>
     <el-card v-if="run && !run.error && !isRunProcessing && !isCombinationMode">
@@ -198,28 +200,29 @@ onBeforeUnmount(stopRunPolling)
         <el-table-column label="商品名称" min-width="220" show-overflow-tooltip fixed="left"><template #default="{ row }">{{ productValue(row, 'product_name') }}</template></el-table-column>
         <el-table-column v-for="column in visibleCandidateColumns" :key="column.key" :label="column.label" :min-width="column.minWidth" show-overflow-tooltip><template #default="{ row }">{{ candidateColumnValue(row, column) }}</template></el-table-column>
         <el-table-column label="确认状态" width="100" fixed="right"><template #default="{ row }"><el-tag :type="row.confirmation ? 'success' : 'info'">{{ row.confirmation ? '已确认' : '待确认' }}</el-tag></template></el-table-column>
+        <el-table-column label="操作" width="100" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openProductDetail(row)">查看详情</el-button></template></el-table-column>
       </el-table>
       <el-pagination v-model:current-page="candidatePage" v-model:page-size="candidatePageSize" :page-sizes="[50, 100, 200]" :total="candidateTotal" layout="total, sizes, prev, pager, next, jumper" @current-change="changeCandidatePage" @size-change="changeCandidatePageSize" />
     </el-card>
     <el-card v-if="run && !isRunProcessing"><template #header><div class="card-header"><strong>生成可编辑 PPT</strong><el-button type="primary" :disabled="!canGenerate" :loading="acting" @click="generatePpt">生成 PPT</el-button></div></template><el-alert v-if="isCombinationMode" title="本地正式模板 1、2 v5 当前仅支持单品推品。" type="info" :closable="false" /><div class="template-gallery"><button v-for="item in templates" :key="templateKey(item)" type="button" class="template-card" :class="{ selected: selectedTemplateCode === item.template_code && selectedTemplateVersion === item.version }" :disabled="!item.is_available || (item.version === '5' && isCombinationMode)" @click="selectedTemplateCode = item.template_code; selectedTemplateVersion = item.version"><img v-if="item.preview_url" :src="item.preview_url" :alt="`${item.name} 预览`" /><div v-else class="template-preview" :class="item.template_code.toLowerCase()">{{ item.name }}</div><b>{{ item.name }}</b><span>{{ item.description }}</span><el-tag v-if="!item.is_available" type="warning" size="small">当前环境不可用</el-tag></button></div><el-table :data="generations"><el-table-column prop="created_at" label="生成时间" min-width="180" /><el-table-column label="模板" min-width="190"><template #default="{ row }">{{ generationTemplateName(row.template_code, row.template_version) }}</template></el-table-column><el-table-column prop="status" label="状态" width="120" /><el-table-column prop="error" label="结果说明" min-width="260" /><el-table-column label="文件" width="110"><template #default="{ row }"><el-button v-if="row.status === 'SUCCEEDED'" link type="primary" @click="download(row)">下载 PPTX</el-button></template></el-table-column></el-table></el-card>
     <el-dialog v-model="productDetailVisible" title="商品详情" width="min(760px, 94vw)">
-      <div v-if="selectedPlanItem" class="product-detail">
-        <el-image v-if="planItemImageUrl(selectedPlanItem)" class="product-detail-image" :src="planItemImageUrl(selectedPlanItem)" fit="contain" :preview-src-list="[planItemImageUrl(selectedPlanItem)!]" preview-teleported />
+      <div v-if="selectedProductDetail" class="product-detail">
+        <el-image v-if="productDetailImageUrl(selectedProductDetail)" class="product-detail-image" :src="productDetailImageUrl(selectedProductDetail)" fit="contain" :preview-src-list="[productDetailImageUrl(selectedProductDetail)!]" preview-teleported />
         <div v-else class="image-placeholder product-detail-image">暂无图片</div>
         <el-descriptions :column="2" border>
-          <el-descriptions-item label="SKU">{{ planItemValue(selectedPlanItem, 'sku') }}</el-descriptions-item>
-          <el-descriptions-item label="品牌">{{ planItemValue(selectedPlanItem, 'brand') }}</el-descriptions-item>
-          <el-descriptions-item label="型号">{{ planItemValue(selectedPlanItem, 'model') }}</el-descriptions-item>
-          <el-descriptions-item label="三级类目">{{ planItemValue(selectedPlanItem, 'category_level3_name') }}</el-descriptions-item>
-          <el-descriptions-item label="商品名称" :span="2">{{ planItemValue(selectedPlanItem, 'product_name') }}</el-descriptions-item>
-          <el-descriptions-item label="商品规格" :span="2">{{ planItemValue(selectedPlanItem, 'product_specification') }}</el-descriptions-item>
-          <el-descriptions-item label="商品卖点" :span="2">{{ planItemValue(selectedPlanItem, 'selling_points') }}</el-descriptions-item>
-          <el-descriptions-item label="成本价">{{ formatMoney(selectedPlanItem.price_snapshot.cost_price) }}</el-descriptions-item>
-          <el-descriptions-item label="毛利率">{{ formatPercent(selectedPlanItem.price_snapshot.gross_margin) }}</el-descriptions-item>
-          <el-descriptions-item label="协议价">{{ formatMoney(selectedPlanItem.price_snapshot.agreement_price) }}</el-descriptions-item>
-          <el-descriptions-item label="京东价">{{ formatMoney(selectedPlanItem.price_snapshot.jd_price) }}</el-descriptions-item>
-          <el-descriptions-item label="折扣率">{{ formatPercent(selectedPlanItem.price_snapshot.discount_rate) }}</el-descriptions-item>
-          <el-descriptions-item label="好评率">{{ formatPercent(selectedPlanItem.price_snapshot.positive_rating) }}</el-descriptions-item>
+          <el-descriptions-item label="SKU">{{ productDetailValue(selectedProductDetail, 'sku') }}</el-descriptions-item>
+          <el-descriptions-item label="品牌">{{ productDetailValue(selectedProductDetail, 'brand') }}</el-descriptions-item>
+          <el-descriptions-item label="型号">{{ productDetailValue(selectedProductDetail, 'model') }}</el-descriptions-item>
+          <el-descriptions-item label="三级类目">{{ productDetailValue(selectedProductDetail, 'category_level3_name') }}</el-descriptions-item>
+          <el-descriptions-item label="商品名称" :span="2">{{ productDetailValue(selectedProductDetail, 'product_name') }}</el-descriptions-item>
+          <el-descriptions-item label="商品规格" :span="2">{{ productDetailValue(selectedProductDetail, 'product_specification') }}</el-descriptions-item>
+          <el-descriptions-item label="商品卖点" :span="2">{{ productDetailValue(selectedProductDetail, 'selling_points') }}</el-descriptions-item>
+          <el-descriptions-item label="成本价">{{ formatMoney(selectedProductDetail.price_snapshot.cost_price) }}</el-descriptions-item>
+          <el-descriptions-item label="毛利率">{{ formatPercent(selectedProductDetail.price_snapshot.gross_margin) }}</el-descriptions-item>
+          <el-descriptions-item label="协议价">{{ formatMoney(selectedProductDetail.price_snapshot.agreement_price) }}</el-descriptions-item>
+          <el-descriptions-item label="京东价">{{ formatMoney(selectedProductDetail.price_snapshot.jd_price) }}</el-descriptions-item>
+          <el-descriptions-item label="折扣率">{{ formatPercent(selectedProductDetail.price_snapshot.discount_rate) }}</el-descriptions-item>
+          <el-descriptions-item label="好评率">{{ formatPercent(selectedProductDetail.price_snapshot.positive_rating) }}</el-descriptions-item>
         </el-descriptions>
       </div>
     </el-dialog>

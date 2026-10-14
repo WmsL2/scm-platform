@@ -41,6 +41,8 @@ class AsyncTaskResponse(BaseModel):
     heartbeat_at: datetime | None
     started_at: datetime | None
     completed_at: datetime | None
+    cancel_requested_at: datetime | None = None
+    cancel_requested_by: UUID | None = None
     created_by: UUID
     created_at: datetime
     updated_at: datetime
