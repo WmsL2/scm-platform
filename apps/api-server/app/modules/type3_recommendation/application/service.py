@@ -43,6 +43,7 @@ from app.modules.type3_recommendation.schemas import (
     Type3CandidatePage,
     Type3CandidateResponse,
     Type3CandidateSheetSummary,
+    Type3CandidateUnconfirmationRequest,
     Type3ExportField,
     Type3Node,
     Type3OutputColumn,
@@ -474,6 +475,17 @@ class Type3RecommendationService:
             for sheet_name, total, confirmed_total in rows
         ]
 
+    async def _selection_project(self, run: Type3Run) -> BidProject:
+        """Lock the owning project before mutating a Type-3 manual selection."""
+        project = await self._project(run.project_id, for_update=True)
+        if project.status != BidProjectStatus.SELECTING.value:
+            raise AppError(
+                "TYPE3_SELECTION_LOCKED",
+                "选品已经完成，不能直接修改；请先返回待选品状态",
+                409,
+            )
+        return project
+
     async def confirm(self, candidate_ids: list[uuid.UUID], actor_id: uuid.UUID) -> None:
         async with transaction_scope(self.session):
             rows = list(
@@ -487,6 +499,10 @@ class Type3RecommendationService:
             )
             if len(rows) != len(set(candidate_ids)):
                 raise AppError("TYPE3_CANDIDATE_NOT_FOUND", "存在不存在的类型 3 候选商品", 404)
+            run_ids = {row.run_id for row in rows}
+            if len(run_ids) != 1:
+                raise AppError("TYPE3_CANDIDATE_RUN_INVALID", "候选商品必须属于同一推品任务", 422)
+            await self._selection_project(await self._run(run_ids.pop(), for_update=True))
             now = datetime.now(UTC).replace(tzinfo=None)
             for row in rows:
                 row.confirmed_by, row.confirmed_at = actor_id, now
@@ -499,7 +515,10 @@ class Type3RecommendationService:
     ) -> int:
         """Confirm selected candidates, or all pending candidates within the current Sheet."""
         async with transaction_scope(self.session):
-            await self._run(run_id, for_update=True)
+            run = await self._run(run_id, for_update=True)
+            await self._selection_project(run)
+            if run.status not in {"WAITING_CONFIRMATION", "CONFIRMED", "EXPORTED"}:
+                raise AppError("TYPE3_CONFIRMATION_NOT_ALLOWED", "当前推品任务不能人工确认", 409)
             condition = [
                 Type3Candidate.run_id == run_id,
                 Type3Candidate.confirmed_at.is_(None),
@@ -523,6 +542,69 @@ class Type3RecommendationService:
             now = datetime.now(UTC).replace(tzinfo=None)
             for row in rows:
                 row.confirmed_by, row.confirmed_at = actor_id, now
+            return len(rows)
+
+    async def unconfirm_candidates(
+        self,
+        run_id: uuid.UUID,
+        payload: Type3CandidateUnconfirmationRequest,
+        actor_id: uuid.UUID,
+    ) -> int:
+        """Return confirmed Type-3 candidates to pending while retaining the Run history."""
+        async with transaction_scope(self.session):
+            run = await self._run(run_id, for_update=True)
+            project = await self._selection_project(run)
+            if run.status not in {"WAITING_CONFIRMATION", "CONFIRMED", "EXPORTED"}:
+                raise AppError("TYPE3_CONFIRMATION_NOT_ALLOWED", "当前推品任务不能撤销确认", 409)
+            condition = [
+                Type3Candidate.run_id == run_id,
+                Type3Candidate.confirmed_at.is_not(None),
+            ]
+            if payload.select_all_confirmed:
+                if payload.sheet_name:
+                    condition.append(Type3Candidate.sheet_name == payload.sheet_name)
+                if payload.excluded_candidate_ids:
+                    condition.append(Type3Candidate.id.not_in(payload.excluded_candidate_ids))
+            else:
+                condition.append(Type3Candidate.id.in_(payload.candidate_ids))
+            rows = list(
+                (
+                    await self.session.scalars(
+                        select(Type3Candidate).where(*condition).with_for_update()
+                    )
+                ).all()
+            )
+            if not payload.select_all_confirmed and len(rows) != len(payload.candidate_ids):
+                raise AppError(
+                    "TYPE3_CANDIDATE_NOT_FOUND",
+                    "存在不存在或未确认的类型 3 候选商品",
+                    404,
+                )
+            for row in rows:
+                row.confirmed_by, row.confirmed_at = None, None
+            await self.session.flush()
+            remaining = int(
+                await self.session.scalar(
+                    select(func.count(Type3Candidate.id)).where(
+                        Type3Candidate.run_id == run.id,
+                        Type3Candidate.confirmed_at.is_not(None),
+                    )
+                )
+                or 0
+            )
+            if not remaining and run.status == "CONFIRMED":
+                run.status = "WAITING_CONFIRMATION"
+            project.updated_by = actor_id
+            self.session.add(
+                BidProjectEvent(
+                    project_id=project.id,
+                    actor_id=actor_id,
+                    event_type="TYPE3_CANDIDATES_UNCONFIRMED",
+                    from_status=project.status,
+                    to_status=project.status,
+                    note=f"撤销确认 {len(rows)} 件类型 3 候选商品",
+                )
+            )
             return len(rows)
 
     async def complete_selection(

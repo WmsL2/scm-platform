@@ -53,6 +53,9 @@ const selectedCandidateOptionalColumns = ref<RecommendationCandidateOptionalColu
 const selectedCandidateIds = ref<Set<string>>(new Set())
 const excludedCandidateIds = ref<Set<string>>(new Set())
 const selectAllCandidates = ref(false)
+const selectedConfirmedCandidateIds = ref<Set<string>>(new Set())
+const excludedConfirmedCandidateIds = ref<Set<string>>(new Set())
+const selectAllConfirmed = ref(false)
 const confirmVisible = ref(false)
 const selectedCandidate = ref<RecommendationCandidate>()
 const supplementText = ref("")
@@ -88,10 +91,15 @@ const canExport = computed(() => Boolean(
 const resultStatuses = new Set(["CANDIDATES_READY", "WAITING_CONFIRMATION", "CONFIRMED", "EXPORTED"])
 const candidateTotal = computed(() => run.value?.candidate_page?.total ?? 0)
 const unconfirmedTotal = computed(() => run.value?.candidate_page?.unconfirmed_total ?? 0)
+const confirmedTotal = computed(() => run.value?.candidate_page?.confirmed_total ?? 0)
 const selectedCandidateCount = computed(() => selectAllCandidates.value
   ? Math.max(0, unconfirmedTotal.value - excludedCandidateIds.value.size)
   : selectedCandidateIds.value.size)
+const selectedConfirmedCandidateCount = computed(() => selectAllConfirmed.value
+  ? Math.max(0, confirmedTotal.value - excludedConfirmedCandidateIds.value.size)
+  : selectedConfirmedCandidateIds.value.size)
 const selectableOnPage = computed(() => (run.value?.candidates ?? []).filter((item) => !item.confirmation))
+const confirmedOnPage = computed(() => (run.value?.candidates ?? []).filter((item) => item.confirmation))
 const pageAllSelected = computed(() => selectableOnPage.value.length > 0 && selectableOnPage.value.every(isCandidateSelected))
 const pagePartiallySelected = computed(() => selectableOnPage.value.some(isCandidateSelected) && !pageAllSelected.value)
 const visibleCandidateColumns = computed(() => selectedCandidateOptionalColumns.value
@@ -359,6 +367,29 @@ async function saveConfirmation() {
   }
 }
 
+async function removeCandidateConfirmation(candidate: RecommendationCandidate) {
+  if (!selectionEditable.value || !candidate.confirmation) return
+  try {
+    await ElMessageBox.confirm(
+      "撤销后该商品将回到待确认状态；已生成的历史导出文件不会被修改。",
+      "撤销确认",
+      { type: "warning", confirmButtonText: "确认撤销", cancelButtonText: "取消" },
+    )
+  } catch {
+    return
+  }
+  acting.value = true
+  try {
+    await recommendationApi.removeConfirmation(candidate.id)
+    await refreshRun(run.value?.id)
+    ElMessage.success("已撤销商品确认")
+  } catch (error) {
+    ElMessage.error(messageFor(error, "撤销确认失败"))
+  } finally {
+    acting.value = false
+  }
+}
+
 async function exportConfirmedCandidates() {
   if (!run.value || !canExport.value) return
   acting.value = true
@@ -420,6 +451,9 @@ function resetCandidateSelection(): void {
   selectedCandidateIds.value = new Set()
   excludedCandidateIds.value = new Set()
   selectAllCandidates.value = false
+  selectedConfirmedCandidateIds.value = new Set()
+  excludedConfirmedCandidateIds.value = new Set()
+  selectAllConfirmed.value = false
 }
 
 function isCandidateSelected(candidate: RecommendationCandidate): boolean {
@@ -448,10 +482,48 @@ function setCurrentPageSelected(selected: boolean): void {
   for (const candidate of selectableOnPage.value) setCandidateSelected(candidate, selected)
 }
 
-function selectAllUnconfirmedCandidates(): void {
+async function selectAllUnconfirmedCandidates(): Promise<void> {
+  await refreshRun()
+  if (!selectionEditable.value) return
   selectAllCandidates.value = true
   selectedCandidateIds.value = new Set()
   excludedCandidateIds.value = new Set()
+}
+
+function isConfirmedCandidateSelected(candidate: RecommendationCandidate): boolean {
+  if (!candidate.confirmation) return false
+  return selectAllConfirmed.value
+    ? !excludedConfirmedCandidateIds.value.has(candidate.id)
+    : selectedConfirmedCandidateIds.value.has(candidate.id)
+}
+
+function setConfirmedCandidateSelected(candidate: RecommendationCandidate, selected: boolean): void {
+  if (!candidate.confirmation) return
+  if (selectAllConfirmed.value) {
+    const excluded = new Set(excludedConfirmedCandidateIds.value)
+    if (selected) excluded.delete(candidate.id)
+    else excluded.add(candidate.id)
+    excludedConfirmedCandidateIds.value = excluded
+    return
+  }
+  const ids = new Set(selectedConfirmedCandidateIds.value)
+  if (selected) ids.add(candidate.id)
+  else ids.delete(candidate.id)
+  selectedConfirmedCandidateIds.value = ids
+}
+
+function setCurrentPageConfirmedSelected(selected: boolean): void {
+  for (const candidate of confirmedOnPage.value) setConfirmedCandidateSelected(candidate, selected)
+}
+
+async function selectAllConfirmedCandidates(): Promise<void> {
+  // Use fresh totals after a confirmation change; otherwise the all-scope action can
+  // retain the pre-mutation count until the user reloads the workspace.
+  await refreshRun()
+  if (!selectionEditable.value || confirmedTotal.value === 0) return
+  selectAllConfirmed.value = true
+  selectedConfirmedCandidateIds.value = new Set()
+  excludedConfirmedCandidateIds.value = new Set()
 }
 
 async function changeCandidatePage(page: number): Promise<void> {
@@ -482,6 +554,37 @@ async function confirmSelectedCandidates() {
     ElMessage.success(`已批量确认 ${result.confirmed_count} 件商品`)
   } catch (error) {
     ElMessage.error(messageFor(error, "批量确认选品失败"))
+  } finally {
+    acting.value = false
+  }
+}
+
+async function unconfirmSelectedCandidates() {
+  if (!run.value || selectedConfirmedCandidateCount.value === 0) {
+    return ElMessage.warning("请先勾选需要撤销确认的候选商品")
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认撤销 ${selectedConfirmedCandidateCount.value} 件商品的确认状态？历史导出文件不会被修改。`,
+      "批量撤销确认",
+      { type: "warning", confirmButtonText: "确认撤销", cancelButtonText: "取消" },
+    )
+  } catch {
+    return
+  }
+  acting.value = true
+  try {
+    const result = await recommendationApi.unconfirmMany(
+      run.value.id,
+      selectAllConfirmed.value
+        ? { selectAll: true, excludedCandidateIds: [...excludedConfirmedCandidateIds.value] }
+        : { candidateIds: [...selectedConfirmedCandidateIds.value] },
+    )
+    resetCandidateSelection()
+    await refreshRun(run.value.id)
+    ElMessage.success(`已批量撤销 ${result.unconfirmed_count} 件商品的确认`)
+  } catch (error) {
+    ElMessage.error(messageFor(error, "批量撤销确认失败"))
   } finally {
     acting.value = false
   }
@@ -574,6 +677,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
       <div class="actions"><el-button @click="router.push('/bid-projects')">返回项目</el-button><el-button v-if="['IMPORTED', 'MATCHING', 'SELECTING'].includes(project?.status ?? '')" type="primary" :disabled="!canStart" :loading="acting" @click="startRun">{{ run ? "重新生成推荐" : "开始生成推荐" }}</el-button><el-button v-if="project?.status === 'SELECTING'" type="success" :disabled="!canCompleteSelection" :loading="acting" @click="completeSelection">完成选品</el-button><el-button v-if="['READY', 'EXPORTED'].includes(project?.status ?? '')" :disabled="!canReopenSelection" :loading="acting" @click="reopenSelection">返回调整选品</el-button><el-button v-if="['READY', 'EXPORTED'].includes(project?.status ?? '')" type="success" :disabled="!canExport" :loading="acting" @click="exportConfirmedCandidates">导出确认结果</el-button></div>
     </header>
 
+    <el-alert v-if="selectionEditable && (run?.candidate_page?.confirmed_total ?? 0) > 0" title="当前处于待选品状态：可继续确认候选，或撤销已确认商品；历史导出文件仍会保留。" type="info" :closable="false" />
     <el-alert v-if="!mappingConfirmed" title="开始推荐前必须人工确认本项目模板的字段映射。毛利、厂直和物流等歧义字段不会由系统自动猜测。" type="warning" :closable="false" />
     <el-card v-if="mapping">
       <template #header><div class="card-header"><strong>结果模板字段映射</strong><el-tag :type="mappingConfirmed ? 'success' : 'warning'">{{ mappingConfirmed ? "已确认" : "待确认" }}</el-tag></div></template>
@@ -621,16 +725,16 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
     </el-card>
 
     <el-card v-if="candidateTotal">
-      <template #header><div class="card-header"><div><strong>候选商品与人工确认</strong><span class="muted">仅按硬条件筛选，评分取商品主数据；最终结果由人工确认。</span></div><div class="selection-actions"><el-button :disabled="!selectionEditable" @click="setCurrentPageSelected(true)">全选本页</el-button><el-button :disabled="!selectionEditable" @click="selectAllUnconfirmedCandidates">全选全部待确认商品</el-button><el-button :disabled="!selectionEditable" @click="resetCandidateSelection">清空选择</el-button><el-popover placement="bottom-end" :width="340" trigger="click"><template #reference><el-button :icon="Setting">自定义显示列</el-button></template><p class="column-picker-hint">商品图片、SKU、商品名称固定为前 3 列；其余列按勾选先后依次显示。</p><div class="column-picker"><el-checkbox v-for="option in RECOMMENDATION_CANDIDATE_OPTIONAL_COLUMNS" :key="option.key" :model-value="isCandidateColumnSelected(option.key)" @change="(checked: unknown) => updateCandidateColumnSelection(option.key, checked)">{{ option.label }}</el-checkbox></div></el-popover><el-button v-if="auth.hasPermission('recommendation:review')" type="primary" :disabled="!selectionEditable || selectedCandidateCount === 0" :loading="acting" @click="confirmSelectedCandidates">批量确认选中（{{ selectedCandidateCount }}）</el-button></div></div></template>
+      <template #header><div class="card-header"><div><strong>候选商品与人工确认</strong><span class="muted">仅按硬条件筛选，评分取商品主数据；最终结果由人工确认。</span></div><div class="selection-actions"><el-button :disabled="!selectionEditable" @click="setCurrentPageSelected(true)">全选本页待确认</el-button><el-button :disabled="!selectionEditable" @click="selectAllUnconfirmedCandidates">全选全部待确认商品</el-button><el-button :disabled="!selectionEditable" @click="setCurrentPageConfirmedSelected(true)">全选本页已确认</el-button><el-button :disabled="!selectionEditable" @click="selectAllConfirmedCandidates">全选全部已确认商品</el-button><el-button :disabled="!selectionEditable" @click="resetCandidateSelection">清空选择</el-button><el-popover placement="bottom-end" :width="340" trigger="click"><template #reference><el-button :icon="Setting">自定义显示列</el-button></template><p class="column-picker-hint">商品图片、SKU、商品名称固定为前 3 列；其余列按勾选先后依次显示。</p><div class="column-picker"><el-checkbox v-for="option in RECOMMENDATION_CANDIDATE_OPTIONAL_COLUMNS" :key="option.key" :model-value="isCandidateColumnSelected(option.key)" @change="(checked: unknown) => updateCandidateColumnSelection(option.key, checked)">{{ option.label }}</el-checkbox></div></el-popover><el-button v-if="auth.hasPermission('recommendation:review')" type="primary" :disabled="!selectionEditable || selectedCandidateCount === 0" :loading="acting" @click="confirmSelectedCandidates">批量确认选中（{{ selectedCandidateCount }}）</el-button><el-button v-if="auth.hasPermission('recommendation:review')" type="danger" plain :disabled="!selectionEditable || selectedConfirmedCandidateCount === 0" :loading="acting" @click="unconfirmSelectedCandidates">批量撤销确认（{{ selectedConfirmedCandidateCount }}）</el-button></div></div></template>
       <el-table :data="run?.candidates ?? []">
-        <el-table-column width="52"><template #header><el-checkbox :model-value="pageAllSelected" :indeterminate="pagePartiallySelected" :disabled="!selectionEditable || selectableOnPage.length === 0" @change="(value: string | number | boolean) => setCurrentPageSelected(Boolean(value))" /></template><template #default="{ row }"><el-checkbox :model-value="isCandidateSelected(row)" :disabled="!selectionEditable || Boolean(row.confirmation)" @change="(value: string | number | boolean) => setCandidateSelected(row, Boolean(value))" /></template></el-table-column>
+        <el-table-column width="52"><template #header><el-checkbox :model-value="pageAllSelected" :indeterminate="pagePartiallySelected" :disabled="!selectionEditable || selectableOnPage.length === 0" @change="(value: string | number | boolean) => setCurrentPageSelected(Boolean(value))" /></template><template #default="{ row }"><el-checkbox :model-value="row.confirmation ? isConfirmedCandidateSelected(row) : isCandidateSelected(row)" :disabled="!selectionEditable" @change="(value: string | number | boolean) => row.confirmation ? setConfirmedCandidateSelected(row, Boolean(value)) : setCandidateSelected(row, Boolean(value))" /></template></el-table-column>
         <el-table-column prop="rank" label="序号" width="70" fixed="left" />
         <el-table-column label="商品图片" width="108" fixed="left"><template #default="{ row }"><el-image v-if="candidateImageUrl(row)" class="candidate-image" :src="candidateImageUrl(row)" fit="contain" :preview-src-list="[candidateImageUrl(row)!]" preview-teleported /><div v-else class="image-placeholder">暂无图片</div></template></el-table-column>
         <el-table-column label="SKU" min-width="130" fixed="left"><template #default="{ row }">{{ productValue(row, 'sku') }}</template></el-table-column>
         <el-table-column label="商品名称" min-width="220" show-overflow-tooltip fixed="left"><template #default="{ row }">{{ productValue(row, 'product_name') }}</template></el-table-column>
         <el-table-column v-for="column in visibleCandidateColumns" :key="column.key" :label="column.label" :min-width="column.minWidth" show-overflow-tooltip><template #default="{ row }">{{ candidateColumnValue(row, column) }}</template></el-table-column>
         <el-table-column label="确认状态" width="120" fixed="right"><template #default="{ row }"><el-tag :type="row.confirmation ? 'success' : 'info'">{{ row.confirmation ? '已确认' : '待确认' }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="110" fixed="right"><template #default="{ row }"><el-button v-if="auth.hasPermission('recommendation:review')" link type="primary" @click="openConfirmation(row)">{{ selectionEditable ? '确认选品' : '查看选品' }}</el-button></template></el-table-column>
+        <el-table-column label="操作" width="160" fixed="right"><template #default="{ row }"><el-button v-if="auth.hasPermission('recommendation:review')" link type="primary" @click="openConfirmation(row)">{{ selectionEditable ? (row.confirmation ? '编辑确认' : '确认选品') : '查看选品' }}</el-button><el-button v-if="selectionEditable && row.confirmation" link type="danger" :loading="acting" @click="removeCandidateConfirmation(row)">撤销确认</el-button></template></el-table-column>
       </el-table>
       <el-pagination v-model:current-page="candidatePage" v-model:page-size="candidatePageSize" :page-sizes="[50, 100, 200]" :total="candidateTotal" layout="total, sizes, prev, pager, next" @current-change="changeCandidatePage" @size-change="changeCandidatePageSize" />
     </el-card>

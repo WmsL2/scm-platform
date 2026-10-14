@@ -257,6 +257,10 @@ class BatchConfirmationResult(BaseModel):
     confirmed_count: int = Field(ge=0)
 
 
+class BatchUnconfirmationResult(BaseModel):
+    unconfirmed_count: int = Field(ge=0)
+
+
 class ConfirmationUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -292,3 +296,7 @@ class BatchConfirmationRequest(BaseModel):
         elif not self.candidate_ids:
             raise ValueError("candidate_ids is required when select_all is false")
         return self
+
+
+class BatchUnconfirmationRequest(BatchConfirmationRequest):
+    """Candidate scope for returning Type-4 confirmations to pending."""

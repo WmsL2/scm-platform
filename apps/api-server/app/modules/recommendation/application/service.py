@@ -34,6 +34,8 @@ from app.modules.recommendation.ppt_schemas import PptFrozenRecommendationConfig
 from app.modules.recommendation.schemas import (
     BatchConfirmationRequest,
     BatchConfirmationResult,
+    BatchUnconfirmationRequest,
+    BatchUnconfirmationResult,
     CandidateRankInput,
     CategoryCatalogItem,
     CategoryCatalogSnapshot,
@@ -736,6 +738,16 @@ class RecommendationService:
                     409,
                 )
             await self.session.delete(confirmation)
+            self.session.add(
+                BidProjectEvent(
+                    project_id=project.id,
+                    actor_id=actor_id,
+                    event_type="RECOMMENDATION_CONFIRMATION_REMOVED",
+                    from_status=project.status,
+                    to_status=project.status,
+                    note="撤销一件自由推品候选商品的人工确认",
+                )
+            )
             await self.session.flush()
             remaining = await self.repository.confirmed_candidates_for_export(run.id)
             if not remaining and run.status == RecommendationRunStatus.CONFIRMED.value:
@@ -803,6 +815,64 @@ class RecommendationService:
                 self._transition(run, RecommendationRunStatus.CONFIRMED)
             await self.session.flush()
         return BatchConfirmationResult(confirmed_count=len(confirmations))
+
+    async def unconfirm_candidates(
+        self,
+        run_id: uuid.UUID,
+        payload: BatchUnconfirmationRequest,
+        actor_id: uuid.UUID,
+    ) -> BatchUnconfirmationResult:
+        async with transaction_scope(self.session):
+            run = await self._run_or_404_for_update(run_id)
+            project = await self._ensure_selection_editable(run)
+            if run.status not in {
+                RecommendationRunStatus.CANDIDATES_READY.value,
+                RecommendationRunStatus.WAITING_CONFIRMATION.value,
+                RecommendationRunStatus.CONFIRMED.value,
+                RecommendationRunStatus.EXPORTED.value,
+            }:
+                raise AppError(
+                    "RECOMMENDATION_CONFIRMATION_NOT_ALLOWED", "当前推品任务不能撤销确认", 409
+                )
+            if payload.select_all:
+                rows = await self.repository.confirmed_candidates_for_update(
+                    run_id, payload.excluded_candidate_ids
+                )
+            else:
+                selected = await self.repository.candidates_with_confirmations_for_update(
+                    run_id, payload.candidate_ids
+                )
+                if len(selected) != len(payload.candidate_ids) or any(
+                    confirmation is None for _, confirmation in selected
+                ):
+                    raise AppError(
+                        "RECOMMENDATION_CANDIDATE_NOT_FOUND",
+                        "部分推品候选不存在、未确认或不属于当前任务",
+                        404,
+                    )
+                rows = [
+                    (candidate, confirmation)
+                    for candidate, confirmation in selected
+                    if confirmation
+                ]
+            for _, confirmation in rows:
+                await self.session.delete(confirmation)
+            self.session.add(
+                BidProjectEvent(
+                    project_id=project.id,
+                    actor_id=actor_id,
+                    event_type="RECOMMENDATION_CONFIRMATIONS_REMOVED",
+                    from_status=project.status,
+                    to_status=project.status,
+                    note=f"批量撤销确认 {len(rows)} 件自由推品候选商品",
+                )
+            )
+            await self.session.flush()
+            remaining = await self.repository.confirmed_candidates_for_export(run.id)
+            if not remaining and run.status == RecommendationRunStatus.CONFIRMED.value:
+                self._transition(run, RecommendationRunStatus.WAITING_CONFIRMATION)
+            project.updated_by = actor_id
+        return BatchUnconfirmationResult(unconfirmed_count=len(rows))
 
     async def _ensure_selection_editable(self, run: RecommendationRun) -> BidProject:
         project = await self.repository.recommendation_project_for_update(run.project_id)
