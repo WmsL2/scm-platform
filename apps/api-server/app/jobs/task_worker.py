@@ -15,6 +15,7 @@ from contextlib import suppress
 from functools import partial
 from uuid import UUID
 
+from app.common.async_work import run_blocking
 from app.core.config import get_settings
 from app.core.database import SessionLocal, close_database
 from app.infrastructure.adapters import get_object_storage
@@ -71,6 +72,31 @@ async def _wait_or_stop(stop: asyncio.Event, seconds: int) -> bool:
     except TimeoutError:
         return False
     return True
+
+
+async def _watch_cancellation(
+    task: AsyncTask, execution: asyncio.Task[None], stop: asyncio.Event
+) -> None:
+    while not stop.is_set():
+        try:
+            async with SessionLocal() as session:
+                current = await session.get(AsyncTask, task.id)
+                should_stop = (
+                    current is None
+                    or current.status != "RUNNING"
+                    or current.attempt_count != task.attempt_count
+                    or current.cancel_requested_at is not None
+                )
+            if should_stop:
+                if not execution.done():
+                    execution.cancel()
+                return
+        except Exception as exc:
+            logger.warning(
+                "task stop polling failed: task_id=%s error=%s", task.id, type(exc).__name__
+            )
+        if await _wait_or_stop(stop, 1):
+            return
 
 
 class DomainTaskFailed(RuntimeError):
@@ -165,24 +191,24 @@ async def _execute_mapping(task: AsyncTask) -> None:
     # DB session/locks are closed before storage and workbook I/O. Running the
     # parser in this process's thread also keeps its heartbeat loop responsive.
     content = await get_object_storage().read(storage_key)
-    if await asyncio.to_thread(lambda: hashlib.sha256(content).hexdigest()) != expected_sha:
+    if await run_blocking(lambda: hashlib.sha256(content).hexdigest()) != expected_sha:
         raise RuntimeError("mapping file digest mismatch")
     result_json: dict[str, object]
     if analysis_type == "TYPE3_TEMPLATE_PREVIEW":
-        sheets = await asyncio.to_thread(Type3RecommendationService._inspect, content)
+        sheets = await run_blocking(Type3RecommendationService._inspect, content)
         result_json = Type3TemplatePreview(
             template_file_id=UUID(file_id), sheets=sheets
         ).model_dump(mode="json")
     elif analysis_type == "TYPE3_SHEET_OUTPUT":
         if not isinstance(sheet_name, str) or not isinstance(header_row, int):
             raise RuntimeError("type3 sheet analysis payload is incomplete")
-        result = await asyncio.to_thread(
+        result = await run_blocking(
             Type3RecommendationService.inspect_sheet_output, content, sheet_name, header_row
         )
         result_json = result.model_dump(mode="json")
     elif analysis_type == "BID_OUTPUT_HEADERS":
         assert isinstance(sheet_name, str) and isinstance(header_row, int)
-        headers = await asyncio.to_thread(
+        headers = await run_blocking(
             BidProjectService._workbook_headers, content, sheet_name, header_row
         )
         result_json = {"headers": headers}
@@ -192,7 +218,7 @@ async def _execute_mapping(task: AsyncTask) -> None:
             RecommendationTemplateStructureResponse,
         )
 
-        structure = await asyncio.to_thread(
+        structure = await run_blocking(
             partial(
                 inspect_template_structure,
                 content,
@@ -207,6 +233,8 @@ async def _execute_mapping(task: AsyncTask) -> None:
         raise RuntimeError(f"unsupported mapping analysis {analysis_type}")
     async with SessionLocal.begin() as session:
         current = await session.get(AsyncTask, task.id, with_for_update=True)
+        if current and current.cancel_requested_at is not None:
+            raise asyncio.CancelledError
         if current and current.status == "RUNNING" and current.attempt_count == task.attempt_count:
             await MappingAnalysisService(session).succeed(task.id, result_json)
 
@@ -265,13 +293,24 @@ async def run_once(kinds: set[AsyncTaskKind], task_id: UUID | None = None) -> bo
         return False
     stop = asyncio.Event()
     heartbeat = asyncio.create_task(_heartbeat(task.id, task.attempt_count, stop))
+    execution: asyncio.Task[None] | None = None
+    watcher: asyncio.Task[None] | None = None
     try:
         async with SessionLocal() as session:
             await AsyncTaskService(session).heartbeat(
                 task.id, percent=5, message="正在执行任务", attempt=task.attempt_count
             )
-        await execute(task)
+        execution = asyncio.create_task(execute(task))
+        watcher = asyncio.create_task(_watch_cancellation(task, execution, stop))
+        await execution
         await _assert_domain_succeeded(task)
+    except asyncio.CancelledError:
+        # A stop request cancels only this execution, never the shared worker.
+        # External worker shutdown still propagates and is recovered by its lease.
+        if (owner := asyncio.current_task()) is not None and owner.cancelling():
+            raise
+        async with SessionLocal() as session:
+            await AsyncTaskService(session).acknowledge_cancel(task.id, attempt=task.attempt_count)
     except Exception as exc:
         logger.exception("async task failed: task_id=%s kind=%s", task.id, task.task_kind)
         async with SessionLocal() as session:
@@ -289,6 +328,10 @@ async def run_once(kinds: set[AsyncTaskKind], task_id: UUID | None = None) -> bo
         heartbeat.cancel()
         with suppress(asyncio.CancelledError):
             await heartbeat
+        if watcher:
+            watcher.cancel()
+            with suppress(asyncio.CancelledError):
+                await watcher
     return True
 
 

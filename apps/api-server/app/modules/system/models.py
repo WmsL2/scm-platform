@@ -186,6 +186,8 @@ class AsyncTask(Base):
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cancel_requested_by: Mapped[uuid.UUID | None] = mapped_column(UUIDChar36(), nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
