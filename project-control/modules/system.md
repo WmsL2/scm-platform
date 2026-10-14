@@ -1,8 +1,8 @@
 # System Foundation
 
-状态：FOUNDATION_COMPLETED / BUSINESS_SEQUENCE_IMPLEMENTED
+状态：FOUNDATION_COMPLETED / MYSQL_TASK_QUEUE_IMPLEMENTED
 Owner：Sprint 0 / Sprint 0.5 / 人员 A
-Last Updated：2026-09-29（工作区标签栏内浏览器式拖拽）
+Last Updated：2026-10-14（MySQL 持久化队列及本机流程补验）
 
 ## Database
 - [x] Alembic Async 基线 Revision（无业务表）
@@ -10,6 +10,13 @@ Last Updated：2026-09-29（工作区标签栏内浏览器式拖拽）
 - [x] Migration 初始化 `SUPPLIER` 序列，首个编号为 `SUP00000001`
 
 ## Backend
+
+- [x] 任务列表查询不再写死 SQLAlchemy 2.0 的 `Select[tuple[AsyncTask]]` 泛型，保留严格 Mypy 检查并兼容 2.1 查询类型；不改变查询或响应合同，验证见 Change 2026-10-14-011。
+
+- [x] `scm_async_task` MySQL 持久化队列：项目级 HEAVY 互斥、`SKIP LOCKED` 领取、租约/心跳、失败/取消/重试查询 API 及独立 Worker；类型 1--5 重任务创建后返回 `202`，不在 HTTP 请求中等待。
+- [x] `scm_mapping_analysis_cache`：类型 3 模板/Sheet 结构和类型 1/2 回填列结构由 MAPPING Worker 读取，按项目、文件和分析键缓存；缓存未命中返回 `202`，不阻塞 API Event Loop。
+- [x] 复审补齐推荐模板结构、事务提交、取消/租约原子回收、重试互斥/轮次隔离、8 并发缓存复用、按类型权限、任务列表批量查询和独立进程验收。模型使用测试替身，实际负载验收与上传初始识别后台化边界见 `docs/20-mysql-task-queue.md`。
+- [x] 用户反馈类型 1～4 单用户导入到导出流程通过，数据库对应任务/缓存成功；正常任务没有逐任务日志，运行中 5% 为阶段标记。类型 5 实际流程及多人负载仍待验收。
 
 - [x] 首次部署可由 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` 创建已启用的内置 `boss` 管理员；自动补齐当前全部权限，不复活已删除同名账号
 - [x] FastAPI、健康检查、统一响应、异常、请求 ID、日志、基础抽象

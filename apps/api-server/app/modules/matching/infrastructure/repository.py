@@ -26,7 +26,10 @@ class MatchingRepository:
         return cast(
             BidProject | None,
             await self.session.scalar(
-                select(BidProject).where(BidProject.id == project_id).with_for_update()
+                select(BidProject)
+                .where(BidProject.id == project_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
             ),
         )
 

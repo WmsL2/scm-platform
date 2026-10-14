@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from "element-plus"
 import { Setting } from "@element-plus/icons-vue"
 import { useRoute, useRouter } from "vue-router"
 import { bidApi } from "../../api/bid"
+import ProjectTaskStatus from "../../components/ProjectTaskStatus.vue"
 import { pptSolutionApi } from "../../api/pptSolution"
 import { recommendationApi } from "../../api/recommendation"
 import { HttpError } from "../../shared/http"
@@ -25,6 +26,7 @@ const auth = useAuthStore()
 const projectId = String(route.params.id)
 const loading = ref(false)
 const acting = ref(false)
+const heavyActive = ref(false)
 const project = ref<BidProjectDetail>()
 const run = ref<RecommendationRun | null>(null)
 const plans = ref<PptSolutionPlan[]>([])
@@ -56,9 +58,9 @@ const frozenPoolStatistics = computed(() => run.value?.ppt_frozen_pool_statistic
 const requestedCombinationCount = computed(() => recommendationConfig.price_bands.reduce((total, band) => total + band.item_count, 0))
 const combinationShortfall = computed(() => Math.max(0, requestedCombinationCount.value - plans.value.length))
 const selectionEditable = computed(() => project.value?.status === "SELECTING" && auth.hasPermission("recommendation:review"))
-const isRunProcessing = computed(() => ["QUEUED", "ANALYZING", "RETRIEVING", "RANKING"].includes(run.value?.status ?? ""))
+const isRunProcessing = computed(() => heavyActive.value || ["QUEUED", "ANALYZING", "RETRIEVING", "RANKING"].includes(run.value?.status ?? ""))
 const canComplete = computed(() => selectionEditable.value && (run.value?.candidate_page?.confirmed_total ?? 0) > 0)
-const canGenerate = computed(() => Boolean(run.value && ["READY", "EXPORTED"].includes(project.value?.status ?? "") && ["CONFIRMED", "EXPORTED"].includes(run.value.status)))
+const canGenerate = computed(() => Boolean(!heavyActive.value && run.value && ["READY", "EXPORTED"].includes(project.value?.status ?? "") && ["CONFIRMED", "EXPORTED"].includes(run.value.status)))
 const selectedCandidateCount = computed(() => selectAllCandidates.value
   ? Math.max(0, unconfirmedTotal.value - excludedCandidateIds.value.size)
   : selectedCandidateIds.value.size)
@@ -157,6 +159,7 @@ onBeforeUnmount(stopRunPolling)
 
 <template>
   <div v-loading="loading" class="workspace">
+    <ProjectTaskStatus :project-id="projectId" @active="heavyActive = $event" @settled="load" />
     <header><div><p>TYPE 5 · PPT SOLUTION</p><h1>{{ project?.project_name ?? "PPT 方案" }}</h1><span>{{ project?.remark }}</span></div><div class="actions"><el-button @click="router.push('/bid-projects')">返回项目</el-button><el-button v-if="!run || project?.status === 'SELECTING'" type="primary" :loading="acting || isRunProcessing" :disabled="isRunProcessing" @click="startRun">{{ isRunProcessing ? 'AI 匹配中' : (run ? '重新生成推品' : '生成推品') }}</el-button><el-button v-if="project?.status === 'SELECTING'" type="success" :disabled="!canComplete" :loading="acting" @click="completeSelection">完成选品</el-button><el-button v-else-if="['READY', 'EXPORTED'].includes(project?.status ?? '')" :loading="acting" @click="reopenSelection">返回调整选品</el-button></div></header>
     <el-alert v-if="run?.error" :title="run.error" type="warning" :closable="false" />
     <el-alert v-if="run && isRunProcessing" title="AI 正在后台匹配商品" type="info" :closable="false" show-icon description="正在完成受控筛选、全量候选评分和高分商品精确选择；页面会自动刷新结果。" />

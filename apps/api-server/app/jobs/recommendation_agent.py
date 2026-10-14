@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import SessionLocal
 from app.integrations.deepseek.client import (
     DeepSeekClient,
     DeepSeekConfigurationError,
@@ -16,7 +17,10 @@ from app.modules.recommendation.application.agent_runner import (
     RecommendationAgentCancelled,
     RecommendationAgentContractError,
 )
-from app.modules.recommendation.application.agent_schemas import AgentRecommendationResult
+from app.modules.recommendation.application.agent_schemas import (
+    AgentRecommendationResult,
+    RequirementAnalysis,
+)
 from app.modules.recommendation.application.agent_service_adapter import (
     RecommendationServiceJobPort,
     RecommendationServiceTools,
@@ -27,6 +31,7 @@ from app.modules.recommendation.application.ppt_selection_adapter import (
 )
 from app.modules.recommendation.application.ppt_selection_runner import PptSelectionAgentRunner
 from app.modules.recommendation.application.service import RecommendationService
+from app.modules.recommendation.schemas import CategoryCatalogSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -121,12 +126,14 @@ async def execute_recommendation_agent_inline(run_id: UUID, session: AsyncSessio
     """Local-first execution wired only through B's public RecommendationService."""
 
     service = RecommendationService(session)
-    if await service.project_type_for_run(run_id) == BidProjectType.PPT_SOLUTION:
+    project_type = await service.project_type_for_run(run_id)
+    await session.rollback()
+    if project_type == BidProjectType.PPT_SOLUTION:
         raise RuntimeError(
             "类型 5 必须通过 execute_ppt_recommendation_agent_inline 使用独立短 Session 执行"
         )
     provider = DeepSeekClient()
-    tools = RecommendationServiceTools(
+    tools = ShortSessionRecommendationTools(
         run_id,
         service,
         provider=provider.provider,
@@ -136,8 +143,61 @@ async def execute_recommendation_agent_inline(run_id: UUID, session: AsyncSessio
     await execute_recommendation_agent(
         run_id,
         runner=AgentRunner(provider, tools),
-        job_port=RecommendationServiceJobPort(service),
+        job_port=ShortSessionRecommendationJobPort(service),
     )
+
+
+class ShortSessionRecommendationTools(RecommendationServiceTools):
+    """Release all DB connections/locks before each external model request."""
+
+    async def prepare(self, analysis: RequirementAnalysis) -> CategoryCatalogSnapshot:
+        async with SessionLocal.begin() as session:
+            return await RecommendationServiceTools(
+                self.run_id,
+                RecommendationService(session),
+                provider=self.provider,
+                model=self.model,
+                prompt_version=self.prompt_version,
+            ).prepare(analysis)
+
+    async def record_catalog_category_matches(self, category_keys: list[str]) -> None:
+        async with SessionLocal.begin() as session:
+            await RecommendationService(session).record_catalog_category_matches(
+                self.run_id, category_keys
+            )
+
+
+class ShortSessionRecommendationJobPort(RecommendationServiceJobPort):
+    async def requirement_for(self, run_id: UUID) -> str:
+        async with SessionLocal() as session:
+            return (await RecommendationService(session).get_run(run_id)).raw_requirement_snapshot
+
+    async def is_cancelled(self, run_id: UUID) -> bool:
+        async with SessionLocal() as session:
+            return (await RecommendationService(session).get_run(run_id)).status.value in {
+                "FAILED",
+                "CANCELLED",
+            }
+
+    async def complete(self, run_id: UUID, result: AgentRecommendationResult) -> None:
+        async with SessionLocal.begin() as session:
+            await RecommendationServiceJobPort(RecommendationService(session)).complete(
+                run_id, result
+            )
+
+    async def fail(self, run_id: UUID, safe_error: str) -> None:
+        async with SessionLocal.begin() as session:
+            service = RecommendationService(session)
+            run = await service.get_run(run_id)
+            if run.status.value in {"DRAFT", "QUEUED", "ANALYZING", "RETRIEVING", "RANKING"}:
+                await service.mark_failed(run_id, safe_error)
+
+    async def cancelled(self, run_id: UUID) -> None:
+        async with SessionLocal.begin() as session:
+            service = RecommendationService(session)
+            run = await service.get_run(run_id)
+            if run.status.value in {"DRAFT", "QUEUED", "ANALYZING", "RETRIEVING", "RANKING"}:
+                await service.mark_cancelled(run_id)
 
 
 async def execute_ppt_recommendation_agent_inline(run_id: UUID) -> None:
