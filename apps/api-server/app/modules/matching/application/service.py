@@ -280,7 +280,7 @@ class MatchingService:
                         item.status = BidItemStatus.NO_MATCH.value
                         continue
                     product, supplier = product_rows_by_id[chosen.product_id]
-                    assert product.cost_price is not None
+                    assert product.agreement_price is not None
                     auto_selection_plans.append(
                         (item, candidate_models[chosen.product_id], product, supplier)
                     )
@@ -291,20 +291,20 @@ class MatchingService:
                 await self.session.flush()
                 for item, candidate_model, product, supplier in auto_selection_plans:
                     selection_id = uuid.uuid4()
-                    assert product.cost_price is not None
+                    assert product.agreement_price is not None
                     selection = BidItemSelection(
                         id=selection_id,
                         project_item_id=item.id,
                         candidate_id=candidate_model.id,
                         product_id=product.id,
                         supplier_id=supplier.id,
-                        selected_unit_price=product.cost_price,
+                        selected_unit_price=product.agreement_price,
                         requirement_snapshot=self._requirement_snapshot(item),
                         product_snapshot=self._product_snapshot(product, supplier),
                         supplier_snapshot=self._supplier_snapshot(supplier),
-                        price_snapshot=self._price_snapshot(product, product.cost_price),
+                        price_snapshot=self._price_snapshot(product, product.agreement_price),
                         note=(
-                            "类型2按当前成本价自动选择最低报价"
+                            "类型2按协议价自动选择最低合规报价"
                             if is_type2
                             else "类型1已自动选择规格适配度最高的合规商品"
                         ),
@@ -541,7 +541,7 @@ class MatchingService:
                 if not quotable_ids:
                     item.status = BidItemStatus.NO_MATCH.value
                     item.no_quote_reason = json.dumps(
-                        {"reason": "AI 规格候选缺少有效当前成本价或报价超过客户限价"},
+                        {"reason": "AI 规格候选缺少有效协议价或协议价超过客户限价"},
                         ensure_ascii=False,
                     )
                     continue
@@ -562,7 +562,7 @@ class MatchingService:
 
             await self.session.flush()
             for item, candidate_model, product, supplier, output_rank in selection_plans:
-                assert product.cost_price is not None
+                assert product.agreement_price is not None
                 selection_id = uuid.uuid4()
                 self.session.add(
                     BidItemSelection(
@@ -571,11 +571,11 @@ class MatchingService:
                         candidate_id=candidate_model.id,
                         product_id=product.id,
                         supplier_id=supplier.id,
-                        selected_unit_price=product.cost_price,
+                        selected_unit_price=product.agreement_price,
                         requirement_snapshot=self._requirement_snapshot(item),
                         product_snapshot=self._product_snapshot(product, supplier),
                         supplier_snapshot=self._supplier_snapshot(supplier),
-                        price_snapshot=self._price_snapshot(product, product.cost_price),
+                        price_snapshot=self._price_snapshot(product, product.agreement_price),
                         note=f"类型1 AI 规格匹配商品（适配顺序 {output_rank}）",
                         created_by=actor_id,
                     )
@@ -814,7 +814,7 @@ class MatchingService:
                     self.session.add(candidate_model)
 
                 chosen_method = "TYPE2_AI_EXACT"
-                chosen_note = "类型2 AI 判定完全同品，按当前成本价自动选择最低报价"
+                chosen_note = "类型2 AI 判定完全同品，按协议价自动选择最低合规报价"
                 required_discount_rate = self._type2_required_discount_rate(
                     item, project_remark
                 )
@@ -840,8 +840,8 @@ class MatchingService:
                     ]
                 chosen_rows.sort(
                     key=lambda row: (
-                        row[0].cost_price is None,
-                        row[0].cost_price or Decimal("0"),
+                        row[0].agreement_price is None,
+                        row[0].agreement_price or Decimal("0"),
                         str(row[0].id),
                     )
                 )
@@ -881,7 +881,7 @@ class MatchingService:
 
             await self.session.flush()
             for item, candidate_model, product, supplier, note, match_method in selection_plans:
-                assert product.cost_price is not None
+                assert product.agreement_price is not None
                 selection_id = uuid.uuid4()
                 product_snapshot = self._product_snapshot(product, supplier)
                 product_snapshot["type2_match_type"] = match_method
@@ -892,11 +892,11 @@ class MatchingService:
                         candidate_id=candidate_model.id,
                         product_id=product.id,
                         supplier_id=supplier.id,
-                        selected_unit_price=product.cost_price,
+                        selected_unit_price=product.agreement_price,
                         requirement_snapshot=self._requirement_snapshot(item),
                         product_snapshot=product_snapshot,
                         supplier_snapshot=self._supplier_snapshot(supplier),
-                        price_snapshot=self._price_snapshot(product, product.cost_price),
+                        price_snapshot=self._price_snapshot(product, product.agreement_price),
                         note=note,
                         created_by=actor_id,
                     )
@@ -1508,8 +1508,31 @@ class MatchingService:
     async def candidates(
         self, project_id: uuid.UUID, item_id: uuid.UUID
     ) -> list[BidItemCandidateResponse]:
-        await self._project_or_404(project_id)
+        project = await self._project_or_404(project_id)
+        item = await self._item_or_404(project_id, item_id)
         rows = await self.repository.latest_candidates(project_id, item_id)
+        if project.recommendation_type == BidRecommendationType.TYPE_1_SPECIFICATION.value:
+            rows = [
+                row
+                for row in rows
+                if self._is_quotable_type1_product(row[1], item.max_price)
+            ]
+        elif (
+            project.recommendation_type
+            == BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value
+        ):
+            required_discount_rate = self._type2_required_discount_rate(
+                item, project.remark
+            )
+            rows = [
+                row
+                for row in rows
+                if self._is_quotable_type2_product(
+                    row[1],
+                    item.max_price,
+                    required_discount_rate=required_discount_rate,
+                )
+            ]
         return [
             self._candidate_response(candidate, product, supplier)
             for candidate, product, supplier in rows
@@ -1535,18 +1558,32 @@ class MatchingService:
             candidate, product, supplier = row
             if not is_eligible_matching_product(self._matchable(product, supplier)):
                 raise AppError("BID_MATCH_CANDIDATE_INELIGIBLE", "候选商品或供应商当前不可用", 409)
-            if item.max_price is not None and payload.selected_unit_price > item.max_price:
+            is_type1_or_type2 = project.recommendation_type in {
+                BidRecommendationType.TYPE_1_SPECIFICATION.value,
+                BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value,
+            }
+            selected_unit_price = payload.selected_unit_price
+            if is_type1_or_type2:
+                if not self._is_quotable_type1_product(product, item.max_price):
+                    raise AppError(
+                        "BID_AGREEMENT_PRICE_EXCEEDS_MAX",
+                        "商品协议价无效或高于需求限价",
+                        422,
+                    )
+                assert product.agreement_price is not None
+                selected_unit_price = product.agreement_price
+            elif item.max_price is not None and selected_unit_price > item.max_price:
                 raise AppError("BID_SELECTED_PRICE_EXCEEDS_MAX", "选品单价不能高于需求限价", 422)
             selection = BidItemSelection(
                 project_item_id=item.id,
                 candidate_id=candidate.id,
                 product_id=product.id,
                 supplier_id=supplier.id,
-                selected_unit_price=payload.selected_unit_price,
+                selected_unit_price=selected_unit_price,
                 requirement_snapshot=self._requirement_snapshot(item),
                 product_snapshot=self._product_snapshot(product, supplier),
                 supplier_snapshot=self._supplier_snapshot(supplier),
-                price_snapshot=self._price_snapshot(product, payload.selected_unit_price),
+                price_snapshot=self._price_snapshot(product, selected_unit_price),
                 note=payload.note.strip() if payload.note else None,
                 created_by=actor_id,
             )
@@ -1657,6 +1694,7 @@ class MatchingService:
             supplier_cooperation_status=supplier.cooperation_status,
             supplier_is_deleted=supplier.is_deleted,
             cost_price=product.cost_price,
+            agreement_price=product.agreement_price,
             sku=product.sku,
             item_number=product.item_number,
             barcode_text=product.barcode_text,
@@ -1677,7 +1715,7 @@ class MatchingService:
         *,
         required_discount_rate: Decimal | None = None,
     ) -> bool:
-        price = product.cost_price
+        price = product.agreement_price
         price_is_valid = price is not None and price > 0 and (
             max_price is None or price <= max_price
         )
@@ -1692,7 +1730,7 @@ class MatchingService:
     def _is_quotable_type1_product(
         product: Product, max_price: Decimal | None
     ) -> bool:
-        price = product.cost_price
+        price = product.agreement_price
         return price is not None and price > 0 and (
             max_price is None or price <= max_price
         )

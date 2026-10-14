@@ -3,7 +3,11 @@
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
-日期：2026-10-13
+日期：2026-10-14
+
+> 2026-10-14：类型 1/2 的客户“最高限价/限价”统一解释为商品主数据 `agreement_price`（协议价），不再使用 `cost_price`。限价仅是本次上传需求的可选条件：没有限价列或行内限价值为空时不设置默认限价、不执行上限过滤。存在限价时，类型 1 仅保留协议价有效且不超过限价的全部规格命中商品；类型 2 在原品优先、替代兜底规则内按最低合规协议价排序并自动选中。Selection 的选中单价、价格快照及客户原表报价回填均冻结协议价；成本价更低但协议价超限、或协议价缺失的商品必须排除。无 Migration、API 路径、UI 或权限变化（ADR-0062）。
+
+> 2026-10-14：类型 1/2 回填映射删除虚构的必填“商品报价（单价）”字段；客户原表的“供应商报价/商品报价”等列直接映射到商品大表真实字段 `agreement_price`（协议价），AI 匹配/替代备注继续使用专属 `note` 结果字段。历史项目保存的 `selected_unit_price` 映射在读取和导出时兼容转换为协议价，不修改其他项目数据。工作台结果列和候选抽屉明确显示协议价，候选接口不再返回协议价缺失、非正数或超过当前行限价的商品。问题项目 `78cd25cd-980b-4d88-9453-b35b7f93c1c2` 数据核对：截图选中商品成本价 118、协议价 200、限价 220；富安娜锦瑟年华商品成本价 599、协议价 764，已从该行合规候选中排除。无 Migration、API 路径或权限变化（ADR-0063）。
 
 > 2026-10-13：补齐类型 3 完成选品后无法返回待选品的缺口。项目处于 `READY` 或 `EXPORTED` 时，可通过类型 3 专用 API 和工作台“返回调整选品”按钮回到 `SELECTING`；已确认候选、历史导出和 Sheet 快照保留，原 `EXPORTED` Run 回到 `CONFIRMED`，后续导出继续生成新版本。Run 列表新增只读项目状态；启动生成后页面会以该列表的最新 Run 替换创建响应，避免候选已生成但仍使用旧 `MATCHING` 状态而隐藏“完成选品”。复用 `recommendation:review`，无新增权限或 Migration；自动化回归、Ruff、Mypy 和前端生产构建通过，真实浏览器验收待执行。
 

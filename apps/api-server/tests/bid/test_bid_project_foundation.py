@@ -116,7 +116,7 @@ async def test_type1_output_mapping_is_project_scoped_and_requires_confirmation(
             "header_row": 1,
             "data_start_row": 2,
             "input_mapping": {"product_name": "商品名称", "specification": "规格"},
-            "output_mapping": {"selected_unit_price": "报价"},
+            "output_mapping": {"agreement_price": "报价"},
         }
     )
 
@@ -161,17 +161,18 @@ async def test_type1_output_mapping_is_project_scoped_and_requires_confirmation(
         project = await session.get(BidProject, created.id)
         assert project is not None
         assert project.template_id != template.id
-        assert project.output_mapping == {"selected_unit_price": "报价"}
+        assert project.output_mapping == {"agreement_price": "报价"}
         assert project.output_mapping_confirmed_at is None
 
         initial = await service.output_mapping(created.id)
         assert initial.confirmed is False
-        assert initial.mapping == {"selected_unit_price": "报价"}
+        assert initial.mapping == {"agreement_price": "报价"}
         assert "报价" in initial.headers
         assert initial.suggested_headers == ["报价"]
         field_keys = {field.key for field in initial.fields}
         assert set(PRODUCT_EXPORT_COLUMN_KEYS).issubset(field_keys)
-        assert "selected_unit_price" in field_keys
+        assert "agreement_price" in field_keys
+        assert "selected_unit_price" not in field_keys
 
         with pytest.raises(AppError, match="请先确认客户原表的回填字段映射"):
             await MatchingService(session).start(created.id, actor_id)
@@ -179,13 +180,13 @@ async def test_type1_output_mapping_is_project_scoped_and_requires_confirmation(
         confirmed = await service.update_output_mapping(
             created.id,
             BidOutputMappingUpdateRequest(
-                mapping={"selected_unit_price": "报价", "note": "单位"}
+                mapping={"agreement_price": "报价", "note": "单位"}
             ),
             actor_id,
         )
 
         assert confirmed.confirmed is True
-        assert confirmed.mapping == {"selected_unit_price": "报价", "note": "单位"}
+        assert confirmed.mapping == {"agreement_price": "报价", "note": "单位"}
         assert template.export_mapping == {"selected_unit_price": "历史写死报价列"}
         await session.rollback()
 
@@ -304,7 +305,7 @@ def test_output_mapping_suggests_only_the_result_block_after_quote_column() -> N
     suggested = BidProjectService._suggested_output_headers(
         headers,
         {
-            "selected_unit_price": "供应商报价",
+            "agreement_price": "供应商报价",
             "sku": "商品编码（sku）",
             "model": "商品型号",
             "unit": "报价单位",
@@ -328,7 +329,7 @@ def test_output_mapping_infers_unique_obvious_supplier_quote_column() -> None:
         {},
     )
 
-    assert mapping == {"selected_unit_price": "供应商报价"}
+    assert mapping == {"agreement_price": "供应商报价"}
 
 
 @pytest.mark.asyncio

@@ -87,13 +87,11 @@ _PRODUCT_OUTPUT_MAPPING_FIELDS = tuple(
 _OUTPUT_MAPPING_FIELDS: dict[BidRecommendationType, tuple[tuple[str, str, bool], ...]] = {
     BidRecommendationType.TYPE_1_SPECIFICATION: (
         *_PRODUCT_OUTPUT_MAPPING_FIELDS,
-        ("selected_unit_price", "商品报价（单价）", True),
         ("unit", "计量单位", False),
         ("note", "匹配备注", False),
     ),
     BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT: (
         *_PRODUCT_OUTPUT_MAPPING_FIELDS,
-        ("selected_unit_price", "商品报价（单价）", True),
         ("unit", "计量单位", False),
         ("is_same_product", "是否同品", False),
         ("discount_compliance", "折扣是否满足", False),
@@ -272,11 +270,13 @@ class BidProjectService:
                             for key, value in suggestion.input_mapping.model_dump().items()
                             if value
                         },
-                        export_mapping={
-                            key: value
-                            for key, value in suggestion.output_mapping.model_dump().items()
-                            if value
-                        },
+                        export_mapping=self._normalize_output_mapping(
+                            {
+                                key: value
+                                for key, value in suggestion.output_mapping.model_dump().items()
+                                if value
+                            }
+                        ),
                         fingerprint=fingerprint,
                         is_active=True,
                         created_by=actor_id,
@@ -696,7 +696,7 @@ class BidProjectService:
         headers = self._workbook_headers(
             await self.storage.read(original.storage_key), template.sheet_name, template.header_row
         )
-        configured_mapping = (
+        configured_mapping = self._normalize_output_mapping(
             dict(project.output_mapping)
             if project.output_mapping is not None
             else dict(template.export_mapping)
@@ -778,14 +778,6 @@ class BidProjectService:
             if len(set(mapping.values())) != len(mapping):
                 raise AppError(
                     "BID_OUTPUT_MAPPING_DUPLICATE", "同一个客户表列不能映射多个回填字段", 422
-                )
-            required = {key for key, _, required in field_definitions if required}
-            missing_required = required - set(mapping)
-            if missing_required:
-                raise AppError(
-                    "BID_OUTPUT_MAPPING_REQUIRED",
-                    "必须确认商品报价（单价）回填列",
-                    422,
                 )
             project.output_mapping = mapping
             project.output_mapping_confirmed_by = actor_id
@@ -875,7 +867,9 @@ class BidProjectService:
                 template,
                 selections,
                 expand_multiple_rows=is_type1,
-                export_mapping=project.output_mapping or template.export_mapping,
+                export_mapping=self._normalize_output_mapping(
+                    project.output_mapping or template.export_mapping
+                ),
             )
             version = await self.repository.next_export_version(project_id)
             filename = f"{project.project_code}-报价文件-V{version}.xlsx"
@@ -1290,8 +1284,8 @@ class BidProjectService:
         if not resolved_outputs:
             return []
         price_header = cls._resolve_export_header(
-            "selected_unit_price",
-            mapping.get("selected_unit_price", ""),
+            "agreement_price",
+            mapping.get("agreement_price", ""),
             headers,
         )
         anchor_header = price_header or min(resolved_outputs, key=columns.__getitem__)
@@ -1313,7 +1307,7 @@ class BidProjectService:
         headers: list[str | None],
         mapping: dict[str, str],
     ) -> dict[str, str]:
-        if mapping.get("selected_unit_price"):
+        if mapping.get("agreement_price"):
             return mapping
         price_labels = {
             "供应商报价",
@@ -1334,7 +1328,16 @@ class BidProjectService:
         ]
         if len(matches) != 1:
             return mapping
-        return {**mapping, "selected_unit_price": matches[0]}
+        return {**mapping, "agreement_price": matches[0]}
+
+    @staticmethod
+    def _normalize_output_mapping(mapping: dict[str, str]) -> dict[str, str]:
+        """Map the removed synthetic quote field to the real product agreement price."""
+        normalized = dict(mapping)
+        legacy_header = normalized.pop("selected_unit_price", None)
+        if legacy_header and not normalized.get("agreement_price"):
+            normalized["agreement_price"] = legacy_header
+        return normalized
 
     def _build_export(
         self,
@@ -1345,9 +1348,9 @@ class BidProjectService:
         expand_multiple_rows: bool = False,
         export_mapping: dict[str, str] | None = None,
     ) -> bytes:
-        configured_mapping = export_mapping or template.export_mapping
-        if not configured_mapping.get("selected_unit_price"):
-            raise AppError("BID_EXPORT_PRICE_COLUMN_MISSING", "模板未配置报价写入列", 409)
+        configured_mapping = self._normalize_output_mapping(
+            export_mapping or template.export_mapping
+        )
         workbook = load_workbook(BytesIO(original_bytes), data_only=False)
         try:
             sheet = workbook[template.sheet_name]
@@ -1373,6 +1376,11 @@ class BidProjectService:
                     **(selection.price_snapshot or {}),
                     **product,
                     **supplier,
+                    "agreement_price": (
+                        (selection.price_snapshot or {}).get("agreement_price")
+                        or product.get("agreement_price")
+                        or selection.selected_unit_price
+                    ),
                     "selected_unit_price": selection.selected_unit_price,
                     "unit": item.unit,
                     "note": selection.note,

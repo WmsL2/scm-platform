@@ -86,6 +86,7 @@ class MatchableProduct:
     supplier_cooperation_status: CooperationStatus | str
     supplier_is_deleted: bool
     cost_price: Decimal | None = None
+    agreement_price: Decimal | None = None
     sku: str | None = None
     item_number: str | None = None
     barcode_text: str | None = None
@@ -231,7 +232,7 @@ def decide_identified_product_matches(
 ) -> MatchDecision:
     """Type 2 only accepts an exact SKU/code or exact brand and model match.
 
-    Matching products are ordered by the current supplier quote (`cost_price`) so the
+    Matching products are ordered by the agreement price (`agreement_price`) so the
     application service can deterministically select the cheapest quotable product.
     """
     eligible = [candidate for candidate in candidates if is_eligible_matching_product(candidate)]
@@ -572,7 +573,7 @@ def _build_decision(
                 recall_stage,
                 canonical_brand=canonical_brand,
             ),
-            candidate.cost_price,
+            candidate.agreement_price,
         )
         for candidate in matches
     ]

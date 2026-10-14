@@ -76,7 +76,7 @@ class Type1InputColumnMapping(BaseModel):
 class Type1OutputColumnMapping(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    selected_unit_price: str | None = None
+    agreement_price: str | None = None
     sku: str | None = None
     product_name: str | None = None
     brand: str | None = None
@@ -160,7 +160,9 @@ class Type1Agent:
                 "已经填写的行备注或特殊备注。列名可以不同，规格和技术要求也可能分散在多个列。"
                 "数量、单位、客户物料编码、品牌和型号可作为辅助输入，但不得替代上述核心语义。"
                 "只选择服务器提供的真实工作表、表头行和表头原文，不得创造列名。优先准确找到"
-                "商品报价或等价的单价回填列；无法唯一确认的输出列返回null，交由人工确认，严禁猜测。"
+                "商品报价、供应商报价或等价的单价回填列，并映射到商品主数据 "
+                "agreement_price（协议价）；"
+                "无法唯一确认的输出列返回null，交由人工确认，严禁猜测。"
                 "如果商品报价列之后是连续的空白结果区域，应把商品报价列作为输出区域起点，并尽量"
                 "识别其中商品编码、品牌、型号、单位、供应商和备注等可明确判断的回填列；不得把"
                 "商品报价列之前的物料信息、限价、采购量等需求输入列当成回填列。"

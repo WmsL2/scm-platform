@@ -59,7 +59,7 @@ async def test_type1_template_agent_uses_fixed_reference_semantics_and_notes() -
                         "max_price": "限价",
                         "row_note": "特殊备注",
                     },
-                    "output_mapping": {"selected_unit_price": "报价"},
+                    "output_mapping": {"agreement_price": "报价"},
                 }
             )
         ]
@@ -82,11 +82,11 @@ def test_type1_template_mapping_allows_human_fallback_for_output_column() -> Non
             "header_row": 1,
             "data_start_row": 2,
             "input_mapping": {"product_name": "商品名称"},
-            "output_mapping": {"selected_unit_price": None},
+            "output_mapping": {"agreement_price": None},
         }
     )
 
-    assert mapping.output_mapping.selected_unit_price is None
+    assert mapping.output_mapping.agreement_price is None
 
 
 @pytest.mark.asyncio

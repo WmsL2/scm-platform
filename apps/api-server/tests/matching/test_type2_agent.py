@@ -52,7 +52,7 @@ def test_type2_mapping_requires_an_identity_source_column() -> None:
                 "header_row": 1,
                 "data_start_row": 2,
                 "input_mapping": {"brand": "品牌"},
-                "output_mapping": {"selected_unit_price": "商品报价"},
+                "output_mapping": {"agreement_price": "商品报价"},
             }
         )
 
@@ -64,7 +64,7 @@ def test_type2_mapping_accepts_brand_and_model_embedded_in_parameter_text() -> N
             "header_row": 1,
             "data_start_row": 2,
             "input_mapping": {"specification": "规格型号/参数"},
-            "output_mapping": {"selected_unit_price": "商品报价"},
+            "output_mapping": {"agreement_price": "商品报价"},
         }
     )
 
@@ -78,11 +78,11 @@ def test_type2_template_mapping_allows_human_fallback_for_output_column() -> Non
             "header_row": 1,
             "data_start_row": 2,
             "input_mapping": {"brand": "品牌", "model": "型号"},
-            "output_mapping": {"selected_unit_price": None},
+            "output_mapping": {"agreement_price": None},
         }
     )
 
-    assert mapping.output_mapping.selected_unit_price is None
+    assert mapping.output_mapping.agreement_price is None
 
 
 @pytest.mark.asyncio
@@ -100,7 +100,7 @@ async def test_type2_template_agent_maps_real_columns_from_an_unknown_workbook()
                         "specification": "适用机型",
                     },
                     "output_mapping": {
-                        "selected_unit_price": "商品报价",
+                        "agreement_price": "商品报价",
                         "note": "备注",
                     },
                 }
@@ -112,7 +112,7 @@ async def test_type2_template_agent_maps_real_columns_from_an_unknown_workbook()
         _workbook_bytes(), project_remark="原品优先，确实没有时才允许同类替代"
     )
 
-    assert result.output_mapping.selected_unit_price == "商品报价"
+    assert result.output_mapping.agreement_price == "商品报价"
     call = provider.calls[0]
     assert "类型2指定商品报价" in call["system_prompt"]
     payload = json.loads(call["user_prompt"])

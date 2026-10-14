@@ -117,10 +117,6 @@ async function confirmOutputMapping(): Promise<void> {
     ElMessage.error("同一个商品大表／报价结果字段只能映射一个客户原表列")
     return
   }
-  if (!selectedFields.includes("selected_unit_price")) {
-    ElMessage.error("请选择商品报价（单价）的回填列")
-    return
-  }
   const mapping = Object.fromEntries(
     Object.entries(outputMappingSelections)
       .filter((entry): entry is [string, string] => Boolean(entry[1]))
@@ -169,7 +165,7 @@ async function openCandidates(row: BidProjectItem): Promise<void> {
 
 function pick(value: BidCandidate): void {
   candidate.value = value
-  price.value = value.cost_price ?? value.agreement_price ?? ""
+  price.value = value.agreement_price ?? ""
   note.value = ""
   priceVisible.value = true
 }
@@ -260,7 +256,7 @@ onMounted(() => void load())
     <el-alert v-if="project && project.import_status !== 'PARSED'" :title="project.import_error ?? '客户需求文件尚未完成解析，暂时不能开始。'" type="warning" :closable="false" />
     <el-alert v-else-if="outputMapping && !outputMapping.confirmed" title="AI 已预填客户原表的回填列。请人工核对并确认；这里只决定结果写回哪些列，不参与商品匹配判断。" type="warning" :closable="false" />
     <el-alert v-else-if="project?.status === 'IMPORTED'" :title="isType2 ? '客户需求和回填字段已确认。请点击“执行 AI 同品比价”。' : '客户需求和回填字段已确认。请点击“开始规格匹配”。'" type="info" :closable="false" />
-    <el-alert v-else-if="isType2" title="系统先按 SKU 或品牌+型号召回，再由 AI 复核重要附加条件；完全同品取合规最低价，只有需求明确允许且无合规同品时才推荐带差异备注的替代品。" type="success" :closable="false" />
+    <el-alert v-else-if="isType2" title="系统先按 SKU 或品牌+型号召回，再由 AI 复核重要附加条件；完全同品取合规最低协议价，只有需求明确允许且无合规同品时才推荐带差异备注的替代品。" type="success" :closable="false" />
     <el-alert v-else-if="isType1" title="系统会保留全部满足规格参数且价格合规的商品；页面优先显示有匹配结果的需求行，导出仍按客户原表顺序，并在原需求行下逐行展开全部命中商品。" type="info" :closable="false" />
     <el-alert v-else title="该工作台仅用于类型 1、2。" type="warning" :closable="false" />
 
@@ -297,7 +293,7 @@ onMounted(() => void load())
         <el-table-column label="匹配状态"><template #default="{ row }"><el-tag>{{ ITEM_STATUS_LABELS[row.status] }}</el-tag></template></el-table-column>
         <el-table-column label="匹配商品" min-width="190"><template #default="{ row }"><template v-if="row.current_selection"><div>{{ snapshot(row.current_selection, "product_snapshot").product_name }}</div><small>{{ snapshot(row.current_selection, "product_snapshot").brand }} {{ snapshot(row.current_selection, "product_snapshot").model }}</small><small v-if="isType1" class="match-hint">全部命中商品将逐行导出</small></template><span v-else>—</span></template></el-table-column>
         <el-table-column label="供应商" min-width="170"><template #default="{ row }"><template v-if="row.current_selection">{{ snapshot(row.current_selection, "supplier_snapshot").supplier_name }}</template><span v-else>—</span></template></el-table-column>
-        <el-table-column :label="isType2 ? '最低报价' : '自动报价'"><template #default="{ row }">{{ row.current_selection?.selected_unit_price ?? "—" }}</template></el-table-column>
+        <el-table-column :label="isType2 ? '最低协议价' : '协议价'"><template #default="{ row }">{{ row.current_selection?.selected_unit_price ?? "—" }}</template></el-table-column>
         <el-table-column v-if="isType2" label="推荐类型" width="110"><template #default="{ row }"><el-tag v-if="row.current_selection" :type="snapshot(row.current_selection, 'product_snapshot').type2_match_type === 'TYPE2_AI_SUBSTITUTE' ? 'warning' : 'success'">{{ snapshot(row.current_selection, "product_snapshot").type2_match_type === "TYPE2_AI_SUBSTITUTE" ? "同类型替代" : "完全同品" }}</el-tag><span v-else>—</span></template></el-table-column>
         <el-table-column v-if="isType2" label="匹配备注" min-width="260"><template #default="{ row }">{{ row.current_selection?.note ?? "—" }}</template></el-table-column>
         <el-table-column v-if="isType1" label="处理" fixed="right" width="170"><template #default="{ row }"><el-button v-if="canSelect(row) && ['UNIQUE_MATCH', 'MULTIPLE_MATCH', 'SELECTED'].includes(row.status)" link type="primary" @click="openCandidates(row)">查看全部匹配</el-button><el-button v-if="canSelect(row)" link type="warning" @click="openNoQuote(row)">无法报价</el-button></template></el-table-column>
@@ -308,7 +304,7 @@ onMounted(() => void load())
     <el-drawer v-model="drawer" title="匹配候选商品" size="min(920px, 95vw)">
       <el-table v-loading="candidateLoading" :data="candidates">
         <el-table-column prop="rank" label="排名" width="70" /><el-table-column prop="product_name" label="商品" min-width="180" /><el-table-column prop="brand" label="品牌" /><el-table-column prop="model" label="型号" />
-        <el-table-column label="供应商" min-width="160"><template #default="{ row }">{{ row.supplier_name }}</template></el-table-column><el-table-column prop="cost_price" label="当前报价" />
+        <el-table-column label="供应商" min-width="160"><template #default="{ row }">{{ row.supplier_name }}</template></el-table-column><el-table-column prop="agreement_price" label="协议价" />
         <el-table-column v-if="!isType1" label="操作" width="90"><template #default="{ row }"><el-button link type="primary" @click="pick(row)">选择</el-button></template></el-table-column>
       </el-table>
     </el-drawer>
