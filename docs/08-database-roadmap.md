@@ -132,6 +132,8 @@ Supplier：
 
 # 原则
 
+2026-10-14 新增 MySQL 队列 `scm_async_task` 与结构缓存 `scm_mapping_analysis_cache`，Revision `20261014_0057` / `0058` / `0059`。字段、外键、索引及运维合同见 [MySQL 任务队列数据字典](20-mysql-task-queue.md)。
+
 最终 DDL 必须：
 
 - Alembic 管理；

@@ -18,7 +18,7 @@ from sqlalchemy import delete, select
 
 from app.core.database import SessionLocal
 from app.integrations.deepseek.client import DeepSeekProviderError
-from app.jobs import recommendation_agent
+from app.jobs import recommendation_agent, task_worker
 from app.main import app
 from app.modules.auth.security import create_token, hash_password
 from app.modules.bid.domain.lifecycle import BidImportStatus, BidProjectStatus, BidProjectType
@@ -45,7 +45,7 @@ from app.modules.recommendation.ppt_schemas import (
 )
 from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
 from app.modules.supplier.infrastructure.models import Supplier
-from app.modules.system.models import Permission, Role, RolePermission, User, UserRole
+from app.modules.system.models import AsyncTask, Permission, Role, RolePermission, User, UserRole
 
 
 class MockProvider:
@@ -293,6 +293,7 @@ async def _cleanup(
         await session.execute(
             delete(BidProjectEvent).where(BidProjectEvent.project_id == project_id)
         )
+        await session.execute(delete(AsyncTask).where(AsyncTask.project_id == project_id))
         await session.execute(delete(BidProject).where(BidProject.id == project_id))
         await session.execute(delete(Product).where(Product.id.in_(product_ids)))
         await session.execute(delete(Supplier).where(Supplier.id == supplier_id))
@@ -308,9 +309,7 @@ async def test_type5_http_partial_failure_retry_snapshot_and_concurrency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(recommendation_agent, "DeepSeekClient", MockProvider)
-    from app.modules.recommendation.api import ppt_router
-
-    monkeypatch.setattr(ppt_router, "DeepSeekClient", MockProvider)
+    monkeypatch.setattr(task_worker, "DeepSeekClient", MockProvider)
     MockProvider.reset()
     MockProvider.fail_bands = {2}
     user_id, role_id, headers = await _user()
@@ -328,8 +327,11 @@ async def test_type5_http_partial_failure_retry_snapshot_and_concurrency(
             created = await client.post(
                 f"/api/v1/recommendation-projects/{project_id}/runs", headers=headers
             )
-            assert created.status_code == 200, created.text
-            run_id = uuid.UUID(created.json()["data"]["id"])
+            assert created.status_code == 202, created.text
+            run_id = uuid.UUID(created.json()["data"]["run_id"])
+            assert await task_worker.run_once(
+                task_worker._HEAVY_KINDS, uuid.UUID(created.json()["data"]["id"])
+            )
             availability = await client.get(
                 f"/api/v1/ppt-solution-projects/runs/{run_id}/plan-availability", headers=headers
             )
@@ -399,7 +401,7 @@ async def test_type5_http_partial_failure_retry_snapshot_and_concurrency(
             )
             await session.commit()
         MockProvider.fail_bands = set()
-        MockProvider.gate_band = 2
+        MockProvider.gate_band = None
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             retry_one = asyncio.create_task(
                 client.post(
@@ -413,14 +415,19 @@ async def test_type5_http_partial_failure_retry_snapshot_and_concurrency(
                     headers=headers,
                 )
             )
-            await asyncio.wait_for(MockProvider.gate_entered.wait(), timeout=5)
-            MockProvider.gate_release.set()
             responses = await asyncio.wait_for(asyncio.gather(retry_one, retry_two), timeout=10)
-            assert all(response.status_code == 200 for response in responses)
+            assert sorted(response.status_code for response in responses) == [202, 409]
+            queued = next(response for response in responses if response.status_code == 202)
+            assert await task_worker.run_once(
+                task_worker._HEAVY_KINDS, uuid.UUID(queued.json()["data"]["id"])
+            )
             repeated = await client.post(
                 f"/api/v1/ppt-solution-projects/runs/{run_id}/commands/retry-plans", headers=headers
             )
-            assert repeated.status_code == 200
+            assert repeated.status_code == 202
+            assert await task_worker.run_once(
+                task_worker._HEAVY_KINDS, uuid.UUID(repeated.json()["data"]["id"])
+            )
         async with SessionLocal() as session:
             plans = list(
                 (
@@ -508,8 +515,11 @@ async def test_type5_http_direct_candidates_use_each_band_requested_quantity(
             response = await client.post(
                 f"/api/v1/recommendation-projects/{project_id}/runs", headers=headers
             )
-            assert response.status_code == 200, response.text
-            run_id = uuid.UUID(response.json()["data"]["id"])
+            assert response.status_code == 202, response.text
+            run_id = uuid.UUID(response.json()["data"]["run_id"])
+            assert await task_worker.run_once(
+                task_worker._HEAVY_KINDS, uuid.UUID(response.json()["data"]["id"])
+            )
         async with SessionLocal() as session:
             run = await session.get(RecommendationRun, run_id)
             assert run is not None
@@ -547,9 +557,12 @@ async def test_type5_http_direct_candidates_use_each_band_requested_quantity(
             assert all(item.reason == "AI 按客户场景与综合性价比排序推荐" for item in candidates)
             assert extra_ids[0] not in by_id
             assert extra_ids[1] not in by_id
-            assert await session.scalar(
-                select(PptSolutionPlan.id).where(PptSolutionPlan.run_id == run_id)
-            ) is None
+            assert (
+                await session.scalar(
+                    select(PptSolutionPlan.id).where(PptSolutionPlan.run_id == run_id)
+                )
+                is None
+            )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             run_response = await client.get(
                 f"/api/v1/recommendation-projects/runs/{run_id}", headers=headers

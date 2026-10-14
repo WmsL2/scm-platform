@@ -3,44 +3,63 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.contracts import ApiResponse, success
+from app.common.contracts import ApiResponse, AppError, success
 from app.core.database import get_db_session
-from app.integrations.deepseek.client import DeepSeekClient
 from app.modules.auth.dependencies import require_permission
 from app.modules.auth.schemas import CurrentUser
+from app.modules.bid.infrastructure.models import BidProject
 from app.modules.matching.application.service import MatchingService
-from app.modules.matching.application.type1_agent import Type1Agent
-from app.modules.matching.application.type2_agent import Type2Agent
 from app.modules.matching.schemas import (
     BidItemCandidateResponse,
     BidItemSelectionCreateRequest,
     BidItemSelectionResponse,
     NoQuoteCreateRequest,
-    StartMatchingResponse,
 )
+from app.modules.system.task_schemas import AsyncTaskCreate, AsyncTaskKind, AsyncTaskResponse
+from app.modules.system.task_service import AsyncTaskService
 
 router = APIRouter(prefix="/bid-projects", tags=["bid-matching"])
-SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
+SessionDep = Annotated[AsyncSession, Depends(get_db_session, scope="function")]
 
 
 @router.post(
-    "/{project_id}/commands/start-matching", response_model=ApiResponse[StartMatchingResponse]
+    "/{project_id}/commands/start-matching",
+    response_model=ApiResponse[AsyncTaskResponse],
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def start_matching(
     project_id: uuid.UUID,
     current: Annotated[CurrentUser, Depends(require_permission("bid:match"))],
     session: SessionDep,
-) -> ApiResponse[StartMatchingResponse]:
-    return success(
-        await MatchingService(
-            session,
-            type1_agent=Type1Agent(DeepSeekClient()),
-            type2_agent=Type2Agent(DeepSeekClient()),
-        ).start(project_id, current.user_id)
+) -> ApiResponse[AsyncTaskResponse]:
+    # The worker performs the domain validation and starts the legacy MatchTask;
+    # creating this row is intentionally the only request-time write for matching.
+    project = await session.get(BidProject, project_id)
+    if project is None:
+        raise AppError("BID_PROJECT_NOT_FOUND", "投标项目不存在", 404)
+    kinds = {
+        "TYPE_1_SPECIFICATION": AsyncTaskKind.TYPE1_MATCH,
+        "TYPE_2_IDENTIFIED_PRODUCT": AsyncTaskKind.TYPE2_MATCH,
+    }
+    kind = kinds.get(project.recommendation_type or "")
+    if kind is None:
+        raise AppError("BID_MATCHING_TYPE_INVALID", "该项目不是类型 1 或类型 2 匹配项目", 409)
+    await AsyncTaskService(session).ensure_available(project_id, kind)
+    if project.import_status != "PARSED" or project.status not in {
+        "IMPORTED",
+        "SELECTING",
+        "READY",
+    }:
+        raise AppError("BID_MATCHING_NOT_ALLOWED", "当前项目状态不能开始匹配", 409)
+    if project.output_mapping is not None and project.output_mapping_confirmed_at is None:
+        raise AppError("BID_OUTPUT_MAPPING_NOT_CONFIRMED", "请先确认客户原表的回填字段映射", 409)
+    task = await AsyncTaskService(session).enqueue(
+        AsyncTaskCreate(project_id=project_id, task_kind=kind, created_by=current.user_id)
     )
+    return success(task)
 
 
 @router.get(

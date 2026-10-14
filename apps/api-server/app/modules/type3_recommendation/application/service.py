@@ -95,6 +95,11 @@ class Type3RecommendationService:
     def __init__(self, session: AsyncSession, storage: ObjectStorage | None = None) -> None:
         self.session, self.storage = session, storage or get_object_storage()
 
+    async def template_file_id(self, project_id: uuid.UUID) -> uuid.UUID:
+        """Resolve the current template without reading the workbook bytes."""
+        _project, file = await self._project_and_template(project_id)
+        return file.id
+
     async def preview(self, project_id: uuid.UUID) -> Type3TemplatePreview:
         project, file = await self._project_and_template(project_id)
         del project
@@ -106,8 +111,16 @@ class Type3RecommendationService:
     ) -> Type3SheetOutputStructure:
         """Read one Type-3 workbook Sheet's actual output headers for manual mapping."""
         _project, file = await self._project_and_template(project_id)
+        return self.inspect_sheet_output(
+            await self.storage.read(file.storage_key), sheet_name, header_row
+        )
+
+    @classmethod
+    def inspect_sheet_output(
+        cls, content: bytes, sheet_name: str, header_row: int
+    ) -> Type3SheetOutputStructure:
         try:
-            workbook = load_workbook(BytesIO(await self.storage.read(file.storage_key)), read_only=True)
+            workbook = load_workbook(BytesIO(content), read_only=True)
         except Exception as exc:
             raise AppError("TYPE3_WORKBOOK_INVALID", "类型 3 工作簿无法读取", 422) from exc
         try:
@@ -120,7 +133,7 @@ class Type3RecommendationService:
                 sheet_name=sheet.title,
                 header_row=header_row,
                 max_row=sheet.max_row,
-                columns=self._output_columns(sheet, header_row),
+                columns=cls._output_columns(sheet, header_row),
             )
         finally:
             workbook.close()
@@ -138,9 +151,15 @@ class Type3RecommendationService:
         self, project_id: uuid.UUID, payload: Type3SheetSelectionRequest, actor_id: uuid.UUID
     ) -> list[Type3SheetPreview]:
         project, template = await self._project_and_template(project_id, for_update=True)
+        from app.modules.system.mapping_analysis_service import MappingAnalysisService
+
+        cached = await MappingAnalysisService(self.session).require_cached(
+            project_id, template.id, "TYPE3_TEMPLATE_PREVIEW"
+        )
+        cached_preview = Type3TemplatePreview.model_validate(cached)
         preview = {
             item.sheet_name: item
-            for item in self._inspect(await self.storage.read(template.storage_key))
+            for item in cached_preview.sheets
         }
         async with transaction_scope(self.session):
             existing = list(
@@ -332,6 +351,8 @@ class Type3RecommendationService:
         """Persist the parsed remark and server-issued catalogue before AI mapping."""
         async with transaction_scope(self.session):
             run = await self._run(run_id, for_update=True)
+            if run.status not in {"QUEUED", "ANALYZING"}:
+                raise AppError("TYPE3_RUN_NOT_ACTIVE", "该任务已结束", 409)
             run.status = "ANALYZING"
             run.parsed_remark = analysis.model_dump(mode="json")
             run.provider, run.model, run.prompt_version = provider, model, prompt_version
@@ -354,6 +375,8 @@ class Type3RecommendationService:
     ) -> None:
         async with transaction_scope(self.session):
             run = await self._run(run_id, for_update=True)
+            if run.status not in {"QUEUED", "ANALYZING", "RETRIEVING"}:
+                raise AppError("TYPE3_RUN_NOT_ACTIVE", "该任务已结束，不能再写入候选", 409)
             run.status = "RETRIEVING"
             run.parsed_remark = analysis.model_dump(mode="json")
             run.provider, run.model, run.prompt_version = provider, model, prompt_version
@@ -408,11 +431,23 @@ class Type3RecommendationService:
                 or 0
             )
             run.status = "WAITING_CONFIRMATION" if count else "NO_CANDIDATES"
+            project = await self._project(run.project_id, for_update=True)
+            if project.status in {"MATCHING", "IMPORTED", "SELECTING"}:
+                previous = project.status
+                project.status = "SELECTING" if count else "IMPORTED"
+                project.updated_by = run.created_by
+                self.session.add(BidProjectEvent(
+                    project_id=project.id, actor_id=run.created_by,
+                    event_type="TYPE3_RECOMMENDATION_COMPLETED",
+                    from_status=previous, to_status=project.status,
+                    note=f"生成 {count} 件候选",
+                ))
 
     async def fail(self, run_id: uuid.UUID, message: str) -> None:
         async with transaction_scope(self.session):
             run = await self._run(run_id, for_update=True)
-            run.status, run.error = "FAILED", message[:4000]
+            if run.status in {"QUEUED", "ANALYZING", "RETRIEVING"}:
+                run.status, run.error = "FAILED", message[:4000]
 
     async def candidates(
         self, run_id: uuid.UUID, sheet_name: str | None, page: PageParams
@@ -793,7 +828,7 @@ class Type3RecommendationService:
             BidProject.recommendation_type == BidRecommendationType.TYPE_3_CATEGORY.value,
         )
         if for_update:
-            statement = statement.with_for_update()
+            statement = statement.with_for_update().execution_options(populate_existing=True)
         project = await self.session.scalar(statement)
         if project is None:
             raise AppError("TYPE3_PROJECT_NOT_FOUND", "类型 3 项目不存在", 404)
@@ -833,7 +868,7 @@ class Type3RecommendationService:
     async def _run(self, run_id: uuid.UUID, *, for_update: bool = False) -> Type3Run:
         statement = select(Type3Run).where(Type3Run.id == run_id)
         if for_update:
-            statement = statement.with_for_update()
+            statement = statement.with_for_update().execution_options(populate_existing=True)
         run = await self.session.scalar(statement)
         if run is None:
             raise AppError("TYPE3_RUN_NOT_FOUND", "类型 3 推品任务不存在", 404)

@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     auth_refresh_cookie_secure: bool | None = None
     cors_origins: list[str] = ["http://localhost:5173"]
     task_mode: str = "inline"
+    task_worker_concurrency: int = 1
+    task_heartbeat_seconds: int = 15
+    task_lease_seconds: int = 900
+    mapping_parse_concurrency: int = 1
     storage_mode: str = "local"
     local_storage_path: Path = Path("local-data/files")
     # Deployments may override the repository's approved public PPTX assets.
@@ -88,6 +92,10 @@ class Settings(BaseSettings):
         "product_import_max_rows",
         "product_import_max_concurrent_workbooks",
         "product_import_max_image_mb",
+        "task_worker_concurrency",
+        "task_heartbeat_seconds",
+        "task_lease_seconds",
+        "mapping_parse_concurrency",
         "deepseek_timeout_seconds",
         "deepseek_max_tokens",
         "ppt_ai_input_token_budget",

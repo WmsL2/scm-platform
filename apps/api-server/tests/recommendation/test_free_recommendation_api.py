@@ -11,6 +11,7 @@ from sqlalchemy import delete, func, select
 
 from app.core.database import SessionLocal
 from app.infrastructure.adapters import get_object_storage
+from app.jobs import task_worker
 from app.main import app
 from app.modules.auth.security import create_token, hash_password
 from app.modules.bid.infrastructure.models import (
@@ -20,7 +21,15 @@ from app.modules.bid.infrastructure.models import (
     BidProjectItem,
 )
 from app.modules.recommendation.template.models import RecommendationTemplateMapping
-from app.modules.system.models import Permission, Role, RolePermission, User, UserRole
+from app.modules.system.models import (
+    AsyncTask,
+    MappingAnalysisCache,
+    Permission,
+    Role,
+    RolePermission,
+    User,
+    UserRole,
+)
 
 
 def _xlsx(headers: list[str] | None = None) -> bytes:
@@ -66,6 +75,10 @@ async def _user(codes: tuple[str, ...]) -> tuple[uuid.UUID, uuid.UUID, dict[str,
 
 async def _cleanup(user_id: uuid.UUID, role_id: uuid.UUID, projects: list[uuid.UUID]) -> None:
     async with SessionLocal() as session:
+        await session.execute(
+            delete(MappingAnalysisCache).where(MappingAnalysisCache.project_id.in_(projects))
+        )
+        await session.execute(delete(AsyncTask).where(AsyncTask.project_id.in_(projects)))
         files = list(
             (
                 await session.scalars(
@@ -189,6 +202,15 @@ async def test_free_recommendation_router_mysql_contracts() -> None:
             )
             assert [row["version_no"] for row in templates.json()["data"]] == [1, 2]
             file_id = uuid.UUID(templates.json()["data"][0]["id"])
+            analysis = await client.get(
+                f"/api/v1/bid-projects/{project_id}/recommendation-templates/{file_id}/structure?sheet_name=推荐清单&header_row=1",
+                headers=headers,
+            )
+            assert analysis.status_code == 202
+            assert await task_worker.run_once(
+                {task_worker.AsyncTaskKind.MAPPING_STRUCTURE_ANALYSIS},
+                uuid.UUID(analysis.json()["data"]["id"]),
+            )
             created_b = await _create_free(client, headers, "自由推品B", first)
             project_b_id = uuid.UUID(str(created_b["id"]))
             projects.append(project_b_id)
@@ -269,7 +291,7 @@ async def test_free_recommendation_router_mysql_contracts() -> None:
                     headers=headers,
                     json=payload,
                 )
-                assert invalid.status_code == 422
+                assert invalid.status_code == (409 if payload["sheet_name"] == "missing" else 422)
             async with SessionLocal() as session:
                 mapping = await session.scalar(
                     select(RecommendationTemplateMapping).where(

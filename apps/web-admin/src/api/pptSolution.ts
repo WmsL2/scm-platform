@@ -1,5 +1,6 @@
 import { http } from "../shared/http/runtime"
 import type { PptGenerationTask, PptPackage, PptPackageItemInput, PptRecommendationConfig, PptRecommendationMode, PptPriceBand, PptSolutionPlan, PptTemplate } from "../types/pptSolution"
+import type { AsyncTask } from "../types/asyncTask"
 
 const base = "/api/v1/ppt-solution-projects"
 
@@ -21,11 +22,11 @@ export const pptSolutionApi = {
   generations(projectId: string): Promise<PptGenerationTask[]> {
     return http.get(`${base}/${projectId}/generations`)
   },
-  generate(projectId: string, runId: string, templateCode = "SYSTEM_DEFAULT"): Promise<PptGenerationTask> {
+  generate(projectId: string, runId: string, templateCode = "SYSTEM_DEFAULT"): Promise<AsyncTask> {
     return http.post(`${base}/${projectId}/runs/${runId}/generations`, {
       use_default_template: true,
       template_code: templateCode,
-    }, { timeoutMs: 1_800_000 })
+    })
   },
   download(taskId: string, fileId: string): Promise<Blob> {
     return http.getBlob(`${base}/generations/${taskId}/files/${fileId}/download`, { timeoutMs: 300_000 })

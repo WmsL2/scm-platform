@@ -29,7 +29,7 @@ describe("bid api", () => {
     expect(http.post.mock.calls[0][0]).toBe("/api/v1/bid-projects")
     expect(form.get("file")).toBeInstanceOf(File); expect(form.get("project_type")).toBe("FILTER_RECOMMENDATION"); expect(form.get("recommendation_type")).toBe("TYPE_1_SPECIFICATION"); expect(form.get("project_name")).toBe("项目"); expect(form.get("buyer_name")).toBe("需求商")
     expect(http.post.mock.calls[0][2]).toEqual({ timeoutMs: 300_000 })
-    expect(http.post).toHaveBeenNthCalledWith(2, "/api/v1/bid-projects/p1/commands/start-matching", undefined, { timeoutMs: 300_000 })
+    expect(http.post).toHaveBeenNthCalledWith(2, "/api/v1/bid-projects/p1/commands/start-matching")
     expect(http.post).toHaveBeenNthCalledWith(3, "/api/v1/bid-projects/p1/exports", undefined, { timeoutMs: 300_000 })
   })
 
