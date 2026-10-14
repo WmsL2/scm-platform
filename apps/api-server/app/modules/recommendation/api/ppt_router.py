@@ -168,6 +168,7 @@ async def create_generation(
             current.user_id,
             use_default_template=payload.use_default_template,
             template_code=payload.template_code,
+            template_version=payload.template_version,
         )
         async_task = await AsyncTaskService(task_session).enqueue(
             AsyncTaskCreate(

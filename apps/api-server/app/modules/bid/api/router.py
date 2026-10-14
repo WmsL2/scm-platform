@@ -21,6 +21,8 @@ from app.modules.bid.domain.lifecycle import (
     BidRecommendationType,
 )
 from app.modules.bid.schemas import (
+    BidInputMappingResponse,
+    BidInputMappingUpdateRequest,
     BidOutputMappingResponse,
     BidOutputMappingUpdateRequest,
     BidProjectCreateResponse,
@@ -217,6 +219,41 @@ async def get_bid_project(
 
 
 @router.get(
+    "/{project_id}/input-mapping",
+    response_model=ApiResponse[BidInputMappingResponse],
+)
+async def get_bid_input_mapping(
+    project_id: uuid.UUID,
+    _: Annotated[CurrentUser, Depends(require_permission("bid:detail"))],
+    session: SessionDep,
+    sheet_name: Annotated[str | None, Query()] = None,
+    header_row: Annotated[int | None, Query(ge=1)] = None,
+) -> ApiResponse[BidInputMappingResponse]:
+    return success(
+        await BidProjectService(session).input_mapping(
+            project_id, sheet_name=sheet_name, header_row=header_row
+        )
+    )
+
+
+@router.put(
+    "/{project_id}/input-mapping",
+    response_model=ApiResponse[BidInputMappingResponse],
+)
+async def put_bid_input_mapping(
+    project_id: uuid.UUID,
+    payload: BidInputMappingUpdateRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("bid:update"))],
+    session: SessionDep,
+) -> ApiResponse[BidInputMappingResponse]:
+    return success(
+        await BidProjectService(session).confirm_input_mapping(
+            project_id, payload, current.user_id
+        )
+    )
+
+
+@router.get(
     "/{project_id}/output-mapping",
     response_model=ApiResponse[BidOutputMappingResponse | AsyncTaskResponse],
     status_code=status.HTTP_202_ACCEPTED,
@@ -228,12 +265,16 @@ async def get_bid_output_mapping(
     response: Response,
 ) -> ApiResponse[BidOutputMappingResponse | AsyncTaskResponse]:
     service = BidProjectService(session)
-    file_id = await service.output_mapping_file_id(project_id)
+    file_id, sheet_name, header_row = await service.output_mapping_analysis_context(project_id)
     analysis = await MappingAnalysisService(session).cached_or_enqueue(
         project_id=project_id,
         file_id=file_id,
-        analysis_key="BID_OUTPUT_HEADERS",
-        payload_json={"analysis_type": "BID_OUTPUT_HEADERS"},
+        analysis_key=f"BID_OUTPUT_HEADERS:{sheet_name}:{header_row}",
+        payload_json={
+            "analysis_type": "BID_OUTPUT_HEADERS",
+            "sheet_name": sheet_name,
+            "header_row": header_row,
+        },
         actor_id=current.user_id,
     )
     if not isinstance(analysis, dict):
@@ -258,12 +299,16 @@ async def put_bid_output_mapping(
     session: SessionDep,
 ) -> ApiResponse[BidOutputMappingResponse]:
     service = BidProjectService(session)
-    file_id = await service.output_mapping_file_id(project_id)
+    file_id, sheet_name, header_row = await service.output_mapping_analysis_context(project_id)
     analysis = await MappingAnalysisService(session).cached_or_enqueue(
         project_id=project_id,
         file_id=file_id,
-        analysis_key="BID_OUTPUT_HEADERS",
-        payload_json={"analysis_type": "BID_OUTPUT_HEADERS"},
+        analysis_key=f"BID_OUTPUT_HEADERS:{sheet_name}:{header_row}",
+        payload_json={
+            "analysis_type": "BID_OUTPUT_HEADERS",
+            "sheet_name": sheet_name,
+            "header_row": header_row,
+        },
         actor_id=current.user_id,
     )
     if not isinstance(analysis, dict):

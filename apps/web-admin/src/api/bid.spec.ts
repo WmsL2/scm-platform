@@ -75,4 +75,25 @@ describe("bid api", () => {
     expect(http.get).toHaveBeenCalledWith("/api/v1/bid-projects/p1/output-mapping")
     expect(http.put).toHaveBeenCalledWith("/api/v1/bid-projects/p1/output-mapping", { mapping: { selected_unit_price: "商品报价", note: null } })
   })
+
+  it("reads and confirms the Type 1/2 input mapping before parsing", async () => {
+    http.get.mockResolvedValue({ fields: [] }); http.put.mockResolvedValue({ confirmed: true })
+    const { bidApi } = await import("./bid")
+
+    await bidApi.inputMapping("p1", { sheet_name: "需求表", header_row: 3 })
+    await bidApi.confirmInputMapping("p1", {
+      sheet_name: "需求表",
+      header_row: 3,
+      data_start_row: 4,
+      mapping: { brand: "品牌", model: "型号" },
+    })
+
+    expect(http.get).toHaveBeenCalledWith("/api/v1/bid-projects/p1/input-mapping?sheet_name=%E9%9C%80%E6%B1%82%E8%A1%A8&header_row=3")
+    expect(http.put).toHaveBeenCalledWith("/api/v1/bid-projects/p1/input-mapping", {
+      sheet_name: "需求表",
+      header_row: 3,
+      data_start_row: 4,
+      mapping: { brand: "品牌", model: "型号" },
+    })
+  })
 })

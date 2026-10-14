@@ -29,6 +29,15 @@ class Settings(BaseSettings):
     # Deployments may override the repository's approved public PPTX assets.
     # An explicit directory remains strict: missing assets are never silently replaced.
     ppt_template_asset_dir: Path | None = None
+    # Formal customer v5 decks remain opt-in. Frozen historical tasks are not
+    # affected by this switch because their persisted version is still resolved.
+    ppt_v5_preview_enabled: bool = False
+    # Local developer convenience only: replace the two original gallery cards
+    # with their v5 definitions and make omitted versions resolve to v5.
+    ppt_local_v5_default_enabled: bool = False
+    # Local diagnostic escape hatch. Production never enables this behavior,
+    # even if the environment variable is accidentally set.
+    ppt_v5_layout_preview: bool = False
     product_import_max_file_mb: int = 1024
     product_import_max_rows: int = 100_000
     product_import_max_concurrent_workbooks: int = 1
@@ -124,6 +133,10 @@ class Settings(BaseSettings):
         if self.auth_refresh_cookie_secure is not None:
             return self.auth_refresh_cookie_secure
         return self.app_env.lower() not in {"development", "test"}
+
+    @property
+    def use_ppt_v5_layout_preview(self) -> bool:
+        return self.ppt_v5_layout_preview and self.app_env.lower() in {"development", "test"}
 
 
 @lru_cache

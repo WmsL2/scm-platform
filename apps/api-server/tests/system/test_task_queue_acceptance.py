@@ -377,6 +377,101 @@ async def test_http_concurrent_dispatch_cancel_and_state_recovery(kind):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", [AsyncTaskKind.TYPE1_MATCH, AsyncTaskKind.TYPE2_MATCH])
+async def test_input_confirmation_and_queue_dispatch_keep_each_others_gates(kind):
+    async with fixture(kind) as (pid, actor, _fid, _token, _current):
+        async with SessionLocal.begin() as session:
+            project = await session.get(BidProject, pid)
+            project.import_status = "MAPPING_REQUIRED"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            rejected = await client.post(f"/api/v1/bid-projects/{pid}/commands/start-matching")
+            assert rejected.status_code == 409
+            assert rejected.json()["code"] == "BID_PROJECT_NOT_PARSED"
+            async with SessionLocal.begin() as session:
+                project = await session.get(BidProject, pid)
+                project.import_status = "PARSED"
+            async with SessionLocal() as session:
+                await AsyncTaskService(session).enqueue(
+                    AsyncTaskCreate(project_id=pid, task_kind=kind, created_by=actor)
+                )
+            rejected = await client.put(
+                f"/api/v1/bid-projects/{pid}/input-mapping",
+                json={
+                    "sheet_name": "Sheet1",
+                    "header_row": 1,
+                    "data_start_row": 2,
+                    "mapping": {"product_name": "商品名称"},
+                },
+            )
+            assert rejected.status_code == 409
+            assert rejected.json()["code"] == "ASYNC_TASK_ALREADY_ACTIVE"
+
+
+@pytest.mark.asyncio
+async def test_output_cache_and_worker_use_the_frozen_input_sheet_and_header():
+    async with fixture(AsyncTaskKind.TYPE1_MATCH) as (pid, _actor, fid, _token, _current):
+        workbook = Workbook()
+        workbook.active.title = "Sheet1"
+        workbook.active.append(["商品名称", "协议价"])
+        workbook.active.append(["旧需求", None])
+        sheet = workbook.create_sheet("Sheet2")
+        sheet.append(["说明"])
+        sheet.append(["商品名称", "新协议价"])
+        sheet.append(["新需求", None])
+        output = BytesIO()
+        workbook.save(output)
+        workbook.close()
+        content = output.getvalue()
+        storage = get_object_storage()
+        key = await storage.save(f"queue-tests/{uuid.uuid4().hex}.xlsx", content)
+        try:
+            async with SessionLocal.begin() as session:
+                file = await session.get(BidProjectFile, fid)
+                file.storage_key = key
+                file.sha256 = hashlib.sha256(content).hexdigest()
+                file.file_size = len(content)
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                path = f"/api/v1/bid-projects/{pid}/output-mapping"
+                first = await client.get(path)
+                assert first.status_code == 202, first.text
+                old_task_id = uuid.UUID(first.json()["data"]["id"])
+                confirmed = await client.put(
+                    f"/api/v1/bid-projects/{pid}/input-mapping",
+                    json={
+                        "sheet_name": "Sheet2",
+                        "header_row": 2,
+                        "data_start_row": 3,
+                        "mapping": {"product_name": "商品名称"},
+                    },
+                )
+                assert confirmed.status_code == 200, confirmed.text
+                assert await task_worker.run_once(
+                    {AsyncTaskKind.MAPPING_STRUCTURE_ANALYSIS}, old_task_id
+                )
+                async with SessionLocal() as session:
+                    old_cache = await session.scalar(
+                        select(MappingAnalysisCache).where(
+                            MappingAnalysisCache.async_task_id == old_task_id
+                        )
+                    )
+                    assert old_cache.result_json["headers"] == ["商品名称", "协议价"]
+                second = await client.get(path)
+                assert second.status_code == 202, second.text
+                new_task_id = uuid.UUID(second.json()["data"]["id"])
+                assert new_task_id != old_task_id
+                assert await task_worker.run_once(
+                    {AsyncTaskKind.MAPPING_STRUCTURE_ANALYSIS}, new_task_id
+                )
+                cached = await client.get(path)
+                assert cached.status_code == 200, cached.text
+                assert cached.json()["data"]["headers"] == ["商品名称", "新协议价"]
+        finally:
+            await storage.delete(key)
+
+
+@pytest.mark.asyncio
 async def test_mapping_cache_commits_deduplicates_and_does_not_wait_for_heavy():
     async with fixture(AsyncTaskKind.TYPE3_CANDIDATE_GENERATION) as (
         pid,

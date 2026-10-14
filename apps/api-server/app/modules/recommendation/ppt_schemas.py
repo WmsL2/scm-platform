@@ -311,6 +311,9 @@ class PptGenerationCreateRequest(BaseModel):
 
     use_default_template: bool = False
     template_code: str | None = None
+    # Optional for backwards compatibility. The service validates this against
+    # the fixed registry and never accepts a caller-provided asset path.
+    template_version: str | None = Field(default=None, max_length=16)
 
 
 class PptTemplateResponse(BaseModel):

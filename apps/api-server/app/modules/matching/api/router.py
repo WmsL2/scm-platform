@@ -48,7 +48,11 @@ async def start_matching(
     if kind is None:
         raise AppError("BID_MATCHING_TYPE_INVALID", "该项目不是类型 1 或类型 2 匹配项目", 409)
     await AsyncTaskService(session).ensure_available(project_id, kind)
-    if project.import_status != "PARSED" or project.status not in {
+    if project.import_status != "PARSED":
+        raise AppError(
+            "BID_PROJECT_NOT_PARSED", "请先人工确认客户需求字段映射，再开始匹配", 409
+        )
+    if project.status not in {
         "IMPORTED",
         "SELECTING",
         "READY",

@@ -31,6 +31,18 @@ def test_settings_requires_database_url(monkeypatch: pytest.MonkeyPatch) -> None
         Settings(_env_file=None)
 
 
+def test_ppt_v5_layout_preview_is_limited_to_local_environments() -> None:
+    common = {
+        "_env_file": None,
+        "database_url": "mysql+asyncmy://user:pass@localhost/db",
+        "auth_jwt_secret": "unit-test-secret",
+        "ppt_v5_layout_preview": True,
+    }
+    assert Settings(app_env="development", **common).use_ppt_v5_layout_preview  # type: ignore[arg-type]
+    assert Settings(app_env="test", **common).use_ppt_v5_layout_preview  # type: ignore[arg-type]
+    assert not Settings(app_env="production", **common).use_ppt_v5_layout_preview  # type: ignore[arg-type]
+
+
 async def test_request_id_is_generated() -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/health/live")

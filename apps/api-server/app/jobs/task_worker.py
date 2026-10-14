@@ -149,7 +149,10 @@ async def _execute_mapping(task: AsyncTask) -> None:
         storage_key, expected_sha = file.storage_key, file.sha256
         sheet_name = payload.get("sheet_name")
         header_row = payload.get("header_row", 1)
-        if analysis_type == "BID_OUTPUT_HEADERS":
+        if analysis_type == "BID_OUTPUT_HEADERS" and not (
+            isinstance(sheet_name, str) and isinstance(payload.get("header_row"), int)
+        ):
+            # Older queued tasks predate explicit Sheet/header cache keys.
             project = await session.get(BidProject, task.project_id)
             template = (
                 await session.get(BidTemplate, project.template_id)

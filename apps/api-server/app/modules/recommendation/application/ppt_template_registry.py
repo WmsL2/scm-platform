@@ -15,6 +15,7 @@ class PptTemplateDefinition:
     description: str
     version: str
     preview_url: str | None
+    single_product_only: bool = False
 
 
 # The four business assets are reviewed, public distribution assets. They cannot be
@@ -57,21 +58,71 @@ PPT_TEMPLATES: tuple[PptTemplateDefinition, ...] = (
     ),
 )
 
+PPT_V5_TEMPLATES: tuple[PptTemplateDefinition, ...] = (
+    PptTemplateDefinition(
+        "JD_DETAIL_RED",
+        "京东红白商品详版",
+        "正式客户版，当前仅支持单品生成",
+        "5",
+        "/ppt-template-previews/jd-detail-red.svg",
+        single_product_only=True,
+    ),
+    PptTemplateDefinition(
+        "JD_FESTIVE_RED",
+        "京东节庆红色版",
+        "正式两页客户版，当前仅支持单品生成",
+        "5",
+        "/ppt-template-previews/jd-festive-red.svg",
+        single_product_only=True,
+    ),
+)
+
+
+def is_local_v5_default_enabled() -> bool:
+    """Allow the local replacement only in an explicit development environment."""
+    settings = get_settings()
+    return (
+        settings.app_env.strip().lower() in {"development", "dev", "local"}
+        and settings.ppt_local_v5_default_enabled
+    )
+
 
 def list_ppt_templates() -> tuple[PptTemplateDefinition, ...]:
-    return PPT_TEMPLATES
+    if not is_local_v5_default_enabled():
+        return PPT_TEMPLATES
+    replacements = {template.code: template for template in PPT_V5_TEMPLATES}
+    return tuple(replacements.get(template.code, template) for template in PPT_TEMPLATES)
 
 
 def get_ppt_template(code: str | None, version: str | None = None) -> PptTemplateDefinition:
     normalized = (code or "SYSTEM_DEFAULT").strip().upper()
-    for template in PPT_TEMPLATES:
-        if template.code == normalized:
-            if version is None or version == template.version:
+    choices = [
+        template
+        for template in PPT_TEMPLATES + PPT_V5_TEMPLATES
+        if template.code == normalized
+    ]
+    if choices:
+        if version is None:
+            if is_local_v5_default_enabled():
+                local_v5 = next(
+                    (template for template in choices if template.version == "5"),
+                    None,
+                )
+                if local_v5 is not None:
+                    return local_v5
+            return choices[0]
+        for template in choices:
+            if version == template.version:
                 return template
-            if get_pptx_manifest(template.code, version) is not None:
-                return replace(template, version=version)
-            raise AppError("PPT_TEMPLATE_VERSION_UNAVAILABLE", "所选 PPT 模板版本不可用", 409)
+        if get_pptx_manifest(normalized, version) is not None:
+            return replace(choices[0], version=version)
+        raise AppError("PPT_TEMPLATE_VERSION_UNAVAILABLE", "所选 PPT 模板版本不可用", 409)
     raise AppError("PPT_TEMPLATE_INVALID", "不支持的 PPT 模板编号", 422)
+
+
+def is_ppt_template_enabled_for_new_task(template: PptTemplateDefinition) -> bool:
+    """Gate v5 task creation without invalidating persisted historical tasks."""
+    return template.version != "5" or get_settings().ppt_v5_preview_enabled
 
 
 def resolve_ppt_template_asset(template: PptTemplateDefinition) -> Path:
@@ -83,12 +134,10 @@ def resolve_ppt_template_asset(template: PptTemplateDefinition) -> Path:
         raise AppError("PPT_TEMPLATE_ASSET_VERSION_MISMATCH", "PPT 模板资产版本不匹配", 409)
     settings = get_settings()
     # Explicit deployment configuration is strict, so a mount/configuration error
-    # continues to fail safely rather than falling back to another source.
-    # Formal v5 assets intentionally remain private. They may only be served
-    # from an explicitly configured approved asset mount, never from the public
-    # repository fallback used by v3 assets.
+    # continues to fail safely rather than falling back to another source or version.
+    # Approved versioned assets, including v5, ship in the repository by default.
     asset_root = settings.ppt_template_asset_dir
-    if asset_root is None and template.version != "5":
+    if asset_root is None:
         asset_root = PROJECT_ROOT / "assets" / "ppt-templates"
     path = asset_root / manifest.clean_filename if asset_root is not None else None
     if path is None or not path.is_file():
@@ -100,6 +149,8 @@ def is_ppt_template_available(template: PptTemplateDefinition) -> bool:
     """Report whether this deployment can render the requested built-in template."""
     if template.code == "SYSTEM_DEFAULT":
         return True
+    if not is_ppt_template_enabled_for_new_task(template):
+        return False
     try:
         resolve_ppt_template_asset(template)
     except AppError:

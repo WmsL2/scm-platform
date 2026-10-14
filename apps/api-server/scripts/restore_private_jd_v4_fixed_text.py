@@ -39,7 +39,9 @@ def main() -> None:
     candidate_product = candidate.slides[1]
 
     # Original shape 38 is the fixed lower-left image caption. Original shape 24
-    # owns the fixed selling-point heading; only its heading paragraph is static.
+    # owns the heading's typography. Its value is a controlled token so the same
+    # frozen page can truthfully label either a single-product detail or a package
+    # composition without changing font, paragraph, or position.
     _replace_paragraph(
         _shape_by_name(candidate_product, "SCM_FIELD_IMAGE_NOTICE"),
         reference_product.shapes[9],
@@ -48,11 +50,15 @@ def main() -> None:
         _shape_by_name(candidate_product, "SCM_FIELD_SELLING_POINTS"),
         reference_product.shapes[2],
     )
+    heading = _shape_by_name(candidate_product, "SCM_FIELD_SELLING_POINTS")
+    heading.text_frame.paragraphs[0].runs[0].text = "{{detail_heading}}"
     # The reference label denotes a JD enterprise/customer quotation. It is not
     # interchangeable with the generic product `jd_price` field.
-    for paragraph in _shape_by_name(candidate_product, "SCM_FIELD_PRICES").text_frame.paragraphs:
+    price_shape = _shape_by_name(candidate_product, "SCM_FIELD_PRICES")
+    for paragraph in price_shape.text_frame.paragraphs:
         for run in paragraph.runs:
             run.text = run.text.replace("{{jd_price}}", "{{jd_customer_price}}")
+    price_shape.text_frame.paragraphs[0].runs[0].text = "京东大客户价："
     candidate.save(str(OUTPUT))
 
 
