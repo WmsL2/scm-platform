@@ -172,6 +172,8 @@ async def test_type2_match_agent_receives_full_row_and_project_remark() -> None:
     payload = json.loads(call["user_prompt"])
     assert payload["project_remark"] == "报价需满足平台 88 折并长期履约"
     assert payload["requirements"][0]["source_row"]["备注"] == "必须原装单支装"
+    assert "未建立主要字段映射" in provider.calls[0]["system_prompt"]
+    assert "仍是次要参考" in provider.calls[0]["system_prompt"]
 
 
 @pytest.mark.asyncio

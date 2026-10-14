@@ -119,6 +119,12 @@ class MatchingService:
         self, project_id: uuid.UUID, actor_id: uuid.UUID
     ) -> StartMatchingResponse:
         project = await self.session.get(BidProject, project_id)
+        if project is not None and project.import_status != BidImportStatus.PARSED.value:
+            raise AppError(
+                "BID_PROJECT_NOT_PARSED",
+                "请先人工确认客户需求字段映射，再开始匹配",
+                409,
+            )
         if (
             project is not None
             and project.output_mapping is not None
@@ -157,7 +163,11 @@ class MatchingService:
         async with transaction_scope(self.session):
             project = await self._project_or_404(project_id)
             if project.import_status != BidImportStatus.PARSED.value:
-                raise AppError("BID_PROJECT_NOT_PARSED", "项目尚未完成需求行解析", 409)
+                raise AppError(
+                    "BID_PROJECT_NOT_PARSED",
+                    "请先人工确认客户需求字段映射，再开始匹配",
+                    409,
+                )
             if (
                 project.output_mapping is not None
                 and project.output_mapping_confirmed_at is None
@@ -353,7 +363,11 @@ class MatchingService:
         async with transaction_scope(self.session):
             project = await self._project_or_404(project_id)
             if project.import_status != BidImportStatus.PARSED.value:
-                raise AppError("BID_PROJECT_NOT_PARSED", "项目尚未完成需求行解析", 409)
+                raise AppError(
+                    "BID_PROJECT_NOT_PARSED",
+                    "请先人工确认客户需求字段映射，再开始匹配",
+                    409,
+                )
             if project.status not in {
                 BidProjectStatus.IMPORTED.value,
                 BidProjectStatus.SELECTING.value,
@@ -642,7 +656,11 @@ class MatchingService:
         async with transaction_scope(self.session):
             project = await self._project_or_404(project_id)
             if project.import_status != BidImportStatus.PARSED.value:
-                raise AppError("BID_PROJECT_NOT_PARSED", "项目尚未完成需求行解析", 409)
+                raise AppError(
+                    "BID_PROJECT_NOT_PARSED",
+                    "请先人工确认客户需求字段映射，再开始匹配",
+                    409,
+                )
             if project.status not in {
                 BidProjectStatus.IMPORTED.value,
                 BidProjectStatus.SELECTING.value,

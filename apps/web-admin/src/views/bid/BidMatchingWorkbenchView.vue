@@ -6,7 +6,7 @@ import { bidApi } from "../../api/bid"
 import { HttpError } from "../../shared/http"
 import { useAuthStore } from "../../stores/auth"
 import { useWorkspaceStore } from "../../stores/workspace"
-import { ITEM_STATUS_LABELS, NO_QUOTE_REASON_LABELS, PROJECT_STATUS_LABELS, type BidCandidate, type BidItemStatus, type BidOutputMapping, type BidProjectDetail, type BidProjectItem, type NoQuoteReason } from "../../types/bid"
+import { ITEM_STATUS_LABELS, NO_QUOTE_REASON_LABELS, PROJECT_STATUS_LABELS, type BidCandidate, type BidInputMapping, type BidItemStatus, type BidOutputMapping, type BidProjectDetail, type BidProjectItem, type NoQuoteReason } from "../../types/bid"
 
 const route = useRoute()
 const router = useRouter()
@@ -36,6 +36,15 @@ const outputMappingSelections = reactive<Record<string, string | null>>({})
 const outputMappingHeaders = ref<string[]>([])
 const additionalOutputHeader = ref<string>()
 const mappingSaving = ref(false)
+const inputMapping = ref<BidInputMapping>()
+const inputMappingSelections = reactive<Record<string, string | null>>({})
+const inputSheetName = ref("")
+const inputHeaderRow = ref(1)
+const inputDataStartRow = ref(2)
+const inputMappingSaving = ref(false)
+const inputStructureLoading = ref(false)
+const mappingTab = ref<"input" | "output">("input")
+const mappingTabInitialized = ref(false)
 
 const isType1 = computed(() => project.value?.recommendation_type === "TYPE_1_SPECIFICATION")
 const isType2 = computed(() => project.value?.recommendation_type === "TYPE_2_IDENTIFIED_PRODUCT")
@@ -65,6 +74,18 @@ function snapshot(selection: BidProjectItem["current_selection"], key: "product_
   return selection?.[key] ?? {}
 }
 
+function applyInputMapping(value: BidInputMapping): void {
+  inputMapping.value = value
+  inputSheetName.value = value.sheet_name
+  inputHeaderRow.value = value.header_row
+  inputDataStartRow.value = value.data_start_row
+  Object.keys(inputMappingSelections).forEach((key) => delete inputMappingSelections[key])
+  value.headers.forEach((header) => { inputMappingSelections[header] = null })
+  Object.entries(value.mapping).forEach(([fieldKey, header]) => {
+    if (Object.hasOwn(inputMappingSelections, header)) inputMappingSelections[header] = fieldKey
+  })
+}
+
 async function load(): Promise<void> {
   loading.value = true
   try {
@@ -76,7 +97,13 @@ async function load(): Promise<void> {
     rows.value = result.items
     total.value = result.total
     page.value = result.page
-    if (detail.import_status === "PARSED" && ["TYPE_1_SPECIFICATION", "TYPE_2_IDENTIFIED_PRODUCT"].includes(detail.recommendation_type ?? "")) {
+    const supportsMapping = ["TYPE_1_SPECIFICATION", "TYPE_2_IDENTIFIED_PRODUCT"].includes(detail.recommendation_type ?? "")
+    if (supportsMapping && detail.template_id) {
+      applyInputMapping(await bidApi.inputMapping(id))
+    } else {
+      inputMapping.value = undefined
+    }
+    if (detail.import_status === "PARSED" && supportsMapping) {
       outputMapping.value = await bidApi.outputMapping(id)
       Object.keys(outputMappingSelections).forEach((key) => delete outputMappingSelections[key])
       outputMappingHeaders.value = [...outputMapping.value.suggested_headers]
@@ -87,6 +114,12 @@ async function load(): Promise<void> {
       Object.entries(outputMapping.value.mapping).forEach(([fieldKey, header]) => {
         if (Object.hasOwn(outputMappingSelections, header)) outputMappingSelections[header] = fieldKey
       })
+    } else {
+      outputMapping.value = undefined
+    }
+    if (!mappingTabInitialized.value) {
+      mappingTab.value = detail.import_status === "PARSED" ? "output" : "input"
+      mappingTabInitialized.value = true
     }
     if (route.meta) route.meta.title = workspaceTitle.value
     workspace.renameRoute(route.fullPath, workspaceTitle.value)
@@ -94,6 +127,49 @@ async function load(): Promise<void> {
     ElMessage.error(messageFor(error, "加载匹配结果失败"))
   } finally {
     loading.value = false
+  }
+}
+
+async function refreshInputStructure(): Promise<void> {
+  if (!inputSheetName.value || inputHeaderRow.value < 1) return
+  inputStructureLoading.value = true
+  try {
+    const value = await bidApi.inputMapping(id, { sheet_name: inputSheetName.value, header_row: inputHeaderRow.value })
+    applyInputMapping(value)
+  } catch (error) {
+    ElMessage.error(messageFor(error, "读取所选表头失败"))
+  } finally {
+    inputStructureLoading.value = false
+  }
+}
+
+async function confirmInputMapping(): Promise<void> {
+  if (!inputMapping.value) return
+  const selectedFields = Object.values(inputMappingSelections).filter((value): value is string => Boolean(value))
+  if (new Set(selectedFields).size !== selectedFields.length) {
+    ElMessage.error("同一个需求字段只能对应一个客户表列")
+    return
+  }
+  const mapping = Object.fromEntries(
+    Object.entries(inputMappingSelections)
+      .filter((entry): entry is [string, string] => Boolean(entry[1]))
+      .map(([header, fieldKey]) => [fieldKey, header]),
+  )
+  inputMappingSaving.value = true
+  try {
+    await bidApi.confirmInputMapping(id, {
+      sheet_name: inputSheetName.value,
+      header_row: inputHeaderRow.value,
+      data_start_row: inputDataStartRow.value,
+      mapping,
+    })
+    ElMessage.success("需求字段映射已确认，客户需求行解析完成")
+    await load()
+    mappingTab.value = "output"
+  } catch (error) {
+    ElMessage.error(messageFor(error, "确认需求字段映射失败"))
+  } finally {
+    inputMappingSaving.value = false
   }
 }
 
@@ -253,15 +329,39 @@ onMounted(() => void load())
       </div>
     </header>
 
-    <el-alert v-if="project && project.import_status !== 'PARSED'" :title="project.import_error ?? '客户需求文件尚未完成解析，暂时不能开始。'" type="warning" :closable="false" />
+    <el-alert v-if="project && project.import_status !== 'PARSED'" :title="project.import_error ?? '请先人工确认 AI 预识别的客户需求字段。'" type="warning" :closable="false" />
     <el-alert v-else-if="outputMapping && !outputMapping.confirmed" title="AI 已预填客户原表的回填列。请人工核对并确认；这里只决定结果写回哪些列，不参与商品匹配判断。" type="warning" :closable="false" />
     <el-alert v-else-if="project?.status === 'IMPORTED'" :title="isType2 ? '客户需求和回填字段已确认。请点击“执行 AI 同品比价”。' : '客户需求和回填字段已确认。请点击“开始规格匹配”。'" type="info" :closable="false" />
     <el-alert v-else-if="isType2" title="系统先按 SKU 或品牌+型号召回，再由 AI 复核重要附加条件；完全同品取合规最低协议价，只有需求明确允许且无合规同品时才推荐带差异备注的替代品。" type="success" :closable="false" />
     <el-alert v-else-if="isType1" title="系统会保留全部满足规格参数且价格合规的商品；页面优先显示有匹配结果的需求行，导出仍按客户原表顺序，并在原需求行下逐行展开全部命中商品。" type="info" :closable="false" />
     <el-alert v-else title="该工作台仅用于类型 1、2。" type="warning" :closable="false" />
 
-    <el-card v-if="outputMapping" class="mapping-card">
-      <template #header><div class="mapping-title"><div><strong>客户原表回填字段</strong><p>{{ outputMapping.sheet_name }} · 第 {{ outputMapping.header_row }} 行表头</p></div><el-tag :type="outputMapping.confirmed ? 'success' : 'warning'">{{ outputMapping.confirmed ? "已确认" : "待确认" }}</el-tag></div></template>
+    <el-card v-if="inputMapping" class="mapping-card">
+      <el-tabs v-model="mappingTab" class="mapping-tabs">
+        <el-tab-pane label="1. 需求主要字段" name="input">
+      <div v-loading="inputStructureLoading">
+      <div class="mapping-title"><div><strong>客户需求主要字段确认</strong><p>AI 先预识别主要参考字段，人工确认后才解析需求并允许匹配</p></div><el-tag :type="inputMapping.confirmed ? 'success' : 'warning'">{{ inputMapping.confirmed ? "已确认" : "待确认" }}</el-tag></div>
+      <el-alert title="这里只确认需要提升为结构化主参考的字段。未映射的其他非空客户列仍会完整保留，并作为 AI 的次要上下文参考；类型 1、2 的主条件和代码硬规则不会因此改变。结果回填列在第二个页签单独确认。" type="info" :closable="false" show-icon />
+      <div class="input-structure-controls">
+        <label>工作表<el-select v-model="inputSheetName" filterable @change="refreshInputStructure"><el-option v-for="sheet in inputMapping.sheet_names" :key="sheet" :label="sheet" :value="sheet" /></el-select></label>
+        <label>表头行<el-input-number v-model="inputHeaderRow" :min="1" @change="refreshInputStructure" /></label>
+        <label>数据起始行<el-input-number v-model="inputDataStartRow" :min="inputHeaderRow + 1" /></label>
+      </div>
+      <div class="output-mapping-table">
+        <div class="output-mapping-head"><span>客户 Excel 列（不可修改）</span><span>{{ isType2 ? "类型 2 需求字段" : "类型 1 需求字段" }}（可搜索选择）</span></div>
+        <div v-for="(header, index) in inputMapping.headers" :key="header" class="output-mapping-row">
+          <div class="output-field"><span class="field-index">{{ index + 1 }}</span><span>{{ header }}</span></div>
+          <el-select v-model="inputMappingSelections[header]" clearable filterable placeholder="次要参考（不设为主字段）">
+            <el-option v-for="field in inputMapping.fields" :key="field.key" :label="field.label" :value="field.key" />
+          </el-select>
+        </div>
+      </div>
+      <div class="mapping-actions"><el-button type="primary" :loading="inputMappingSaving" :disabled="!auth.hasPermission('bid:update') || project?.status !== 'IMPORTED'" @click="confirmInputMapping">{{ inputMapping.confirmed ? "重新解析" : "确认并解析" }}</el-button></div>
+      </div>
+        </el-tab-pane>
+        <el-tab-pane label="2. 结果回填字段" name="output" :disabled="!outputMapping">
+      <template v-if="outputMapping">
+      <div class="mapping-title"><div><strong>客户原表回填字段</strong><p>{{ outputMapping.sheet_name }} · 第 {{ outputMapping.header_row }} 行表头</p></div><el-tag :type="outputMapping.confirmed ? 'success' : 'warning'">{{ outputMapping.confirmed ? "已确认" : "待确认" }}</el-tag></div>
       <el-alert title="AI 只负责预识别回填列；人工修改这里不会改变类型 1 的规格匹配，也不会改变类型 2 的品牌型号同品判断。" type="info" :closable="false" show-icon />
       <div class="output-mapping-table">
         <div class="output-mapping-head"><span>客户原表列（不可修改）</span><span>商品主数据／报价结果字段（可搜索选择）</span></div>
@@ -274,6 +374,9 @@ onMounted(() => void load())
         <el-empty v-if="outputMappingHeaders.length === 0" description="AI 未识别到待回填列，请从下方人工补充" :image-size="60" />
       </div>
       <div class="mapping-actions"><el-select v-model="additionalOutputHeader" filterable clearable placeholder="从本次上传模板补充待回填列"><el-option v-for="header in outputMapping.headers" :key="header" :label="header" :value="header" :disabled="outputMappingHeaders.includes(header)" /></el-select><el-button :disabled="!additionalOutputHeader" @click="addOutputHeader">添加列</el-button><el-button type="primary" :loading="mappingSaving" :disabled="!auth.hasPermission('bid:update')" @click="confirmOutputMapping">{{ outputMapping.confirmed ? "保存映射" : "确认映射" }}</el-button></div>
+      </template>
+        </el-tab-pane>
+      </el-tabs>
     </el-card>
 
     <el-card>
@@ -323,6 +426,10 @@ onMounted(() => void load())
 .match-hint { display: block; margin-top: 4px; color: #2670ca; }
 .mapping-title { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .mapping-title p { margin: 4px 0 0; color: #6b7280; }
+.mapping-tabs :deep(.el-tabs__content) { padding-top: 8px; }
+.input-structure-controls { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 16px; }
+.input-structure-controls label { display: flex; align-items: center; gap: 8px; color: #606266; }
+.input-structure-controls .el-select { width: 240px; }
 .output-mapping-table { margin-top: 16px; overflow: hidden; border: 1px solid #dfe4ec; border-radius: 8px; }
 .output-mapping-head, .output-mapping-row { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(420px, 1fr); align-items: center; }
 .output-mapping-head { min-height: 42px; padding: 0 14px; background: #f5f7fa; color: #303133; font-weight: 600; }
