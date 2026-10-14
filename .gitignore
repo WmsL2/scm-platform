@@ -26,3 +26,5 @@ local-data/*
 # v4 fidelity candidates are private until material and visual review approve
 # public distribution. Never stage a candidate by accident.
 /assets/ppt-templates/*_CLEAN_v4.pptx
+
+/.tools/

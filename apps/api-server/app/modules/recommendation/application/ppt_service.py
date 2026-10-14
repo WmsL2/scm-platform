@@ -28,6 +28,7 @@ from app.modules.recommendation.application.ppt_renderer import PptRenderer
 from app.modules.recommendation.application.ppt_template_registry import (
     get_ppt_template,
     is_ppt_template_available,
+    is_ppt_template_enabled_for_new_task,
     list_ppt_templates,
 )
 from app.modules.recommendation.application.service import RecommendationService
@@ -64,6 +65,23 @@ from app.modules.recommendation.schemas import BatchConfirmationRequest
 from app.modules.recommendation.template.schemas import RecommendationRunStatus
 
 logger = logging.getLogger(__name__)
+
+
+def _ppt_output_filename(
+    project_code: str,
+    version: int,
+    template_code: str,
+    template_version: str,
+    layout_preview: bool,
+) -> str:
+    diagnostic = (
+        "-排版诊断版"
+        if layout_preview
+        and template_version == "5"
+        and template_code in {"JD_DETAIL_RED", "JD_FESTIVE_RED"}
+        else ""
+    )
+    return f"{project_code}-PPT方案-V{version}{diagnostic}.pptx"
 
 
 class PptSolutionService:
@@ -780,6 +798,7 @@ class PptSolutionService:
         *,
         use_default_template: bool,
         template_code: str | None = None,
+        template_version: str | None = None,
     ) -> PptGenerationTaskResponse:
         settings = get_settings()
         async with transaction_scope(self.session):
@@ -802,9 +821,15 @@ class PptSolutionService:
             # The legacy flag remains accepted. A caller that omits the new field
             # always receives the system layout, and no global template is ever a
             # project-file foreign key.
-            selected_template = get_ppt_template(template_code)
+            selected_template = get_ppt_template(template_code, template_version)
             if template_code is None and not use_default_template:
                 selected_template = get_ppt_template("SYSTEM_DEFAULT")
+            if not is_ppt_template_enabled_for_new_task(selected_template):
+                raise AppError(
+                    "PPT_TEMPLATE_PREVIEW_DISABLED",
+                    "正式 v5 PPT 模板尚未在此环境启用",
+                    409,
+                )
             if not is_ppt_template_available(selected_template):
                 raise AppError(
                     "PPT_TEMPLATE_ASSET_UNAVAILABLE",
@@ -815,6 +840,12 @@ class PptSolutionService:
                 run_id
             )
             is_combination_mode = config.recommendation_mode in {"COMBINATION", "MIXED"}
+            if selected_template.single_product_only and is_combination_mode:
+                raise AppError(
+                    "PPT_TEMPLATE_SINGLE_PRODUCT_ONLY",
+                    "所选正式 v5 PPT 模板当前仅支持单品推品",
+                    422,
+                )
             has_selected_combination = any(
                 plan.is_selected and plan.plan_type == "COMBINATION"
                 for plan in await self.repository.plans(run_id)
@@ -941,7 +972,13 @@ class PptSolutionService:
                     project_id=project.id,
                     file_type=BidFileType.PPT_EXPORT.value,
                     version_no=version,
-                    original_filename=f"{project.project_code}-PPT方案-V{version}.pptx",
+                    original_filename=_ppt_output_filename(
+                        project.project_code,
+                        version,
+                        task.template_code,
+                        task.template_version,
+                        self.renderer.layout_diagnostics_added,
+                    ),
                     storage_key=saved_key,
                     file_size=len(content),
                     sha256=hashlib.sha256(content).hexdigest(),

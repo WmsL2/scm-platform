@@ -6,13 +6,14 @@ enter the repository or public asset directory.
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 from io import BytesIO
 from json import dumps
-from math import ceil, floor
+from math import ceil
 from pathlib import Path
 from re import sub
 from typing import Any
@@ -24,9 +25,15 @@ from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.text import MSO_AUTO_SIZE
+from pptx.oxml.ns import qn
+from pptx.oxml.xmlchemy import OxmlElement
 from pptx.util import Inches, Pt
 
 from app.common.contracts import AppError
+from app.modules.recommendation.application.ppt_layout_preview import (
+    LayoutPreviewIssue,
+    add_layout_preview_pages,
+)
 from app.modules.recommendation.application.ppt_template_manifest import (
     PptxSlotManifest,
     get_pptx_manifest,
@@ -35,6 +42,8 @@ from app.modules.recommendation.application.ppt_template_registry import (
     PptTemplateDefinition,
     resolve_ppt_template_asset,
 )
+
+logger = logging.getLogger(__name__)
 
 _TRANSPARENT_PNG = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
@@ -45,8 +54,8 @@ _JD_FONT = "京东朗正体 玲珑"
 _YAHEI = "Microsoft YaHei"
 _SELLING_POINT_PREFIX = r"^\s*\d+\s*[、.．)]\s*"
 _EMU_PER_POINT = 12_700
-_SELLING_POINT_FONT_SIZE_PT = 12.0
-_SELLING_POINT_LINE_HEIGHT_FACTOR = 1.2
+_OFFICE_NATURAL_LINE_HEIGHT_FACTOR = 1.2
+_OFFICE_TEXT_HEIGHT_SAFETY_PT = 0.5
 _SOURCE_SHAPE_TYPES = (
     (14,),
     (1, 1, 1, 1, 1, 9, 1, 1, 17, 1, 1, 1, 1, 1, 1),
@@ -74,15 +83,15 @@ _REQUIRED_IMAGE_SLOT_NAMES = frozenset(
     }
 )
 _RUNTIME_GEOMETRY_TOLERANCE = Inches(0.01)
-_RUNTIME_TEXT_SLOT_GEOMETRY: dict[str, tuple[float, float, float, float]] = {
-    "SCM_FIELD_SPECIFICATION": (6.379, 3.290, 6.299, 0.503),
-    "SCM_FIELD_PACKAGING": (6.379, 3.757, 6.299, 0.503),
-    "SCM_FIELD_SELLING_POINTS": (6.389, 4.995, 6.299, 1.715),
-    "SCM_FIELD_DELIVERY": (6.389, 4.236, 6.299, 0.301),
-    "SCM_FIELD_TITLE": (6.465, 0.854, 6.268, 0.335),
-    "SCM_FIELD_BRAND": (6.379, 2.615, 6.299, 0.301),
-    "SCM_FIELD_REFERENCE": (6.360, 1.186, 3.457, 1.688),
-    "SCM_FIELD_PRICES": (9.757, 1.165, 3.322, 1.816),
+_RUNTIME_TEXT_SLOT_HORIZONTAL_GEOMETRY: dict[str, tuple[float, float]] = {
+    "SCM_FIELD_SPECIFICATION": (6.379, 6.299),
+    "SCM_FIELD_PACKAGING": (6.379, 6.299),
+    "SCM_FIELD_SELLING_POINTS": (6.389, 6.299),
+    "SCM_FIELD_DELIVERY": (6.389, 6.299),
+    "SCM_FIELD_TITLE": (6.465, 6.268),
+    "SCM_FIELD_BRAND": (6.379, 6.299),
+    "SCM_FIELD_REFERENCE": (6.360, 3.457),
+    "SCM_FIELD_PRICES": (9.757, 3.322),
 }
 _RUNTIME_TEXT_SLOT_TOKENS: dict[str, tuple[str, ...]] = {
     "SCM_FIELD_SPECIFICATION": ("{{specification}}",),
@@ -137,6 +146,33 @@ def _rgb(red: int, green: int, blue: int) -> RGBColor:
     return RGBColor(red, green, blue)  # type: ignore[no-untyped-call]
 
 
+def _set_run_font(run: Any, font: str) -> None:
+    """Set a run typeface for both Western and East Asian DrawingML text.
+
+    python-pptx's ``font.name`` currently emits only ``a:latin``.  The two
+    customer price columns use a Chinese typeface, so Office must also receive
+    an explicit ``a:ea`` declaration instead of selecting a fallback font for
+    CJK glyphs.  Other template regions keep their existing font handling.
+    """
+    run.font.name = font
+    if font != _JD_FONT:
+        return
+    properties = run._r.get_or_add_rPr()
+    for tag in ("a:latin", "a:ea"):
+        typeface = properties.find(qn(tag))
+        if typeface is None:
+            typeface = OxmlElement(tag)
+            properties.append(typeface)
+        typeface.set("typeface", font)
+
+
+def _ensure_jd_font_declarations(shape: Any) -> None:
+    """Repair already-built private assets without mutating the asset itself."""
+    for paragraph in shape.text_frame.paragraphs:
+        for run in paragraph.runs:
+            _set_run_font(run, _JD_FONT)
+
+
 def _v5_manifest() -> PptxSlotManifest:
     manifest = get_pptx_manifest("JD_DETAIL_RED", "5")
     if manifest is None:
@@ -176,7 +212,7 @@ def _set_paragraph(
     value_run = paragraph.add_run()
     value_run.text = token
     for run in (label_run, value_run):
-        run.font.name = font
+        _set_run_font(run, font)
         run.font.size = Pt(size)
         run.font.color.rgb = color
         run.font.bold = bold
@@ -195,7 +231,7 @@ def _set_single_token(
     paragraph.line_spacing = 1.0
     run = paragraph.add_run()
     run.text = token
-    run.font.name = font
+    _set_run_font(run, font)
     run.font.size = Pt(size)
     run.font.color.rgb = color
     run.font.bold = bold
@@ -295,19 +331,43 @@ def _validate_runtime_structure(presentation: Any, manifest: PptxSlotManifest) -
         slots[name][0].shape_type != MSO_SHAPE_TYPE.PICTURE for name in _REQUIRED_IMAGE_SLOT_NAMES
     ):
         raise _asset_structure_error("JD_DETAIL_RED v5 图片槽位类型不匹配")
-    _validate_runtime_text_slot_contract(slots)
+    _validate_runtime_text_slot_contract(
+        slots,
+        slide_width=int(presentation.slide_width or 0),
+        slide_height=int(presentation.slide_height or 0),
+    )
 
 
-def _validate_runtime_text_slot_contract(slots: Mapping[str, list[Any]]) -> None:
-    """Verify the standardized coordinates and the one-to-one token contract."""
-    for name, expected_geometry in _RUNTIME_TEXT_SLOT_GEOMETRY.items():
+def _validate_runtime_text_slot_contract(
+    slots: Mapping[str, list[Any]], *, slide_width: int, slide_height: int
+) -> None:
+    """Verify safe runtime slots without fixing their vertical authoring geometry.
+
+    Left positions and widths identify the audited columns.  Top and height are
+    deliberately read from the current private runtime asset so an authorised
+    WPS edit becomes the next render's layout baseline instead of another
+    Python constant.  The vertical geometry still has to be positive and stay
+    within the slide.
+    """
+    if slide_width <= 0 or slide_height <= 0:
+        raise _asset_structure_error("JD_DETAIL_RED v5 幻灯片页面尺寸无效")
+    for name, expected_geometry in _RUNTIME_TEXT_SLOT_HORIZONTAL_GEOMETRY.items():
         shape = slots[name][0]
-        actual_geometry = (shape.left, shape.top, shape.width, shape.height)
+        actual_geometry = (shape.left, shape.width)
         if any(
             abs(actual - Inches(expected)) > _RUNTIME_GEOMETRY_TOLERANCE
             for actual, expected in zip(actual_geometry, expected_geometry, strict=True)
         ):
-            raise _asset_structure_error("JD_DETAIL_RED v5 文本槽位几何合同不匹配")
+            raise _asset_structure_error("JD_DETAIL_RED v5 文本槽位水平几何合同不匹配")
+        if (
+            shape.left < 0
+            or shape.top < 0
+            or shape.width <= 0
+            or shape.height <= 0
+            or shape.left + shape.width > slide_width
+            or shape.top + shape.height > slide_height
+        ):
+            raise _asset_structure_error("JD_DETAIL_RED v5 文本槽位页面边界无效")
         frame = shape.text_frame
         if shape.width <= frame.margin_left + frame.margin_right or shape.height <= (
             frame.margin_top + frame.margin_bottom
@@ -365,8 +425,11 @@ def standardize_jd_detail_red_v5(
     }
     for name, shape in fields.items():
         shape.name = name
+    specification_frame = fields["SCM_FIELD_SPECIFICATION"].text_frame
+    specification_frame.word_wrap = True
+    specification_frame.auto_size = MSO_AUTO_SIZE.NONE
     _set_paragraph(
-        fields["SCM_FIELD_SPECIFICATION"].text_frame.paragraphs[0],
+        specification_frame.paragraphs[0],
         "商品规格：",
         "{{specification}}",
         font=_YAHEI,
@@ -542,10 +605,39 @@ def _format_price(value: object) -> str:
     raw = str(value).strip() if value is not None else ""
     if not raw:
         return ""
+    # JD_DETAIL_RED v5 displays numeric values only.  Strip a currency symbol
+    # supplied by legacy snapshots at the presentation boundary without
+    # changing the frozen price data itself.
+    if raw[:1] in {"¥", "￥"}:
+        raw = raw[1:].strip()
     try:
-        return f"¥ {Decimal(raw):,.2f}"
+        return f"{Decimal(raw):,.2f}"
     except (InvalidOperation, ValueError):
         return raw
+
+
+def _format_specification(value: str) -> str:
+    """Join database specification rows for natural wrapping in template 1.
+
+    Source line breaks separate attributes but should not force one PowerPoint
+    line per attribute.  Existing terminal/leading punctuation remains the
+    separator; otherwise a Chinese semicolon is inserted.  Internal text,
+    numbers and units are unchanged.
+    """
+    items = [item.strip() for item in value.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    items = [item for item in items if item]
+    if not items:
+        return ""
+    result = items[0]
+    separators = "；;，,、。"
+    for item in items[1:]:
+        if result.endswith(tuple(separators)) and item.startswith(tuple(separators)):
+            result += item.lstrip(separators)
+        elif result.endswith(tuple(separators)) or item.startswith(tuple(separators)):
+            result += item
+        else:
+            result += "；" + item
+    return result
 
 
 def _format_discount(value: object) -> str:
@@ -565,108 +657,337 @@ def _format_discount(value: object) -> str:
 
 
 def _estimated_text_width_pt(value: str, font_size_pt: float) -> float:
-    """Conservatively estimate width using the template's CJK/Latin font size.
+    """Estimate Office width without treating every Latin glyph as a CJK em.
 
-    Runtime hosts do not expose the Office text-layout engine.  Full-width CJK
-    characters and broad Latin glyphs therefore consume one em; narrow Latin
-    glyphs consume a smaller, still conservative share.  The result deliberately
-    rejects values before Office could wrap them into a neighbouring fixed row.
+    The official title and fixed rows use a CJK font.  Its CJK glyphs occupy one
+    em, but ordinary model-code letters and digits are substantially narrower.
+    The former 0.75--1.0 em fallback falsely wrapped common mixed names and
+    SKUs.  These calibrated advances retain a safety margin for broad glyphs.
     """
     units = 0.0
     for character in value:
         if character.isspace():
-            units += 0.35
-        elif ord(character) >= 0x2E80 or character in "MW@#%&":
+            units += 0.30
+        elif ord(character) >= 0x2E80:
             units += 1.0
-        elif character in "ilI.,:;!|'`":
-            units += 0.4
+        elif character in "MWmw@#%&":
+            units += 0.90
+        elif character.isupper():
+            units += 0.68
+        elif character.isdigit():
+            units += 0.56
+        elif character in "ilI.,:;!|'`-_()/[]{}":
+            units += 0.35
         else:
-            units += 0.75
+            units += 0.56
     return units * font_size_pt
 
 
-def _paragraph_line_count(paragraph: Any, token: str, value: str, width_pt: float) -> int:
-    token_run = next((run for run in paragraph.runs if run.text == token), None)
-    if token_run is None or token_run.font.size is None:
-        raise _asset_structure_error("JD_DETAIL_RED v5 动态文本 Token 或字号无效")
-    font_size_pt = float(token_run.font.size.pt)
-    if font_size_pt <= 0 or width_pt <= 0:
-        raise _asset_structure_error("JD_DETAIL_RED v5 动态文本槽位可用宽度无效")
-    static_text = paragraph.text.replace(token, "")
-    lines = 0
-    for line in (static_text + value).splitlines() or [""]:
-        lines += max(1, ceil(_estimated_text_width_pt(line, font_size_pt) / width_pt))
-    return lines
-
-
-def _validate_dynamic_text_capacity(shape: Any, token: str, value: str, field: str) -> None:
-    frame = shape.text_frame
-    paragraphs = [paragraph for paragraph in frame.paragraphs if token in paragraph.text]
-    if len(paragraphs) != 1:
-        raise _asset_structure_error("JD_DETAIL_RED v5 动态文本 Token 槽位不唯一")
-    paragraph = paragraphs[0]
-    inner_width_pt = (shape.width - frame.margin_left - frame.margin_right) / _EMU_PER_POINT
-    required_lines = _paragraph_line_count(paragraph, token, value, inner_width_pt)
-    # Every non-selling field is an approved fixed row.  Its next row, divider,
-    # or footer is a safety boundary, so automatic wrapping is never permitted.
-    # The height and margins remain checked to catch a malformed runtime asset.
-    token_run = next(run for run in paragraph.runs if run.text == token)
-    font_size_pt = float(token_run.font.size.pt)
-    usable_height_pt = (shape.height - frame.margin_top - frame.margin_bottom) / _EMU_PER_POINT
-    if usable_height_pt < font_size_pt:
-        raise _asset_structure_error("JD_DETAIL_RED v5 动态文本槽位可用高度无效")
+def _paragraph_metrics(paragraph: Any, width_pt: float) -> tuple[int, float]:
+    """Return wrapped lines and line advance from the preserved paragraph style."""
+    if not paragraph.runs or width_pt <= 0:
+        raise _asset_structure_error("JD_DETAIL_RED v5 动态文本槽位样式或宽度无效")
+    size = paragraph.runs[0].font.size
+    if size is None:
+        raise _asset_structure_error("JD_DETAIL_RED v5 动态文本槽位字号无效")
+    font_size_pt = float(size.pt)
     line_spacing = paragraph.line_spacing
     if not isinstance(line_spacing, (int, float)) or line_spacing <= 0:
         raise _asset_structure_error("JD_DETAIL_RED v5 动态文本槽位行距无效")
-    line_advance_pt = max(font_size_pt, font_size_pt * float(line_spacing))
-    lines_by_height = 1 + floor((usable_height_pt - font_size_pt) / line_advance_pt)
-    allowed_lines = min(lines_by_height, 1)
-    if required_lines > allowed_lines:
-        raise AppError(
-            "PPT_TEMPLATE_TEXT_CAPACITY_EXCEEDED",
-            f"{field} 自动换行后超出 JD_DETAIL_RED v5 固定文本槽安全容量",
-            422,
-        )
-
-
-def _validate_fixed_text_capacities(prototype: Any, values: Mapping[str, str]) -> None:
-    shapes = {shape.name: shape for shape in prototype.shapes}
-    for field, (slot_name, token) in _DYNAMIC_FIELD_SLOTS.items():
-        _validate_dynamic_text_capacity(shapes[slot_name], token, values[field], field)
-
-
-def _selling_point_line_count(shape: Any, value: str) -> tuple[int, int]:
-    """Calculate conservative wrapped lines from the actual text-box geometry."""
-    frame = shape.text_frame
-    inner_width_pt = (shape.width - frame.margin_left - frame.margin_right) / _EMU_PER_POINT
-    usable_height_pt = (shape.height - frame.margin_top - frame.margin_bottom) / _EMU_PER_POINT
-    characters_per_line = floor(inner_width_pt / _SELLING_POINT_FONT_SIZE_PT)
-    line_height_pt = _SELLING_POINT_FONT_SIZE_PT * _SELLING_POINT_LINE_HEIGHT_FACTOR
-    maximum_lines = floor(usable_height_pt / line_height_pt)
-    if characters_per_line < 1 or maximum_lines < 1:
-        raise _asset_structure_error("JD_DETAIL_RED v5 卖点文本框可用空间无效")
-    title_lines = ceil(len("产品卖点（介绍详细）") / characters_per_line)
-    item_lines = sum(
-        ceil((len(f"{index}、") + len(item)) / characters_per_line)
-        for index, item in enumerate(_selling_point_items(value), start=1)
+    lines = sum(
+        max(1, ceil(_estimated_text_width_pt(line, font_size_pt) / width_pt))
+        for line in paragraph.text.splitlines() or [""]
     )
-    return title_lines + item_lines, maximum_lines
+    # Office/WPS lays out a 12pt Microsoft YaHei line at 14.4pt even when the
+    # paragraph requests single spacing.  Using only the nominal font size
+    # under-allocates 2.4pt per visible line and makes later fields overlap.
+    natural_line_height = font_size_pt * _OFFICE_NATURAL_LINE_HEIGHT_FACTOR
+    return lines, max(natural_line_height, font_size_pt * float(line_spacing))
 
 
-def _validate_selling_point_capacity(shape: Any, value: str) -> None:
-    if len(_selling_point_items(value)) > 6:
-        raise AppError(
-            "PPT_TEMPLATE_TEXT_CAPACITY_EXCEEDED",
-            "selling_points 超出 JD_DETAIL_RED v5 已确认安全容量",
-            422,
+def _required_text_height(shape: Any) -> int:
+    """Calculate a text height from the preserved paragraph style and margins."""
+    frame = shape.text_frame
+    width_pt = (shape.width - frame.margin_left - frame.margin_right) / _EMU_PER_POINT
+    metrics = [_paragraph_metrics(paragraph, width_pt) for paragraph in frame.paragraphs]
+    return int(
+        (
+            (
+                sum(lines * advance for lines, advance in metrics)
+                + _OFFICE_TEXT_HEIGHT_SAFETY_PT
+            )
+            * _EMU_PER_POINT
         )
-    required_lines, maximum_lines = _selling_point_line_count(shape, value)
-    if required_lines > maximum_lines:
-        raise AppError(
-            "PPT_TEMPLATE_TEXT_CAPACITY_EXCEEDED",
-            "selling_points 自动换行后超出 JD_DETAIL_RED v5 卖点文本框安全容量",
-            422,
+        + frame.margin_top
+        + frame.margin_bottom
+    )
+
+
+def _expand_shape_to_required_height(
+    shape: Any,
+    baseline_required_height: int,
+    *,
+    grow_for_added_text: bool = False,
+) -> int:
+    """Grow the asset-authored height only for text beyond its token baseline."""
+    required_height = _required_text_height(shape)
+    if grow_for_added_text:
+        delta = max(0, required_height - baseline_required_height)
+        shape.height += delta
+        return int(delta)
+    baseline_height = max(shape.height, baseline_required_height)
+    if required_height <= baseline_height:
+        return 0
+    delta = required_height - baseline_height
+    shape.height += delta
+    return int(delta)
+
+
+def _move_linked_shapes(
+    shapes: Mapping[str, Any],
+    original_tops: Mapping[str, int],
+    threshold: int,
+    delta: int,
+    offsets: dict[str, int] | None = None,
+) -> None:
+    if not delta:
+        return
+    for name, shape in shapes.items():
+        if original_tops.get(name, -1) >= threshold:
+            shape.top += delta
+            if offsets is not None:
+                offsets[name] = offsets.get(name, 0) + delta
+
+
+def _shape_line_count(shape: Any) -> int:
+    """Return the same line estimate used to size a dynamic text shape."""
+    frame = shape.text_frame
+    width_pt = (shape.width - frame.margin_left - frame.margin_right) / _EMU_PER_POINT
+    return sum(_paragraph_metrics(paragraph, width_pt)[0] for paragraph in frame.paragraphs)
+
+
+def _visible_text_bottom(shape: Any) -> int:
+    """Return the estimated visible glyph bottom, excluding the bottom inset.
+
+    ``shape.top + shape.height`` is the outer text-box boundary.  Office/WPS
+    keeps ``margin_bottom`` below the last visible line, so counting that inset
+    as page content falsely rejects an otherwise visible final line near the
+    slide edge.
+    """
+    return int(
+        shape.top
+        + _required_text_height(shape)
+        - shape.text_frame.margin_bottom
+        - (_OFFICE_TEXT_HEIGHT_SAFETY_PT * _EMU_PER_POINT)
+    )
+
+
+def _layout_required_bottom(
+    shapes: Mapping[str, Any], linked: Mapping[str, Any]
+) -> tuple[int, int]:
+    """Return visible-content and outer-box bottoms for layout diagnostics."""
+    visible_bottom = max(
+        _visible_text_bottom(shape)
+        if name in _REQUIRED_TEXT_SLOT_NAMES
+        else shape.top + shape.height
+        for name, shape in linked.items()
+    )
+    outer_bottom = max(shape.top + shape.height for shape in linked.values())
+    return int(visible_bottom), int(outer_bottom)
+
+
+def _first_visible_text_overlap(
+    shapes: Mapping[str, Any], linked: Mapping[str, Any]
+) -> tuple[str, str, int] | None:
+    """Find visible dynamic text crossing the next customer-layout boundary."""
+    groups = (
+        ("SCM_FIELD_TITLE",),
+        ("SCM_FIELD_REFERENCE", "SCM_FIELD_PRICES"),
+        ("SCM_FIELD_BRAND",),
+        ("SCM_FIELD_SPECIFICATION",),
+        ("SCM_FIELD_PACKAGING",),
+        ("SCM_FIELD_DELIVERY",),
+    )
+    for index, current in enumerate(groups[:-1]):
+        following = groups[index + 1]
+        following_shapes = [(name, linked[name]) for name in following]
+        if not following_shapes:
+            continue
+        next_name, next_shape = min(following_shapes, key=lambda item: item[1].top)
+        overlap = max(_visible_text_bottom(shapes[name]) for name in current) - next_shape.top
+        if overlap > 0:
+            field = ", ".join(
+                dynamic_field
+                for dynamic_field, (slot_name, _token) in _DYNAMIC_FIELD_SLOTS.items()
+                if slot_name in current
+            )
+            return field, next_name, int(overlap)
+    return None
+
+
+def _layout_diagnostic(
+    shapes: Mapping[str, Any],
+    original_tops: Mapping[str, int],
+    original_heights: Mapping[str, int],
+    offsets: Mapping[str, int],
+    *,
+    slide_height: int,
+    required_bottom: int,
+    outer_bottom: int,
+) -> str:
+    """Describe geometry only, so an exhausted fixed page can be investigated safely."""
+    fields = (
+        "SCM_FIELD_TITLE",
+        "SCM_FIELD_REFERENCE",
+        "SCM_FIELD_PRICES",
+        "SCM_FIELD_BRAND",
+        "SCM_FIELD_SPECIFICATION",
+        "SCM_FIELD_PACKAGING",
+        "SCM_FIELD_DELIVERY",
+        "SCM_FIELD_SELLING_POINTS",
+    )
+    details = []
+    for name in fields:
+        shape = shapes[name]
+        details.append(
+            f"{name}:行{_shape_line_count(shape)}，"
+            f"Y {original_tops[name] / _EMU_PER_POINT:.1f}→{shape.top / _EMU_PER_POINT:.1f}pt，"
+            f"高 {original_heights[name] / _EMU_PER_POINT:.1f}→"
+            f"{shape.height / _EMU_PER_POINT:.1f}pt，"
+            f"累计下移 {offsets.get(name, 0) / _EMU_PER_POINT:.1f}pt"
         )
+    initial_bottom = max(original_tops[name] + original_heights[name] for name in fields)
+    return (
+        f"页高 {slide_height / _EMU_PER_POINT:.1f}pt，可见内容底部 "
+        f"{required_bottom / _EMU_PER_POINT:.1f}pt，文本框外框底部 "
+        f"{outer_bottom / _EMU_PER_POINT:.1f}pt，初始余量 "
+        f"{(slide_height - initial_bottom) / _EMU_PER_POINT:.1f}pt；"
+        + "；".join(details)
+    )
+
+
+def _layout_error(
+    product_identifier: str,
+    field: str,
+    required_bottom: int,
+    slide_height: int,
+    diagnostic: str,
+) -> AppError:
+    overflow_pt = (required_bottom - slide_height) / _EMU_PER_POINT
+    remaining_pt = max(0, slide_height - required_bottom) / _EMU_PER_POINT
+    return AppError(
+        "PPT_TEMPLATE_TEXT_CAPACITY_EXCEEDED",
+        f"商品标识 {product_identifier or '未知'} 的 {field} 扩展后超出 "
+        "JD_DETAIL_RED v5 页面安全区域"
+        f"（超出 {overflow_pt:.1f}pt，剩余 {remaining_pt:.1f}pt）。{diagnostic}",
+        422,
+    )
+
+
+def _layout_dynamic_text(
+    shapes: Mapping[str, Any],
+    product_identifier: str,
+    slide_height: int,
+    baseline_required_heights: Mapping[str, int],
+    *,
+    allow_overflow: bool = False,
+) -> tuple[str, str] | None:
+    """Grow ordered right-column fields and retain their original vertical gaps.
+
+    The runtime asset keeps the customer geometry as the baseline.  This runs
+    only on the cloned output slide, so the checked private asset remains
+    immutable.  All later right-column shapes receive each preceding growth
+    delta exactly once, preserving their relative spacing and fixed styling.
+    """
+    original_tops = {name: shape.top for name, shape in shapes.items()}
+    original_heights = {name: shape.height for name, shape in shapes.items()}
+    linked = {
+        name: shape
+        for name, shape in shapes.items()
+        if shape.left >= Inches(6)
+    }
+    offsets = {name: 0 for name in linked}
+    groups = (
+        ("SCM_FIELD_TITLE",),
+        ("SCM_FIELD_REFERENCE", "SCM_FIELD_PRICES"),
+        ("SCM_FIELD_BRAND",),
+        ("SCM_FIELD_SPECIFICATION",),
+        ("SCM_FIELD_PACKAGING",),
+        ("SCM_FIELD_DELIVERY",),
+    )
+    overflow_field = "product_name"
+    for current in groups:
+        delta = max(
+            _expand_shape_to_required_height(
+                shapes[name],
+                baseline_required_heights[name],
+                grow_for_added_text=current
+                == ("SCM_FIELD_REFERENCE", "SCM_FIELD_PRICES"),
+            )
+            for name in current
+        )
+        if delta:
+            overflow_field = ", ".join(
+                field
+                for field, (slot_name, _token) in _DYNAMIC_FIELD_SLOTS.items()
+                if slot_name in current
+            )
+        current_top = max(original_tops[name] for name in current)
+        # Use the next actual right-column object, not merely the next dynamic
+        # field.  This includes the customer separator below brand and the
+        # fixed customization row below delivery, so both travel with the
+        # attribute block instead of being overlapped by wrapped values.
+        threshold = min(
+            top
+            for name, top in original_tops.items()
+            if name in linked and name not in current and top > current_top
+        )
+        _move_linked_shapes(linked, original_tops, threshold, delta, offsets)
+    if _expand_shape_to_required_height(
+        shapes["SCM_FIELD_SELLING_POINTS"],
+        baseline_required_heights["SCM_FIELD_SELLING_POINTS"],
+    ):
+        overflow_field = "selling_points"
+    required_bottom, outer_bottom = _layout_required_bottom(shapes, linked)
+    overlap = _first_visible_text_overlap(shapes, linked)
+    if overlap is not None:
+        field, next_name, overlap_height = overlap
+        diagnostic = _layout_diagnostic(
+            shapes,
+            original_tops,
+            original_heights,
+            offsets,
+            slide_height=slide_height,
+            required_bottom=required_bottom,
+            outer_bottom=outer_bottom,
+        )
+        message = (
+            f"商品标识 {product_identifier or '未知'} 的 {field} 可见文字与 "
+            f"{next_name} 重叠 {overlap_height / _EMU_PER_POINT:.1f}pt。{diagnostic}"
+        )
+        if allow_overflow:
+            return field, message
+        raise AppError("PPT_TEMPLATE_TEXT_CAPACITY_EXCEEDED", message, 422)
+    if required_bottom > slide_height:
+        diagnostic = _layout_diagnostic(
+            shapes,
+            original_tops,
+            original_heights,
+            offsets,
+            slide_height=slide_height,
+            required_bottom=required_bottom,
+            outer_bottom=outer_bottom,
+        )
+        if allow_overflow:
+            return overflow_field, diagnostic
+        raise _layout_error(
+            product_identifier,
+            overflow_field,
+            required_bottom,
+            slide_height,
+            diagnostic,
+        )
+    return None
 
 
 def _replace_picture(shape: Any, image_bytes: bytes | None) -> None:
@@ -694,12 +1015,25 @@ def _replace_picture(shape: Any, image_bytes: bytes | None) -> None:
         shape.crop_top = shape.crop_bottom = crop
 
 
+def _item_images(item: Mapping[str, object], images: Mapping[str, bytes]) -> list[bytes | None]:
+    """Return main/image-1/image-2/image-3 in slot order without duplicating media."""
+    product = _mapping(item.get("product"))
+    identifiers = [_text(product, "id")]
+    supplementary = item.get("renderer_supplementary_image_ids")
+    if isinstance(supplementary, list):
+        identifiers.extend(str(value) if value is not None else "" for value in supplementary)
+    if len(identifiers) > 4:
+        raise AppError("PPT_TEMPLATE_IMAGE_CAPACITY_EXCEEDED", "仅有四个原件图片槽", 422)
+    return [images.get(identifier) if identifier else None for identifier in identifiers]
+
+
 def render_jd_detail_red_v5(
     source: Mapping[str, object],
     *,
     images: Mapping[str, bytes],
     template: PptTemplateDefinition,
     manifest: PptxSlotManifest,
+    layout_preview: bool = False,
 ) -> bytes:
     try:
         presentation = Presentation(str(resolve_ppt_template_asset(template)))
@@ -723,13 +1057,16 @@ def render_jd_detail_red_v5(
         raise AppError(
             "PPT_TEMPLATE_COMBINATION_UNSUPPORTED", "JD_DETAIL_RED v5 当前仅支持单品页", 422
         )
-    for item in items:
+    preview_issues: list[LayoutPreviewIssue] = []
+    for product_number, item in enumerate(items, start=1):
         product, manual, prices = (
             _mapping(item.get(key)) for key in ("product", "manual", "prices")
         )
         values = {
             "product_name": _text(product, "product_name"),
-            "specification": _text(product, "product_specification"),
+            "specification": _format_specification(
+                _text(product, "product_specification")
+            ),
             "packaging_list": _text(product, "packaging_list"),
             "selling_points": _text(product, "selling_points"),
             "shipping_courier": _text(product, "shipping_courier"),
@@ -737,31 +1074,61 @@ def render_jd_detail_red_v5(
             "market_price": _format_price(prices.get("market_price")),
             "sku": _text(product, "sku"),
             "fulfillment_cycle": _text(manual, "fulfillment_cycle"),
-            "jd_customer_price": "",
+            "jd_customer_price": _format_price(prices.get("agreement_price")),
             "discount_rate": _format_discount(prices.get("discount_rate")),
             "minimum_order_quantity": "",
         }
-        _validate_fixed_text_capacities(prototype, values)
-        _validate_selling_point_capacity(
-            next(shape for shape in prototype.shapes if shape.name == "SCM_FIELD_SELLING_POINTS"),
-            values["selling_points"],
-        )
+        product_id = _text(product, "id")
         slide = _clone_slide(presentation, prototype)
         shapes = {shape.name: shape for shape in slide.shapes}
+        shapes["SCM_FIELD_SPECIFICATION"].text_frame.word_wrap = True
+        shapes["SCM_FIELD_SPECIFICATION"].text_frame.auto_size = MSO_AUTO_SIZE.NONE
+        for name in ("SCM_FIELD_REFERENCE", "SCM_FIELD_PRICES"):
+            _ensure_jd_font_declarations(shapes[name])
+        baseline_required_heights = {
+            name: _required_text_height(shapes[name]) for name in _REQUIRED_TEXT_SLOT_NAMES
+        }
         for key, value in values.items():
             if key == "selling_points":
                 continue
             for shape in shapes.values():
                 _replace_token(shape, "{{" + key + "}}", value)
         _fill_selling_points(shapes["SCM_FIELD_SELLING_POINTS"], values["selling_points"])
-        product_id = _text(product, "id")
-        _replace_picture(shapes["SCM_SLOT_IMAGE_MAIN"], images.get(product_id))
-        for name in (
+        overflow = _layout_dynamic_text(
+            shapes,
+            product_id,
+            int(presentation.slide_height or 0),
+            baseline_required_heights,
+            allow_overflow=layout_preview,
+        )
+        if overflow is not None:
+            field, diagnostic = overflow
+            logger.warning(
+                "PPT v5 layout preview bypassed page overflow: template=%s product=%s field=%s",
+                template.code,
+                product_id or "unknown",
+                field,
+            )
+            preview_issues.append(
+                LayoutPreviewIssue(
+                    product_number=product_number,
+                    product_name=values["product_name"],
+                    summary=f"{field} 扩展后超出客户固定页面。{diagnostic}",
+                    values={key: value for key, value in values.items() if value},
+                )
+            )
+        image_values = _item_images(item, images)
+        for index, name in enumerate((
+            "SCM_SLOT_IMAGE_MAIN",
             "SCM_SLOT_IMAGE_SUPPLEMENT_01",
             "SCM_SLOT_IMAGE_SUPPLEMENT_02",
             "SCM_SLOT_IMAGE_SUPPLEMENT_03",
-        ):
-            _replace_picture(shapes[name], None)
+        )):
+            _replace_picture(
+                shapes[name], image_values[index] if index < len(image_values) else None
+            )
+    if layout_preview and preview_issues:
+        add_layout_preview_pages(presentation, template.code, preview_issues)
     _remove_slide(presentation, prototype)
     output = BytesIO()
     presentation.save(output)

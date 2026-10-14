@@ -157,6 +157,7 @@ async def create_generation(
             current.user_id,
             use_default_template=payload.use_default_template,
             template_code=payload.template_code,
+            template_version=payload.template_version,
         )
     if get_settings().task_mode == "inline":
         await _dispatch_generation(task.id)
