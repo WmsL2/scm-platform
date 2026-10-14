@@ -82,7 +82,7 @@ class Type2InputColumnMapping(BaseModel):
 class Type2OutputColumnMapping(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    selected_unit_price: str | None = None
+    agreement_price: str | None = None
     discount_compliance: str | None = None
     price_valid_until: str | None = None
     note: str | None = None
@@ -184,7 +184,8 @@ class Type2Agent:
                 "组合参数列，应映射到specification供服务器后续提取，不得凭空拆出不存在的列。继续"
                 "识别颜色、适用机型、容量或打印量、包装规格、行备注、数量、单位、最高限价等条件列。"
                 "行备注和项目备注中的非空明确要求必须参考；空白的结果备注、是否同品、折扣结果等"
-                "待回填列不是客户约束。优先准确找到商品报价或等价的单价回填列；无法唯一确认的"
+                "待回填列不是客户约束。优先准确找到商品报价、供应商报价或等价的单价回填列，"
+                "并映射到商品主数据 agreement_price（协议价）；无法唯一确认的"
                 "输出列返回null，交由人工确认，严禁猜测。如果商品报价列之后是连续的空白结果区域，"
                 "应把商品报价列作为输出区域起点，并尽量识别其中商品编码、品牌、型号、单位、供应商、"
                 "折扣、有效期和备注等可明确判断的回填列；不得把报价列之前的品牌型号、限价、采购量"

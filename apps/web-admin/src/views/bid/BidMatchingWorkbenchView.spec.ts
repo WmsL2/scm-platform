@@ -24,7 +24,7 @@ describe("BidMatchingWorkbenchView", () => {
     expect(source).toContain("同类型替代")
     expect(source).toContain("row.current_selection?.note")
     expect(source).toContain('v-if="isType1" label="处理"')
-    expect(source).toContain("isType2 ? '最低报价' : '自动报价'")
+    expect(source).toContain("isType2 ? '最低协议价' : '协议价'")
     expect(source).toContain("async function exportResult()")
     expect(source).toContain("导出回填表")
   })
@@ -33,7 +33,8 @@ describe("BidMatchingWorkbenchView", () => {
     expect(source).toContain("返回项目列表")
     expect(source).not.toContain("返回项目详情")
     expect(source).toContain("workspace.renameRoute(route.fullPath, workspaceTitle.value)")
-    expect(source).toContain("price.value = value.cost_price ?? value.agreement_price ?? \"\"")
+    expect(source).toContain("price.value = value.agreement_price ?? \"\"")
+    expect(source).toContain('prop="agreement_price" label="协议价"')
   })
 
   it("waits for explicit user confirmation before starting like Type 4", () => {
@@ -63,5 +64,6 @@ describe("BidMatchingWorkbenchView", () => {
     expect(source).toContain('class="output-mapping-row"')
     expect(source).toContain("不会改变商品匹配条件")
     expect(source).toContain("outputMapping.value?.confirmed === true")
+    expect(source).not.toContain("请选择商品报价（单价）的回填列")
   })
 })

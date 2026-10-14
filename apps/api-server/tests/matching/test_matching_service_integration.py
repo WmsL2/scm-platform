@@ -264,7 +264,7 @@ async def test_matching_persists_candidates_selection_snapshot_and_no_quote() ->
 
 
 @pytest.mark.asyncio
-async def test_type2_automatically_selects_lowest_cost_and_finishes_with_unmatched_rows() -> None:
+async def test_type2_selects_lowest_agreement_price_within_limit() -> None:
     actor_id = uuid.uuid4()
     token = uuid.uuid4().hex
     suppliers = [
@@ -299,7 +299,8 @@ async def test_type2_automatically_selects_lowest_cost_and_finishes_with_unmatch
             brand="联想",
             model="LT-1821",
             product_name="联想 LT-1821",
-            cost_price=Decimal("90.0000"),
+            cost_price=Decimal("50.0000"),
+            agreement_price=Decimal("90.0000"),
             status=ProductStatus.ACTIVE,
         )
         cheapest = Product(
@@ -308,7 +309,8 @@ async def test_type2_automatically_selects_lowest_cost_and_finishes_with_unmatch
             brand="联想Lenovo",
             model="LT/1821",
             product_name="联想 Lenovo LT1821",
-            cost_price=Decimal("80.0000"),
+            cost_price=Decimal("95.0000"),
+            agreement_price=Decimal("80.0000"),
             status=ProductStatus.ACTIVE,
         )
         matched_item = BidProjectItem(
@@ -385,6 +387,7 @@ async def test_type1_ai_keeps_all_quotable_matches_and_allows_unmatched() -> Non
             product_specification="固定电话，办公家用，来电显示，白色",
             category_level3_name="电话机",
             cost_price=Decimal("65.0000"),
+            agreement_price=Decimal("65.0000"),
             remark=f"{token}-MATCH-1",
             status=ProductStatus.ACTIVE,
         )
@@ -397,7 +400,21 @@ async def test_type1_ai_keeps_all_quotable_matches_and_allows_unmatched() -> Non
             product_specification="固定电话，办公家用，来电显示，白色",
             category_level3_name="电话机",
             cost_price=Decimal("66.0000"),
+            agreement_price=Decimal("66.0000"),
             remark=f"{token}-MATCH-2",
+            status=ProductStatus.ACTIVE,
+        )
+        over_limit_product = Product(
+            source_supplier_id=supplier.id,
+            sku=f"TYPE1C-{token[:8]}",
+            brand="得力",
+            model="787C",
+            product_name=f"{token} 得力787C电话机",
+            product_specification="固定电话，办公家用，来电显示，白色",
+            category_level3_name="电话机",
+            cost_price=Decimal("50.0000"),
+            agreement_price=Decimal("71.0000"),
+            remark=f"{token}-MATCH-3",
             status=ProductStatus.ACTIVE,
         )
         matched_item = BidProjectItem(
@@ -420,12 +437,14 @@ async def test_type1_ai_keeps_all_quotable_matches_and_allows_unmatched() -> Non
             specification="完全不存在的规格要求",
             status=BidItemStatus.PENDING.value,
         )
-        session.add_all([product, second_product, matched_item, unmatched_item])
+        session.add_all(
+            [product, second_product, over_limit_product, matched_item, unmatched_item]
+        )
         await session.flush()
 
         project_id = project.id
         project_item_ids = [matched_item.id, unmatched_item.id]
-        product_ids = [product.id, second_product.id]
+        product_ids = [product.id, second_product.id, over_limit_product.id]
         supplier_id = supplier.id
         matched_item_id = matched_item.id
         unmatched_item_id = unmatched_item.id
@@ -452,9 +471,20 @@ async def test_type1_ai_keeps_all_quotable_matches_and_allows_unmatched() -> Non
                 )
             ).all()
         )
+        visible_candidates = await MatchingService(session).candidates(
+            project_id, matched_item_id
+        )
 
         assert len(selections) == 2
-        assert {selection.product_id for selection in selections} == set(product_ids)
+        assert {selection.product_id for selection in selections} == set(product_ids[:2])
+        assert product_ids[2] not in {selection.product_id for selection in selections}
+        assert {candidate.product_id for candidate in visible_candidates} == set(
+            product_ids[:2]
+        )
+        assert {candidate.agreement_price for candidate in visible_candidates} == {
+            Decimal("65.0000"),
+            Decimal("66.0000"),
+        }
         assert {selection.selected_unit_price for selection in selections} == {
             Decimal("65.0000"),
             Decimal("66.0000"),
@@ -527,6 +557,7 @@ async def test_type2_ai_prefers_exact_product_and_marks_substitute_with_note() -
             packaging_list="单支装",
             category_level3_name="原装粉盒",
             cost_price=Decimal("90.0000"),
+            agreement_price=Decimal("90.0000"),
             discount_rate=Decimal("0.8800"),
             remark=f"{token}-EXACT",
             status=ProductStatus.ACTIVE,
@@ -541,6 +572,7 @@ async def test_type2_ai_prefers_exact_product_and_marks_substitute_with_note() -
             packaging_list="单支装",
             category_level3_name="粉盒",
             cost_price=Decimal("50.0000"),
+            agreement_price=Decimal("50.0000"),
             discount_rate=Decimal("0.8000"),
             remark=f"{token}-CHEAP-ALT",
             status=ProductStatus.ACTIVE,
@@ -555,6 +587,7 @@ async def test_type2_ai_prefers_exact_product_and_marks_substitute_with_note() -
             packaging_list="单支装",
             category_level3_name="粉盒",
             cost_price=Decimal("70.0000"),
+            agreement_price=Decimal("70.0000"),
             discount_rate=Decimal("0.8500"),
             remark=f"{token}-ONLY-ALT",
             status=ProductStatus.ACTIVE,
