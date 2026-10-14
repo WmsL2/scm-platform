@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import RecommendationWorkspaceView from "./RecommendationWorkspaceView.vue"
 import source from "./RecommendationWorkspaceView.vue?raw"
 
-const recommendationApi = vi.hoisted(() => ({ runs: vi.fn(), run: vi.fn(), confirm: vi.fn(), confirmMany: vi.fn(), start: vi.fn(), export: vi.fn(), downloadExport: vi.fn() }))
+const recommendationApi = vi.hoisted(() => ({ runs: vi.fn(), run: vi.fn(), confirm: vi.fn(), confirmMany: vi.fn(), removeConfirmation: vi.fn(), start: vi.fn(), export: vi.fn(), downloadExport: vi.fn() }))
 const bidApi = vi.hoisted(() => ({ get: vi.fn(), recommendationTemplates: vi.fn(), recommendationTemplateMapping: vi.fn(), recommendationTemplateStructure: vi.fn(), updateRecommendationTemplateMapping: vi.fn(), update: vi.fn() }))
 vi.mock("../../api/recommendation", () => ({ recommendationApi }))
 vi.mock("../../api/bid", () => ({ bidApi }))
@@ -109,5 +109,16 @@ describe("RecommendationWorkspaceView", () => {
     expect(source).toContain("scm.recommendation-candidates.visible-columns.v1")
     expect(source).toContain("candidateImageUrl")
     expect(source).toContain("moneyValue")
+  })
+
+  it("exposes the existing confirmation-revocation API while selection is editable", () => {
+    expect(source).toContain("removeCandidateConfirmation")
+    expect(source).toContain("撤销确认")
+    expect(source).toContain("历史导出文件不会被修改")
+    expect(source).toContain("unconfirmMany")
+    expect(source).toContain("批量撤销确认")
+    expect(source).toContain("全选全部已确认商品")
+    expect(source).toContain("await refreshRun()")
+    expect(source).toContain("pre-mutation count")
   })
 })

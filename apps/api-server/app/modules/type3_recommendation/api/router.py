@@ -21,6 +21,7 @@ from app.modules.type3_recommendation.schemas import (
     Type3CandidateConfirmationRequest,
     Type3CandidatePage,
     Type3CandidateSheetSummary,
+    Type3CandidateUnconfirmationRequest,
     Type3ExportField,
     Type3RunResponse,
     Type3SheetOutputStructure,
@@ -178,6 +179,20 @@ async def confirm_candidates(
 ) -> ApiResponse[int]:
     return success(
         await Type3RecommendationService(session).confirm_candidates(
+            run_id, payload, current.user_id
+        )
+    )
+
+
+@router.post("/runs/{run_id}/candidate-unconfirmations", response_model=ApiResponse[int])
+async def unconfirm_candidates(
+    run_id: uuid.UUID,
+    payload: Type3CandidateUnconfirmationRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("recommendation:review"))],
+    session: SessionDep,
+) -> ApiResponse[int]:
+    return success(
+        await Type3RecommendationService(session).unconfirm_candidates(
             run_id, payload, current.user_id
         )
     )

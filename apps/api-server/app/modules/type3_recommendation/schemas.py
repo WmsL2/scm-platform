@@ -178,3 +178,28 @@ class Type3CandidateConfirmationRequest(BaseModel):
         if len(set(self.excluded_candidate_ids)) != len(self.excluded_candidate_ids):
             raise ValueError("excluded_candidate_ids must be unique")
         return self
+
+
+class Type3CandidateUnconfirmationRequest(BaseModel):
+    """The explicit Type-3 scope for returning confirmed candidates to pending."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_ids: list[UUID] = Field(default_factory=list, max_length=500)
+    select_all_confirmed: bool = False
+    excluded_candidate_ids: list[UUID] = Field(default_factory=list, max_length=500)
+    sheet_name: str | None = Field(default=None, max_length=255)
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> "Type3CandidateUnconfirmationRequest":
+        if not self.select_all_confirmed and not self.candidate_ids:
+            raise ValueError(
+                "candidate_ids is required unless selecting all confirmed candidates"
+            )
+        if self.select_all_confirmed and self.candidate_ids:
+            raise ValueError("candidate_ids cannot be combined with select_all_confirmed")
+        if len(set(self.candidate_ids)) != len(self.candidate_ids):
+            raise ValueError("candidate_ids must be unique")
+        if len(set(self.excluded_candidate_ids)) != len(self.excluded_candidate_ids):
+            raise ValueError("excluded_candidate_ids must be unique")
+        return self

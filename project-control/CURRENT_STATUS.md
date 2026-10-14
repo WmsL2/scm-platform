@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-13
 
+> 2026-10-14：类型 3、类型 4 工作台的完成选品后调整体验补齐。项目先从 `READY` / `EXPORTED` 返回 `SELECTING`，才能新增或撤销确认；两类工作台均支持勾选已确认候选、全选本页或全部已确认候选后批量撤销。“全选全部待确认/已确认”在类型 3、类型 4 中会先回读当前 Run 与候选汇总，类型 3 同时同步当前 Run 状态，因此确认或撤销后无需刷新浏览器才可继续全选。类型 4 新增受状态门禁和审计保护的批量撤销 API，类型 3 同步具备单条/批量撤销。类型 3 另新增仅展示 Run 冻结商品/价格/图片引用的候选详情弹窗，商品主数据后续变化不会改写决策依据。历史 Run 与导出文件保留，重新导出递增版本；无 Migration、无新权限。定向后端测试、Ruff、Mypy、前端定向测试、类型检查和生产构建通过；真实浏览器验收待完成。
+
 > 2026-10-13：补齐类型 3 完成选品后无法返回待选品的缺口。项目处于 `READY` 或 `EXPORTED` 时，可通过类型 3 专用 API 和工作台“返回调整选品”按钮回到 `SELECTING`；已确认候选、历史导出和 Sheet 快照保留，原 `EXPORTED` Run 回到 `CONFIRMED`，后续导出继续生成新版本。Run 列表新增只读项目状态；启动生成后页面会以该列表的最新 Run 替换创建响应，避免候选已生成但仍使用旧 `MATCHING` 状态而隐藏“完成选品”。复用 `recommendation:review`，无新增权限或 Migration；自动化回归、Ruff、Mypy 和前端生产构建通过，真实浏览器验收待执行。
 
 > 2026-10-13：类型 1/2 工作台新增客户原表回填字段确认。每个新项目都由对应类型 Agent 基于本次工作簿重新识别输入列和结果列；即使 Sheet、表头和指纹相同，也不再复用数据库中其他项目的模板或内置客户模板，每个项目生成独立映射快照。已删除历史“88折”、有效期等具体回填表头，AI 无法唯一识别时留空交由人工选择。左侧默认仅显示以 AI 报价列为起点的连续待回填结果区，不再展示此前的序号、物料、限价、采购量等输入列；AI 漏识别列可从当前原表全部真实表头人工补充。待回填列可映射到商品大表全部 43 个正式导出字段及类型专属结果字段，Selection 同步冻结完整商品快照；用户至少确认报价单价列后才能开始匹配或导出。项目级 `output_mapping` 与输入映射完全隔离，只控制 ORIGINAL 原表写入位置，不改变类型 1 规格匹配、类型 2 品牌型号同品判断。Revision `20261013_0056`；新增 `GET/PUT /api/v1/bid-projects/{id}/output-mapping`，权限复用 `bid:detail` / `bid:update`（ADR-0061）。真实 DeepSeek 与浏览器端到端验收待执行。
