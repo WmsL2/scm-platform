@@ -15,6 +15,7 @@ from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Inches, Pt
 
 from app.common.contracts import AppError
+from app.core.config import get_settings
 from app.modules.recommendation.application.ppt_template_manifest import (
     SLOT_BODY,
     SLOT_IMAGE_PREFIX,
@@ -34,6 +35,18 @@ _LINE = RGBColor(146, 156, 168)  # type: ignore[no-untyped-call]
 _FONT = "Microsoft YaHei"
 _SLIDE_WIDTH = Inches(13.333333)
 _SLIDE_HEIGHT = Inches(7.5)
+_LAYOUT_PREVIEW_MARKER = "排版诊断版（仅用于排版调试）"
+
+
+def _contains_layout_preview_page(content: bytes) -> bool:
+    """Detect whether an explicitly requested diagnostic page was emitted."""
+    presentation = Presentation(BytesIO(content))
+    return any(
+        _LAYOUT_PREVIEW_MARKER in shape.text
+        for slide in presentation.slides
+        for shape in slide.shapes
+        if shape.has_text_frame
+    )
 
 
 class PptRenderer:
@@ -45,6 +58,22 @@ class PptRenderer:
     template is retained and generated pages are appended after it.
     """
 
+    def __init__(self, *, layout_preview: bool | None = None) -> None:
+        self._layout_preview = (
+            get_settings().use_ppt_v5_layout_preview
+            if layout_preview is None
+            else layout_preview
+        )
+        self._layout_diagnostics_added = False
+
+    @property
+    def layout_preview_enabled(self) -> bool:
+        return self._layout_preview
+
+    @property
+    def layout_diagnostics_added(self) -> bool:
+        return self._layout_diagnostics_added
+
     def render(
         self,
         source: Mapping[str, object],
@@ -54,14 +83,29 @@ class PptRenderer:
         template_code: str = "SYSTEM_DEFAULT",
         template_version: str | None = None,
     ) -> bytes:
+        self._layout_diagnostics_added = False
         template = get_ppt_template(template_code, template_version)
         self._template_code = template.code
         if template.code != "SYSTEM_DEFAULT":
-            # Business decks are real PPTX templates, not approximations drawn on a
-            # new canvas. A missing private asset is a hard error by design.
-            return self._render_business_template(
+            # Business decks are real approved PPTX templates, not approximations
+            # drawn on a new canvas. A missing versioned asset is a hard error.
+            content = self._render_business_template(
                 source, images=product_images or {}, template=template
             )
+            if (
+                self._layout_preview
+                and template.version == "5"
+                and template.code == "JD_DETAIL_RED"
+            ):
+                self._layout_diagnostics_added = _contains_layout_preview_page(content)
+            elif (
+                self._layout_preview
+                and template.version == "5"
+                and template.code == "JD_FESTIVE_RED"
+            ):
+                # Keep template 2's established preview-output naming unchanged.
+                self._layout_diagnostics_added = True
+            return content
         presentation = Presentation(str(template_path)) if template_path else Presentation()
         if template_path is None:
             presentation.slide_width = _SLIDE_WIDTH
@@ -97,7 +141,23 @@ class PptRenderer:
             )
 
             return render_jd_detail_red_v5(
-                source, images=images, template=template, manifest=manifest
+                source,
+                images=images,
+                template=template,
+                manifest=manifest,
+                layout_preview=self._layout_preview,
+            )
+        if template.version == "5" and template.code == "JD_FESTIVE_RED":
+            from app.modules.recommendation.application.ppt_official_template_festive_v5 import (
+                render_jd_festive_red_v5,
+            )
+
+            return render_jd_festive_red_v5(
+                source,
+                images=images,
+                template=template,
+                manifest=manifest,
+                layout_preview=self._layout_preview,
             )
         presentation = Presentation(str(resolve_ppt_template_asset(template)))
         prototype = presentation.slides[manifest.product_slide_index]

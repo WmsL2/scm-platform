@@ -21,10 +21,11 @@ export const pptSolutionApi = {
   generations(projectId: string): Promise<PptGenerationTask[]> {
     return http.get(`${base}/${projectId}/generations`)
   },
-  generate(projectId: string, runId: string, templateCode = "SYSTEM_DEFAULT"): Promise<PptGenerationTask> {
+  generate(projectId: string, runId: string, templateCode = "SYSTEM_DEFAULT", templateVersion?: string): Promise<PptGenerationTask> {
     return http.post(`${base}/${projectId}/runs/${runId}/generations`, {
       use_default_template: true,
       template_code: templateCode,
+      ...(templateVersion ? { template_version: templateVersion } : {}),
     }, { timeoutMs: 1_800_000 })
   },
   download(taskId: string, fileId: string): Promise<Blob> {

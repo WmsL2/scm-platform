@@ -3,13 +3,31 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from app.modules.recommendation.application.ppt_service import PptSolutionService
+from app.modules.recommendation.application.ppt_service import (
+    PptSolutionService,
+    _ppt_output_filename,
+)
 from app.modules.recommendation.infrastructure.models import (
     PptSolutionPlan,
     RecommendationCandidate,
     RecommendationConfirmation,
 )
 from app.modules.recommendation.ppt_schemas import PptFrozenRecommendationConfig
+
+
+def test_layout_diagnostic_filename_marks_only_when_a_diagnostic_page_was_added() -> None:
+    assert _ppt_output_filename("BID001", 2, "JD_DETAIL_RED", "5", True) == (
+        "BID001-PPT方案-V2-排版诊断版.pptx"
+    )
+    assert _ppt_output_filename("BID001", 2, "JD_FESTIVE_RED", "5", True) == (
+        "BID001-PPT方案-V2-排版诊断版.pptx"
+    )
+    assert _ppt_output_filename("BID001", 2, "CATALOG_MINIMAL", "3", True) == (
+        "BID001-PPT方案-V2.pptx"
+    )
+    assert _ppt_output_filename("BID001", 2, "JD_DETAIL_RED", "5", False) == (
+        "BID001-PPT方案-V2.pptx"
+    )
 
 
 def _candidate(rank: int, agreement_price: str) -> RecommendationCandidate:
