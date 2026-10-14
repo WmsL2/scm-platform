@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-14
 
+> 2026-10-14 CI 类型兼容修复：任务列表查询移除固定 `Select[tuple[AsyncTask]]` 标注，由 `select(AsyncTask)` 自动推断实体类型，兼容 SQLAlchemy 2.0/2.1 的查询泛型差异；不改变 SQL、分页、任务状态、API/UI/权限或数据库。验证结果见 Change 2026-10-14-011。
+
 > 2026-10-14 主分支集成：`feat/mysql-task-queue-stability` 合入 `origin/main@8c33d09` 的类型 1/2 输入映射确认、匹配归一化优化和 PPT 模板 1/2 v5 更新，保留持久化队列及用户 `.env.example` 配置。输入确认与排队匹配互斥，回填缓存按 Sheet/表头行隔离，PPT 显式版本参数继续通过 202 队列冻结；队列 ADR 调整为 0065，主分支 ADR-0064 不变。合并前的类型 1～4 用户流程验证不替代新增输入确认步骤的合并后页面验收；本次结果见 Change 2026-10-14-010。
 
 > 2026-10-14 本机实际流程补验：用户反馈类型 1～4 已分别跑通导入到导出完整流程；只读数据库核验确认对应匹配/推品任务及结构解析缓存成功，类型 1/2/3/4 的示例项目为 BID00000362 / BID00000364 / BID00000365 / BID00000366。该结果补充单用户页面流程验证，不替代类型 5、本次导出文件逐项内容验收、提供方故障及多人持续负载测试。Worker 正常领取/成功目前不打印逐任务日志，执行中 5% 为阶段标记而非实际完成比例；首次上传建项的模板识别仍同步处理。

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import Select, case, func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError, PageParams
@@ -102,7 +102,7 @@ class AsyncTaskService:
     async def list_for_project(
         self, project_id: UUID, page: PageParams
     ) -> tuple[list[AsyncTaskResponse], int]:
-        statement: Select[tuple[AsyncTask]] = (
+        statement = (
             select(AsyncTask)
             .where(AsyncTask.project_id == project_id)
             .order_by(

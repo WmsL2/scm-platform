@@ -11,6 +11,8 @@ Last Updated：2026-10-14（MySQL 持久化队列及本机流程补验）
 
 ## Backend
 
+- [x] 任务列表查询不再写死 SQLAlchemy 2.0 的 `Select[tuple[AsyncTask]]` 泛型，保留严格 Mypy 检查并兼容 2.1 查询类型；不改变查询或响应合同，验证见 Change 2026-10-14-011。
+
 - [x] `scm_async_task` MySQL 持久化队列：项目级 HEAVY 互斥、`SKIP LOCKED` 领取、租约/心跳、失败/取消/重试查询 API 及独立 Worker；类型 1--5 重任务创建后返回 `202`，不在 HTTP 请求中等待。
 - [x] `scm_mapping_analysis_cache`：类型 3 模板/Sheet 结构和类型 1/2 回填列结构由 MAPPING Worker 读取，按项目、文件和分析键缓存；缓存未命中返回 `202`，不阻塞 API Event Loop。
 - [x] 复审补齐推荐模板结构、事务提交、取消/租约原子回收、重试互斥/轮次隔离、8 并发缓存复用、按类型权限、任务列表批量查询和独立进程验收。模型使用测试替身，实际负载验收与上传初始识别后台化边界见 `docs/20-mysql-task-queue.md`。
