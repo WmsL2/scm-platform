@@ -6,6 +6,7 @@ import re
 import unicodedata
 import uuid
 from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +34,7 @@ from app.modules.bid.infrastructure.models import (
     MatchCandidate,
     MatchTask,
 )
+from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMNS
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.matching.application.type1_agent import (
     TYPE1_PROMPT_VERSION,
@@ -75,8 +77,9 @@ from app.modules.supplier.infrastructure.models import Supplier
 TYPE2_AI_MAX_CONCURRENCY = 4
 TYPE2_AI_CANDIDATE_LIMIT = 8
 TYPE1_AI_MAX_CONCURRENCY = 4
-TYPE1_AI_CANDIDATE_LIMIT = 12
+TYPE1_AI_CANDIDATE_CHUNK_SIZE = 20
 TYPE1_AI_BATCH_SIZE = 5
+TYPE1_FALLBACK_MIN_SCORE = 50
 
 
 @dataclass(frozen=True)
@@ -116,6 +119,22 @@ class MatchingService:
         self, project_id: uuid.UUID, actor_id: uuid.UUID
     ) -> StartMatchingResponse:
         project = await self.session.get(BidProject, project_id)
+        if project is not None and project.import_status != BidImportStatus.PARSED.value:
+            raise AppError(
+                "BID_PROJECT_NOT_PARSED",
+                "请先人工确认客户需求字段映射，再开始匹配",
+                409,
+            )
+        if (
+            project is not None
+            and project.output_mapping is not None
+            and project.output_mapping_confirmed_at is None
+        ):
+            raise AppError(
+                "BID_OUTPUT_MAPPING_NOT_CONFIRMED",
+                "请先确认客户原表的回填字段映射",
+                409,
+            )
         if (
             project is not None
             and project.recommendation_type
@@ -144,15 +163,32 @@ class MatchingService:
         async with transaction_scope(self.session):
             project = await self._project_or_404(project_id)
             if project.import_status != BidImportStatus.PARSED.value:
-                raise AppError("BID_PROJECT_NOT_PARSED", "项目尚未完成需求行解析", 409)
+                raise AppError(
+                    "BID_PROJECT_NOT_PARSED",
+                    "请先人工确认客户需求字段映射，再开始匹配",
+                    409,
+                )
+            if (
+                project.output_mapping is not None
+                and project.output_mapping_confirmed_at is None
+            ):
+                raise AppError(
+                    "BID_OUTPUT_MAPPING_NOT_CONFIRMED",
+                    "请先确认客户原表的回填字段映射",
+                    409,
+                )
             is_type2 = (
                 project.recommendation_type
                 == BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value
             )
+            is_type1 = (
+                project.recommendation_type
+                == BidRecommendationType.TYPE_1_SPECIFICATION.value
+            )
             allowed_statuses = {BidProjectStatus.IMPORTED.value}
-            if is_type2:
-                # Allows projects created before Type 2 automatic lowest-price matching
-                # to be upgraded by running matching once more from their old review state.
+            if is_type1 or is_type2:
+                # Allows projects created before automatic selection to be upgraded by
+                # running matching once more from their old review state.
                 allowed_statuses.update(
                     {
                         BidProjectStatus.SELECTING.value,
@@ -231,13 +267,21 @@ class MatchingService:
                     )
                     candidate_models[candidate.product_id] = candidate_model
                     self.session.add(candidate_model)
-                if is_type2:
+                if is_type1 or is_type2:
                     chosen = next(
                         (
                             candidate
                             for candidate in decision.candidates
-                            if self._is_quotable_type2_product(
-                                product_rows_by_id[candidate.product_id][0], item.max_price
+                            if (
+                                self._is_quotable_type2_product(
+                                    product_rows_by_id[candidate.product_id][0],
+                                    item.max_price,
+                                )
+                                if is_type2
+                                else self._is_quotable_type1_product(
+                                    product_rows_by_id[candidate.product_id][0],
+                                    item.max_price,
+                                )
                             )
                         ),
                         None,
@@ -246,30 +290,34 @@ class MatchingService:
                         item.status = BidItemStatus.NO_MATCH.value
                         continue
                     product, supplier = product_rows_by_id[chosen.product_id]
-                    assert product.cost_price is not None
+                    assert product.agreement_price is not None
                     auto_selection_plans.append(
                         (item, candidate_models[chosen.product_id], product, supplier)
                     )
                     item.status = BidItemStatus.SELECTED.value
                     auto_selected_count += 1
-            if is_type2:
+            if is_type1 or is_type2:
                 # Candidate rows must exist before their selection FK rows are inserted.
                 await self.session.flush()
                 for item, candidate_model, product, supplier in auto_selection_plans:
                     selection_id = uuid.uuid4()
-                    assert product.cost_price is not None
+                    assert product.agreement_price is not None
                     selection = BidItemSelection(
                         id=selection_id,
                         project_item_id=item.id,
                         candidate_id=candidate_model.id,
                         product_id=product.id,
                         supplier_id=supplier.id,
-                        selected_unit_price=product.cost_price,
+                        selected_unit_price=product.agreement_price,
                         requirement_snapshot=self._requirement_snapshot(item),
-                        product_snapshot=self._product_snapshot(product),
+                        product_snapshot=self._product_snapshot(product, supplier),
                         supplier_snapshot=self._supplier_snapshot(supplier),
-                        price_snapshot=self._price_snapshot(product, product.cost_price),
-                        note="类型2按当前成本价自动选择最低报价",
+                        price_snapshot=self._price_snapshot(product, product.agreement_price),
+                        note=(
+                            "类型2按协议价自动选择最低合规报价"
+                            if is_type2
+                            else "类型1已自动选择规格适配度最高的合规商品"
+                        ),
                         created_by=actor_id,
                     )
                     self.session.add(selection)
@@ -279,7 +327,7 @@ class MatchingService:
             project.processed_item_count = len(items)
             project.status = BidProjectStatus.SELECTING.value
             self._event(project_id, actor_id, "MATCH_COMPLETED", "MATCHING", "SELECTING", None)
-            if is_type2 or not items:
+            if is_type1 or is_type2 or not items:
                 project.status = BidProjectStatus.READY.value
                 self._event(
                     project_id,
@@ -288,9 +336,13 @@ class MatchingService:
                     "SELECTING",
                     "READY",
                     (
-                        f"类型2自动选择最低报价 {auto_selected_count} 条，"
-                        f"未匹配 {len(items) - auto_selected_count} 条"
-                        if is_type2
+                        (
+                            f"类型2自动选择最低报价 {auto_selected_count} 条，"
+                            if is_type2
+                            else f"类型1自动选择规格合规商品 {auto_selected_count} 条，"
+                        )
+                        + f"未匹配 {len(items) - auto_selected_count} 条"
+                        if is_type1 or is_type2
                         else None
                     ),
                 )
@@ -311,9 +363,18 @@ class MatchingService:
         async with transaction_scope(self.session):
             project = await self._project_or_404(project_id)
             if project.import_status != BidImportStatus.PARSED.value:
-                raise AppError("BID_PROJECT_NOT_PARSED", "项目尚未完成需求行解析", 409)
-            if project.status != BidProjectStatus.IMPORTED.value:
+                raise AppError(
+                    "BID_PROJECT_NOT_PARSED",
+                    "请先人工确认客户需求字段映射，再开始匹配",
+                    409,
+                )
+            if project.status not in {
+                BidProjectStatus.IMPORTED.value,
+                BidProjectStatus.SELECTING.value,
+                BidProjectStatus.READY.value,
+            }:
                 raise AppError("BID_MATCHING_NOT_ALLOWED", "当前项目状态不能开始匹配", 409)
+            previous_status = project.status
             task = MatchTask(
                 id=task_id,
                 project_id=project_id,
@@ -329,7 +390,7 @@ class MatchingService:
                 project_id,
                 actor_id,
                 "TYPE1_AI_MATCH_STARTED",
-                BidProjectStatus.IMPORTED.value,
+                previous_status,
                 BidProjectStatus.MATCHING.value,
                 TYPE1_PROMPT_VERSION,
             )
@@ -339,17 +400,23 @@ class MatchingService:
             items = await self.repository.items(project_id)
             product_rows = await self.repository.eligible_products()
             project_remark = project.remark
-            contexts, candidate_pools, deterministic_decisions = self._type1_agent_contexts(
+            context_rounds, candidate_pools, deterministic_decisions = self._type1_agent_contexts(
                 items, product_rows
             )
 
         try:
-            decisions: dict[str, Type1RequirementDecision] = dict(
-                deterministic_decisions
-            )
+            approved_keys: dict[str, list[str]] = {
+                key: list(decision.candidate_keys)
+                for key, decision in deterministic_decisions.items()
+            }
+            no_match_reasons: dict[str, str | None] = {
+                key: decision.no_match_reason
+                for key, decision in deterministic_decisions.items()
+            }
             batches = [
-                contexts[start : start + TYPE1_AI_BATCH_SIZE]
-                for start in range(0, len(contexts), TYPE1_AI_BATCH_SIZE)
+                context_round[start : start + TYPE1_AI_BATCH_SIZE]
+                for context_round in context_rounds
+                for start in range(0, len(context_round), TYPE1_AI_BATCH_SIZE)
             ]
             semaphore = asyncio.Semaphore(TYPE1_AI_MAX_CONCURRENCY)
 
@@ -372,9 +439,18 @@ class MatchingService:
                 await asyncio.gather(*tasks, return_exceptions=True)
                 raise
             for result_items in batch_results:
-                decisions.update({item.requirement_key: item for item in result_items})
+                for result_item in result_items:
+                    approved_keys.setdefault(result_item.requirement_key, []).extend(
+                        result_item.candidate_keys
+                    )
+                    if result_item.no_match_reason:
+                        no_match_reasons[result_item.requirement_key] = (
+                            result_item.no_match_reason
+                        )
         except DeepSeekConfigurationError as exc:
-            await self._fail_type1_ai_matching(task_id, project_id, actor_id, str(exc))
+            await self._fail_type1_ai_matching(
+                task_id, project_id, actor_id, str(exc), previous_status
+            )
             raise AppError("TYPE1_AI_NOT_CONFIGURED", str(exc), 409) from exc
         except DeepSeekStructuredOutputError as exc:
             message = "类型1 AI 规格复核结果不符合业务约束，请重新执行"
@@ -382,17 +458,23 @@ class MatchingService:
                 f"{message}；{exc.error_kind}；{exc.safe_validation_summary}"
             )
             await self._fail_type1_ai_matching(
-                task_id, project_id, actor_id, diagnostic
+                task_id, project_id, actor_id, diagnostic, previous_status
             )
             raise AppError("TYPE1_AI_RESULT_INVALID", message, 502) from exc
         except Type1AgentContractError as exc:
             message = "类型1 AI 规格复核结果不符合业务约束，请重新执行"
             await self._fail_type1_ai_matching(
-                task_id, project_id, actor_id, f"{message}；CONTRACT；{exc}"
+                task_id,
+                project_id,
+                actor_id,
+                f"{message}；CONTRACT；{exc}",
+                previous_status,
             )
             raise AppError("TYPE1_AI_RESULT_INVALID", message, 502) from exc
         except DeepSeekProviderError as exc:
-            await self._fail_type1_ai_matching(task_id, project_id, actor_id, str(exc))
+            await self._fail_type1_ai_matching(
+                task_id, project_id, actor_id, str(exc), previous_status
+            )
             raise AppError("TYPE1_AI_PROVIDER_FAILED", str(exc), 502) from exc
 
         async with transaction_scope(self.session):
@@ -409,18 +491,22 @@ class MatchingService:
                 for product, supplier in await self.repository.eligible_products()
             }
             matched_count = 0
+            auto_selected_count = 0
+            selection_plans: list[
+                tuple[BidProjectItem, MatchCandidate, Product, Supplier, int]
+            ] = []
             for original_item in items:
                 item = current_items[original_item.id]
                 requirement_key = self._type1_requirement_key(item.id)
-                decision = decisions.get(requirement_key)
                 pool = candidate_pools.get(item.id, [])
                 candidate_ids_by_key = {
-                    f"P{index:02d}": product_id
+                    f"P{index:05d}": product_id
                     for index, product_id in enumerate(pool, start=1)
                 }
+                unique_keys = list(dict.fromkeys(approved_keys.get(requirement_key, [])))
                 selected_ids = [
                     candidate_ids_by_key[key]
-                    for key in (decision.candidate_keys if decision else [])
+                    for key in unique_keys
                     if key in candidate_ids_by_key
                     and candidate_ids_by_key[key] in products_by_id
                 ]
@@ -431,52 +517,101 @@ class MatchingService:
                     item.no_quote_reason = json.dumps(
                         {
                             "reason": (
-                                decision.no_match_reason
-                                if decision and decision.no_match_reason
+                                no_match_reasons.get(requirement_key)
+                                if no_match_reasons.get(requirement_key)
                                 else "未找到与类目、名称、规格参数、技术要求及备注相符的商品"
                             )
                         },
                         ensure_ascii=False,
                     )
                     continue
-                item.status = (
-                    BidItemStatus.UNIQUE_MATCH.value
-                    if len(selected_ids) == 1
-                    else BidItemStatus.MULTIPLE_MATCH.value
-                )
-                matched_count += 1
+                candidate_models: dict[uuid.UUID, MatchCandidate] = {}
                 for rank, product_id in enumerate(selected_ids, start=1):
                     product, supplier = products_by_id[product_id]
-                    self.session.add(
-                        MatchCandidate(
-                            id=uuid.uuid4(),
-                            match_task_id=task.id,
-                            project_item_id=item.id,
-                            product_id=product.id,
-                            supplier_id=supplier.id,
-                            score=Decimal(max(1, 101 - rank)),
-                            rank=rank,
-                            match_method="TYPE1_AI_SPECIFICATION",
-                            match_reason={
-                                "rules_version": TYPE1_PROMPT_VERSION,
-                                "recall_stage": "TYPE1_AI_SPECIFICATION",
-                                "comparison": "AI_STRUCTURED",
-                            },
+                    candidate_model = MatchCandidate(
+                        id=uuid.uuid4(),
+                        match_task_id=task.id,
+                        project_item_id=item.id,
+                        product_id=product.id,
+                        supplier_id=supplier.id,
+                        score=Decimal(max(1, 101 - rank)),
+                        rank=rank,
+                        match_method="TYPE1_AI_SPECIFICATION",
+                        match_reason={
+                            "rules_version": TYPE1_PROMPT_VERSION,
+                            "recall_stage": "TYPE1_AI_SPECIFICATION",
+                            "comparison": "AI_STRUCTURED",
+                        },
+                    )
+                    candidate_models[product_id] = candidate_model
+                    self.session.add(candidate_model)
+                quotable_ids = [
+                    product_id
+                    for product_id in selected_ids
+                    if self._is_quotable_type1_product(
+                        products_by_id[product_id][0], item.max_price
+                    )
+                ]
+                if not quotable_ids:
+                    item.status = BidItemStatus.NO_MATCH.value
+                    item.no_quote_reason = json.dumps(
+                        {"reason": "AI 规格候选缺少有效协议价或协议价超过客户限价"},
+                        ensure_ascii=False,
+                    )
+                    continue
+                matched_count += 1
+                item.status = BidItemStatus.SELECTED.value
+                for output_rank, product_id in enumerate(quotable_ids, start=1):
+                    product, supplier = products_by_id[product_id]
+                    selection_plans.append(
+                        (
+                            item,
+                            candidate_models[product_id],
+                            product,
+                            supplier,
+                            output_rank,
                         )
                     )
+                    auto_selected_count += 1
+
+            await self.session.flush()
+            for item, candidate_model, product, supplier, output_rank in selection_plans:
+                assert product.agreement_price is not None
+                selection_id = uuid.uuid4()
+                self.session.add(
+                    BidItemSelection(
+                        id=selection_id,
+                        project_item_id=item.id,
+                        candidate_id=candidate_model.id,
+                        product_id=product.id,
+                        supplier_id=supplier.id,
+                        selected_unit_price=product.agreement_price,
+                        requirement_snapshot=self._requirement_snapshot(item),
+                        product_snapshot=self._product_snapshot(product, supplier),
+                        supplier_snapshot=self._supplier_snapshot(supplier),
+                        price_snapshot=self._price_snapshot(product, product.agreement_price),
+                        note=f"类型1 AI 规格匹配商品（适配顺序 {output_rank}）",
+                        created_by=actor_id,
+                    )
+                )
+                if item.current_selection_id is None:
+                    item.current_selection_id = selection_id
 
             task.status = "COMPLETED"
             task.processed_item_count = len(items)
             project.processed_item_count = len(items)
-            project.status = BidProjectStatus.SELECTING.value
+            project.status = BidProjectStatus.READY.value
             project.updated_by = actor_id
             self._event(
                 project_id,
                 actor_id,
                 "TYPE1_AI_MATCH_COMPLETED",
                 BidProjectStatus.MATCHING.value,
-                BidProjectStatus.SELECTING.value,
-                f"类型1 AI 规格复核匹配 {matched_count} 条，未匹配 {len(items) - matched_count} 条",
+                BidProjectStatus.READY.value,
+                (
+                    f"类型1 AI 规格复核匹配 {matched_count} 个需求行，输出 "
+                    f"{auto_selected_count} 个商品，未匹配 {len(items) - matched_count} 行"
+                ),
             )
 
         return StartMatchingResponse(
@@ -492,6 +627,7 @@ class MatchingService:
         project_id: uuid.UUID,
         actor_id: uuid.UUID,
         message: str,
+        restore_status: str,
     ) -> None:
         async with transaction_scope(self.session):
             task = await self.session.get(MatchTask, task_id)
@@ -500,14 +636,14 @@ class MatchingService:
                 task.status = "FAILED"
                 task.error_message = message[:2000]
             if project is not None and project.status == BidProjectStatus.MATCHING.value:
-                project.status = BidProjectStatus.IMPORTED.value
+                project.status = restore_status
                 project.updated_by = actor_id
                 self._event(
                     project_id,
                     actor_id,
                     "TYPE1_AI_MATCH_FAILED",
                     BidProjectStatus.MATCHING.value,
-                    BidProjectStatus.IMPORTED.value,
+                    restore_status,
                     message[:2000],
                 )
 
@@ -520,7 +656,11 @@ class MatchingService:
         async with transaction_scope(self.session):
             project = await self._project_or_404(project_id)
             if project.import_status != BidImportStatus.PARSED.value:
-                raise AppError("BID_PROJECT_NOT_PARSED", "项目尚未完成需求行解析", 409)
+                raise AppError(
+                    "BID_PROJECT_NOT_PARSED",
+                    "请先人工确认客户需求字段映射，再开始匹配",
+                    409,
+                )
             if project.status not in {
                 BidProjectStatus.IMPORTED.value,
                 BidProjectStatus.SELECTING.value,
@@ -692,7 +832,7 @@ class MatchingService:
                     self.session.add(candidate_model)
 
                 chosen_method = "TYPE2_AI_EXACT"
-                chosen_note = "类型2 AI 判定完全同品，按当前成本价自动选择最低报价"
+                chosen_note = "类型2 AI 判定完全同品，按协议价自动选择最低合规报价"
                 required_discount_rate = self._type2_required_discount_rate(
                     item, project_remark
                 )
@@ -718,8 +858,8 @@ class MatchingService:
                     ]
                 chosen_rows.sort(
                     key=lambda row: (
-                        row[0].cost_price is None,
-                        row[0].cost_price or Decimal("0"),
+                        row[0].agreement_price is None,
+                        row[0].agreement_price or Decimal("0"),
                         str(row[0].id),
                     )
                 )
@@ -759,9 +899,9 @@ class MatchingService:
 
             await self.session.flush()
             for item, candidate_model, product, supplier, note, match_method in selection_plans:
-                assert product.cost_price is not None
+                assert product.agreement_price is not None
                 selection_id = uuid.uuid4()
-                product_snapshot = self._product_snapshot(product)
+                product_snapshot = self._product_snapshot(product, supplier)
                 product_snapshot["type2_match_type"] = match_method
                 self.session.add(
                     BidItemSelection(
@@ -770,11 +910,11 @@ class MatchingService:
                         candidate_id=candidate_model.id,
                         product_id=product.id,
                         supplier_id=supplier.id,
-                        selected_unit_price=product.cost_price,
+                        selected_unit_price=product.agreement_price,
                         requirement_snapshot=self._requirement_snapshot(item),
                         product_snapshot=product_snapshot,
                         supplier_snapshot=self._supplier_snapshot(supplier),
-                        price_snapshot=self._price_snapshot(product, product.cost_price),
+                        price_snapshot=self._price_snapshot(product, product.agreement_price),
                         note=note,
                         created_by=actor_id,
                     )
@@ -836,7 +976,7 @@ class MatchingService:
         items: list[BidProjectItem],
         product_rows: list[tuple[Product, Supplier]],
     ) -> tuple[
-        list[Type1RequirementContext],
+        list[list[Type1RequirementContext]],
         dict[uuid.UUID, list[uuid.UUID]],
         dict[str, Type1RequirementDecision],
     ]:
@@ -847,7 +987,7 @@ class MatchingService:
             for product, _supplier in product_rows
         }
         rows_by_id = {product.id: product for product, _supplier in product_rows}
-        contexts: list[Type1RequirementContext] = []
+        context_rounds: list[list[Type1RequirementContext]] = []
         pools: dict[uuid.UUID, list[uuid.UUID]] = {}
         decisions: dict[str, Type1RequirementDecision] = {}
         for item in items:
@@ -873,46 +1013,47 @@ class MatchingService:
             requirement_text = " ".join(important_fields.values())
             requirement_tokens = normalized_search_tokens(requirement_text)
             normalized_requirement = normalize_match_text(requirement_text)
-            ranked_fallback = sorted(
-                (
-                    (
-                        len(requirement_tokens & document.tokens) * 10
-                        + (
-                            40
-                            if normalize_match_text(item.product_name)
-                            and normalize_match_text(item.product_name)
-                            in document.normalized_text
-                            else 0
-                        )
-                        + (
-                            30
-                            if normalize_match_text(item.category_text)
-                            and normalize_match_text(item.category_text)
-                            in document.normalized_text
-                            else 0
-                        )
-                        + (
-                            20
-                            if normalized_requirement
-                            and document.normalized_text
-                            and (
-                                normalized_requirement in document.normalized_text
-                                or document.normalized_text in normalized_requirement
-                            )
-                            else 0
-                        ),
-                        product.id,
+            normalized_product_name = normalize_match_text(item.product_name)
+            normalized_category = normalize_match_text(item.category_text)
+            fallback_scores: list[tuple[int, uuid.UUID]] = []
+            for product, _supplier in product_rows:
+                if product.id in deterministic_ids:
+                    continue
+                document = product_documents[product.id]
+                shared_tokens = requirement_tokens & document.tokens
+                score = (
+                    len(shared_tokens) * 10
+                    + (
+                        40
+                        if normalized_product_name
+                        and normalized_product_name in document.normalized_text
+                        else 0
                     )
-                    for product, _supplier in product_rows
-                    for document in (product_documents[product.id],)
-                    if product.id not in deterministic_ids
-                ),
-                key=lambda row: (-row[0], str(row[1])),
+                    + (
+                        30
+                        if normalized_category
+                        and normalized_category in document.normalized_text
+                        else 0
+                    )
+                    + (
+                        20
+                        if normalized_requirement
+                        and document.normalized_text
+                        and (
+                            normalized_requirement in document.normalized_text
+                            or document.normalized_text in normalized_requirement
+                        )
+                        else 0
+                    )
+                    + (40 if any(len(token) >= 6 for token in shared_tokens) else 0)
+                )
+                if score >= TYPE1_FALLBACK_MIN_SCORE:
+                    fallback_scores.append((score, product.id))
+            ranked_fallback = sorted(
+                fallback_scores, key=lambda row: (-row[0], str(row[1]))
             )
-            fallback_ids = [product_id for score, product_id in ranked_fallback if score > 0]
-            pool = list(dict.fromkeys(deterministic_ids + fallback_ids))[
-                :TYPE1_AI_CANDIDATE_LIMIT
-            ]
+            fallback_ids = [product_id for _score, product_id in ranked_fallback]
+            pool = list(dict.fromkeys(deterministic_ids + fallback_ids))
             pools[item.id] = pool
             if not pool:
                 decisions[requirement_key] = Type1RequirementDecision(
@@ -920,25 +1061,36 @@ class MatchingService:
                     no_match_reason="未召回可供类型1 AI复核的规格候选",
                 )
                 continue
-            contexts.append(
-                Type1RequirementContext(
-                    requirement_key=requirement_key,
-                    source_row=self._matching_source_row(item),
-                    normalized_fields={
-                        "category_text": item.category_text,
-                        "product_name": item.product_name,
-                        "specification": item.specification,
-                        "brand": item.brand,
-                        "model": item.model,
-                    },
-                    important_fields=important_fields,
-                    candidates=[
-                        self._type1_candidate_context(index, rows_by_id[product_id])
-                        for index, product_id in enumerate(pool, start=1)
-                    ],
+            for chunk_start in range(0, len(pool), TYPE1_AI_CANDIDATE_CHUNK_SIZE):
+                round_index = chunk_start // TYPE1_AI_CANDIDATE_CHUNK_SIZE
+                while len(context_rounds) <= round_index:
+                    context_rounds.append([])
+                chunk = pool[
+                    chunk_start : chunk_start + TYPE1_AI_CANDIDATE_CHUNK_SIZE
+                ]
+                context_rounds[round_index].append(
+                    Type1RequirementContext(
+                        requirement_key=requirement_key,
+                        source_row=self._matching_source_row(item),
+                        normalized_fields={
+                            "category_text": item.category_text,
+                            "product_name": item.product_name,
+                            "specification": item.specification,
+                            "brand": item.brand,
+                            "model": item.model,
+                        },
+                        important_fields=important_fields,
+                        candidates=[
+                            self._type1_candidate_context(
+                                index, rows_by_id[product_id]
+                            )
+                            for index, product_id in enumerate(
+                                chunk, start=chunk_start + 1
+                            )
+                        ],
+                    )
                 )
-            )
-        return contexts, pools, decisions
+        return context_rounds, pools, decisions
 
     @staticmethod
     def _type1_important_fields(item: BidProjectItem) -> dict[str, str]:
@@ -965,7 +1117,7 @@ class MatchingService:
     @staticmethod
     def _type1_candidate_context(index: int, product: Product) -> Type1CandidateContext:
         return Type1CandidateContext(
-            candidate_key=f"P{index:02d}",
+            candidate_key=f"P{index:05d}",
             product_name=product.product_name,
             brand=product.brand,
             model=product.model,
@@ -1374,8 +1526,31 @@ class MatchingService:
     async def candidates(
         self, project_id: uuid.UUID, item_id: uuid.UUID
     ) -> list[BidItemCandidateResponse]:
-        await self._project_or_404(project_id)
+        project = await self._project_or_404(project_id)
+        item = await self._item_or_404(project_id, item_id)
         rows = await self.repository.latest_candidates(project_id, item_id)
+        if project.recommendation_type == BidRecommendationType.TYPE_1_SPECIFICATION.value:
+            rows = [
+                row
+                for row in rows
+                if self._is_quotable_type1_product(row[1], item.max_price)
+            ]
+        elif (
+            project.recommendation_type
+            == BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value
+        ):
+            required_discount_rate = self._type2_required_discount_rate(
+                item, project.remark
+            )
+            rows = [
+                row
+                for row in rows
+                if self._is_quotable_type2_product(
+                    row[1],
+                    item.max_price,
+                    required_discount_rate=required_discount_rate,
+                )
+            ]
         return [
             self._candidate_response(candidate, product, supplier)
             for candidate, product, supplier in rows
@@ -1401,18 +1576,32 @@ class MatchingService:
             candidate, product, supplier = row
             if not is_eligible_matching_product(self._matchable(product, supplier)):
                 raise AppError("BID_MATCH_CANDIDATE_INELIGIBLE", "候选商品或供应商当前不可用", 409)
-            if item.max_price is not None and payload.selected_unit_price > item.max_price:
+            is_type1_or_type2 = project.recommendation_type in {
+                BidRecommendationType.TYPE_1_SPECIFICATION.value,
+                BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value,
+            }
+            selected_unit_price = payload.selected_unit_price
+            if is_type1_or_type2:
+                if not self._is_quotable_type1_product(product, item.max_price):
+                    raise AppError(
+                        "BID_AGREEMENT_PRICE_EXCEEDS_MAX",
+                        "商品协议价无效或高于需求限价",
+                        422,
+                    )
+                assert product.agreement_price is not None
+                selected_unit_price = product.agreement_price
+            elif item.max_price is not None and selected_unit_price > item.max_price:
                 raise AppError("BID_SELECTED_PRICE_EXCEEDS_MAX", "选品单价不能高于需求限价", 422)
             selection = BidItemSelection(
                 project_item_id=item.id,
                 candidate_id=candidate.id,
                 product_id=product.id,
                 supplier_id=supplier.id,
-                selected_unit_price=payload.selected_unit_price,
+                selected_unit_price=selected_unit_price,
                 requirement_snapshot=self._requirement_snapshot(item),
-                product_snapshot=self._product_snapshot(product),
+                product_snapshot=self._product_snapshot(product, supplier),
                 supplier_snapshot=self._supplier_snapshot(supplier),
-                price_snapshot=self._price_snapshot(product, payload.selected_unit_price),
+                price_snapshot=self._price_snapshot(product, selected_unit_price),
                 note=payload.note.strip() if payload.note else None,
                 created_by=actor_id,
             )
@@ -1523,6 +1712,7 @@ class MatchingService:
             supplier_cooperation_status=supplier.cooperation_status,
             supplier_is_deleted=supplier.is_deleted,
             cost_price=product.cost_price,
+            agreement_price=product.agreement_price,
             sku=product.sku,
             item_number=product.item_number,
             barcode_text=product.barcode_text,
@@ -1543,7 +1733,7 @@ class MatchingService:
         *,
         required_discount_rate: Decimal | None = None,
     ) -> bool:
-        price = product.cost_price
+        price = product.agreement_price
         price_is_valid = price is not None and price > 0 and (
             max_price is None or price <= max_price
         )
@@ -1552,6 +1742,15 @@ class MatchingService:
         return required_discount_rate is None or (
             product.discount_rate is not None
             and product.discount_rate <= required_discount_rate
+        )
+
+    @staticmethod
+    def _is_quotable_type1_product(
+        product: Product, max_price: Decimal | None
+    ) -> bool:
+        price = product.agreement_price
+        return price is not None and price > 0 and (
+            max_price is None or price <= max_price
         )
 
     def _event(
@@ -1601,13 +1800,9 @@ class MatchingService:
         }
 
     @staticmethod
-    def _product_snapshot(product: Product) -> dict[str, object]:
-        return {
+    def _product_snapshot(product: Product, supplier: Supplier) -> dict[str, object]:
+        snapshot: dict[str, object] = {
             "id": str(product.id),
-            "sku": product.sku,
-            "brand": product.brand,
-            "model": product.model,
-            "product_name": product.product_name,
             "category_id": None,
             "category_path": " / ".join(
                 value
@@ -1618,13 +1813,21 @@ class MatchingService:
                 )
                 if value
             ),
-            "product_specification": product.product_specification,
-            "packaging_list": product.packaging_list,
-            "discount_rate": (
-                str(product.discount_rate) if product.discount_rate is not None else None
-            ),
             "status": product.status,
         }
+        for column in PRODUCT_EXPORT_COLUMNS:
+            snapshot[column.key] = MatchingService._snapshot_value(
+                column.value(product, supplier)
+            )
+        return snapshot
+
+    @staticmethod
+    def _snapshot_value(value: object | None) -> object:
+        if isinstance(value, Decimal):
+            return str(value)
+        if isinstance(value, (date, datetime)):
+            return value.isoformat()
+        return value
 
     @staticmethod
     def _supplier_snapshot(supplier: Supplier) -> dict[str, object]:

@@ -35,6 +35,7 @@ def product(
     cooperation_status: CooperationStatus = CooperationStatus.NORMAL,
     supplier_is_deleted: bool = False,
     cost_price: Decimal | None = Decimal("100"),
+    agreement_price: Decimal | None = Decimal("100"),
 ) -> MatchableProduct:
     return MatchableProduct(
         id=uuid.uuid4(),
@@ -44,6 +45,7 @@ def product(
         supplier_cooperation_status=cooperation_status,
         supplier_is_deleted=supplier_is_deleted,
         cost_price=cost_price,
+        agreement_price=agreement_price,
         sku=sku,
         item_number=item_number,
         barcode_text=barcode_text,
@@ -68,6 +70,21 @@ def product(
 )
 def test_normalize_match_text(value: str | None, expected: str) -> None:
     assert normalize_match_text(value) == expected
+
+
+def test_normalize_match_text_reuses_bounded_cache_without_changing_result() -> None:
+    normalize_match_text.cache_clear()
+
+    first = normalize_match_text(" Ｃｌｅａｒ　ARC-3 ")
+    after_first = normalize_match_text.cache_info()
+    second = normalize_match_text(" Ｃｌｅａｒ　ARC-3 ")
+    after_second = normalize_match_text.cache_info()
+
+    assert first == second == "cleararc3"
+    assert after_first.misses == 1
+    assert after_second.misses == 1
+    assert after_second.hits == 1
+    assert after_second.maxsize == 65_536
 
 
 @pytest.mark.parametrize(
@@ -138,9 +155,13 @@ def test_multiple_exact_candidates_are_ranked_stably_and_require_manual_selectio
     )
 
 
-def test_type2_exact_match_prefers_lowest_current_supplier_quote() -> None:
-    expensive = product(sku="SAME", cost_price=Decimal("120"))
-    cheapest = product(sku="SAME", cost_price=Decimal("80"))
+def test_type2_exact_match_prefers_lowest_agreement_price() -> None:
+    expensive = product(
+        sku="SAME", cost_price=Decimal("50"), agreement_price=Decimal("120")
+    )
+    cheapest = product(
+        sku="SAME", cost_price=Decimal("100"), agreement_price=Decimal("80")
+    )
 
     result = decide_identified_product_matches(
         CanonicalRequirement(buyer_item_code="SAME"),

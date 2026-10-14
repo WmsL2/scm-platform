@@ -4,14 +4,17 @@ import hashlib
 import json
 import re
 import uuid
+from collections.abc import Mapping
+from copy import copy
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from openpyxl import load_workbook
-from sqlalchemy import func, select
+from openpyxl.formula.translate import Translator
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError, PageParams, PageResult
@@ -42,6 +45,12 @@ from app.modules.bid.infrastructure.models import (
 from app.modules.bid.infrastructure.repository import BidProjectRepository
 from app.modules.bid.schemas import (
     BidCurrentSelectionResponse,
+    BidInputMappingFieldResponse,
+    BidInputMappingResponse,
+    BidInputMappingUpdateRequest,
+    BidOutputMappingFieldResponse,
+    BidOutputMappingResponse,
+    BidOutputMappingUpdateRequest,
     BidProjectCreateResponse,
     BidProjectDetailResponse,
     BidProjectEventResponse,
@@ -50,14 +59,17 @@ from app.modules.bid.schemas import (
     BidProjectListItem,
     BidProjectStatusResponse,
 )
+from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMNS
 from app.modules.matching.application.type1_agent import (
     Type1Agent,
     Type1AgentContractError,
+    Type1InputColumnMapping,
     Type1TemplateMappingSuggestion,
 )
 from app.modules.matching.application.type2_agent import (
     Type2Agent,
     Type2AgentContractError,
+    Type2InputColumnMapping,
     Type2TemplateMappingSuggestion,
 )
 from app.modules.recommendation.template.models import RecommendationTemplateMapping
@@ -75,58 +87,59 @@ _PRODUCT_MASTER_TEMPLATE_PATH = (
     Path(__file__).resolve().parents[2] / "catalog" / "resources" / "product-master-template.xlsx"
 )
 _TYPE3_CATEGORY_PATTERN = re.compile(r"^\s*\d+(?:\.\d+){2}\s+.+")
-_BUILTIN_TEMPLATE_PROFILES: tuple[dict[str, object], ...] = (
-    {
-        "recommendation_type": BidRecommendationType.TYPE_1_SPECIFICATION,
-        "code": "TYPE1_ZHONGXIN_SPECIFICATION",
-        "name": "类型1·中信特钢规格参数表",
-        "sheet_name": "物料清单-更新",
-        "header_row": 2,
-        "required_headers": ("物料代码", "物料名称", "规格型号", "需报价物料", "供应商报价"),
-        "import_mapping": {
-            "buyer_item_code": "物料代码", "product_name": "物料名称",
-            "model": "规格型号", "specification": "长描述", "category_text": "小类名称",
-            "unit": "计量单位", "max_price": "限价调整",
-        },
-        "export_mapping": {
-            "selected_unit_price": "供应商报价", "sku": "商品编码（sku）",
-            "brand": "报价品牌", "model": "商品型号", "unit": "报价单位", "note": "备注",
-        },
-    },
-    {
-        "recommendation_type": BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT,
-        "code": "TYPE2_BEIJING_TOBACCO", "name": "类型2·北京烟草品牌型号表",
-        "sheet_name": "Sheet1", "header_row": 2,
-        "required_headers": ("商品通用名称", "品牌", "型号", "商品报价（单价）"),
-        "import_mapping": {
-            "product_name": "商品通用名称", "brand": "品牌", "model": "型号",
-            "specification": "适用打印机型号", "quantity": "预计数量",
-            "unit": "计量单位", "max_price": "单价最高限价（元）",
-            "color": "颜色", "compatible_model": "适用打印机型号",
-            "capacity": "打印量", "packaging": "包装规格", "row_note": "备注",
-        },
-        "export_mapping": {
-            "selected_unit_price": "商品报价（单价）",
-            "discount_compliance": "是否满足平台承诺折扣率（88折）",
-            "price_valid_until": "价格有效期 至少到12.31",
-            "note": "备注",
-        },
-    },
-    {
-        "recommendation_type": BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT,
-        "code": "TYPE2_GUANGMING_PRODUCT_LIST", "name": "类型2·光明商业产品清单",
-        "sheet_name": "产品清单", "header_row": 1,
-        "required_headers": ("后台大类", "品牌", "sku", "是否同品", "协议价"),
-        "import_mapping": {
-            "category_text": "后台小类", "brand": "品牌", "product_name": "商品名称#1",
-            "buyer_item_code": "sku", "max_price": "产品价格",
-        },
-        "export_mapping": {
-            "is_same_product": "是否同品", "product_name": "商品名称#2",
-            "selected_unit_price": "协议价",
-        },
-    },
+_SUMMARY_ROW_MARKERS = frozenset(
+    {"合计", "总计", "小计", "汇总", "subtotal", "total", "grandtotal"}
 )
+_PRODUCT_OUTPUT_MAPPING_FIELDS = tuple(
+    (column.key, column.header, False) for column in PRODUCT_EXPORT_COLUMNS
+)
+_OUTPUT_MAPPING_FIELDS: dict[BidRecommendationType, tuple[tuple[str, str, bool], ...]] = {
+    BidRecommendationType.TYPE_1_SPECIFICATION: (
+        *_PRODUCT_OUTPUT_MAPPING_FIELDS,
+        ("unit", "计量单位", False),
+        ("note", "匹配备注", False),
+    ),
+    BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT: (
+        *_PRODUCT_OUTPUT_MAPPING_FIELDS,
+        ("unit", "计量单位", False),
+        ("is_same_product", "是否同品", False),
+        ("discount_compliance", "折扣是否满足", False),
+        ("price_valid_until", "价格有效期", False),
+        ("note", "匹配／替代备注", False),
+    ),
+}
+
+_INPUT_MAPPING_FIELDS: dict[BidRecommendationType, tuple[tuple[str, str, bool], ...]] = {
+    BidRecommendationType.TYPE_1_SPECIFICATION: (
+        ("category_text", "类目", False),
+        ("product_name", "商品名称", False),
+        ("specification", "规格参数", False),
+        ("technical_requirements", "技术要求", False),
+        ("max_price", "最高限价（协议价）", False),
+        ("row_note", "需求备注", False),
+        ("buyer_item_code", "客户商品编码", False),
+        ("brand", "品牌", False),
+        ("model", "型号", False),
+        ("quantity", "预计数量", False),
+        ("unit", "计量单位", False),
+    ),
+    BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT: (
+        ("product_name", "商品名称", False),
+        ("brand", "品牌", False),
+        ("model", "型号", False),
+        ("specification", "规格参数", False),
+        ("category_text", "类目", False),
+        ("quantity", "预计数量", False),
+        ("unit", "计量单位", False),
+        ("max_price", "最高限价（协议价）", False),
+        ("buyer_item_code", "客户商品编码", False),
+        ("color", "颜色", False),
+        ("compatible_model", "适用机型", False),
+        ("capacity", "打印量／容量", False),
+        ("packaging", "包装规格", False),
+        ("row_note", "需求备注", False),
+    ),
+}
 
 
 class BidProjectService:
@@ -172,18 +185,15 @@ class BidProjectService:
             raise AppError("BID_PROJECT_INVALID_TIME_RANGE", "项目开始时间不能晚于截止时间", 422)
         using_system_recommendation_template = False
         if recommendation_type is BidRecommendationType.TYPE_3_CATEGORY:
-            if (not remark or len(remark.strip()) < 20) and recommendation_template_bytes:
-                remark = self._type3_requirement_from_workbook(recommendation_template_bytes)
-            if recommendation_template_bytes is None:
-                if not remark or len(remark.strip()) < 20:
-                    raise AppError(
-                        "CATEGORY_RECOMMENDATION_REQUIREMENT_REQUIRED",
-                        "类型 3 未上传客户模板时，必须填写至少 20 个字符的类目推品需求",
-                        422,
-                    )
-                recommendation_template_bytes = _PRODUCT_MASTER_TEMPLATE_PATH.read_bytes()
-                recommendation_template_filename = "商品大表标准导出模板.xlsx"
-                using_system_recommendation_template = True
+            # Type 3 must retain the customer's workbook.  Its category nodes are
+            # selected explicitly in the dedicated Type-3 workspace; never turn
+            # a guessed cell scan into the customer's remark/requirement.
+            if recommendation_template_filename is None or recommendation_template_bytes is None:
+                raise AppError(
+                    "TYPE3_WORKBOOK_REQUIRED",
+                    "类型 3 必须上传客户 Excel，以便选择 Sheet、类目及对应导出区域",
+                    422,
+                )
         if project_type == BidProjectType.FILTER_RECOMMENDATION:
             if (
                 recommendation_template_filename is not None
@@ -227,6 +237,7 @@ class BidProjectService:
                 )
         project_id = uuid.uuid4()
         template: BidTemplate | None = None
+        project_output_mapping: dict[str, str] | None = None
         parsed_rows: list[dict[str, Any]] = []
         import_status = BidImportStatus.MAPPING_REQUIRED.value
         import_error: str | None = "未识别到已启用模板，需要完成字段映射后再解析"
@@ -289,7 +300,7 @@ class BidProjectService:
                         suggestion.sheet_name, suggestion.header_row, headers
                     )
                     template = BidTemplate(
-                        template_code=f"{template_prefix}_{fingerprint[:12].upper()}",
+                        template_code=f"{template_prefix}_{project_id.hex.upper()}",
                         template_name=template_name,
                         version=1,
                         sheet_name=suggestion.sheet_name,
@@ -300,19 +311,32 @@ class BidProjectService:
                             for key, value in suggestion.input_mapping.model_dump().items()
                             if value
                         },
-                        export_mapping={
-                            key: value
-                            for key, value in suggestion.output_mapping.model_dump().items()
-                            if value
-                        },
+                        export_mapping=self._normalize_output_mapping(
+                            {
+                                key: value
+                                for key, value in suggestion.output_mapping.model_dump().items()
+                                if value
+                            }
+                        ),
                         fingerprint=fingerprint,
                         is_active=True,
                         created_by=actor_id,
                     )
-                if template is not None:
+                    project_output_mapping = dict(template.export_mapping)
+                if (
+                    template is not None
+                    and recommendation_type
+                    not in {
+                        BidRecommendationType.TYPE_1_SPECIFICATION,
+                        BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT,
+                    }
+                ):
                     parsed_rows = self._parse_rows(file_bytes, template)
                     import_status = BidImportStatus.PARSED.value
                     import_error = None
+                elif template is not None:
+                    import_status = BidImportStatus.MAPPING_REQUIRED.value
+                    import_error = "请人工复核并确认客户需求字段映射"
             except AppError as exc:
                 import_status = BidImportStatus.FAILED.value
                 import_error = exc.message
@@ -327,6 +351,7 @@ class BidProjectService:
                 DeepSeekStructuredOutputError,
                 Type1AgentContractError,
                 Type2AgentContractError,
+                KeyError,
             ):
                 business_label = (
                     "类型1"
@@ -341,6 +366,25 @@ class BidProjectService:
                     else "类型2"
                 )
                 import_error = f"{business_label} AI 模板识别失败：{exc}"
+            if (
+                template is None
+                and recommendation_type
+                in {
+                    BidRecommendationType.TYPE_1_SPECIFICATION,
+                    BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT,
+                }
+            ):
+                template = self._manual_input_mapping_template(
+                    file_bytes,
+                    project_id=project_id,
+                    recommendation_type=recommendation_type,
+                    actor_id=actor_id,
+                )
+                project_output_mapping = {}
+                import_status = BidImportStatus.MAPPING_REQUIRED.value
+                import_error = (
+                    f"{import_error or 'AI 未生成字段建议'}；请人工选择客户需求字段"
+                )
         else:
             import_status = BidImportStatus.NOT_REQUIRED.value
             import_error = None
@@ -398,6 +442,11 @@ class BidProjectService:
                     ),
                     import_status=import_status,
                     import_error=import_error,
+                    output_mapping=(
+                        dict(project_output_mapping or {})
+                        if recommendation_type in _OUTPUT_MAPPING_FIELDS
+                        else None
+                    ),
                     total_item_count=len(parsed_rows),
                     processed_item_count=0,
                     created_by=actor_id,
@@ -660,13 +709,20 @@ class BidProjectService:
         status: BidItemStatus | None,
         keyword: str | None = None,
     ) -> PageResult[BidProjectItemResponse]:
-        await self._project_or_404(project_id)
+        project = await self._project_or_404(project_id)
         rows, total = await self.repository.item_page(
             project_id,
             page=page_params.page,
             page_size=page_params.page_size,
             status=status.value if status else None,
             keyword=keyword.strip() or None if keyword else None,
+            matched_first=(
+                project.recommendation_type
+                in {
+                    BidRecommendationType.TYPE_1_SPECIFICATION.value,
+                    BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value,
+                }
+            ),
         )
         return PageResult(
             items=[
@@ -702,6 +758,308 @@ class BidProjectService:
         await self._project_or_404(project_id)
         return [self._file_response(item) for item in await self.repository.files(project_id)]
 
+    async def input_mapping(
+        self,
+        project_id: uuid.UUID,
+        *,
+        sheet_name: str | None = None,
+        header_row: int | None = None,
+    ) -> BidInputMappingResponse:
+        project = await self._project_or_404(project_id)
+        recommendation_type, template = await self._input_mapping_context(project)
+        original = await self.repository.original_file(project_id)
+        if original is None:
+            raise AppError("BID_PROJECT_ORIGINAL_NOT_FOUND", "项目原始文件不存在", 404)
+        content = await self.storage.read(original.storage_key)
+        selected_sheet = sheet_name.strip() if sheet_name else template.sheet_name
+        selected_header_row = header_row or template.header_row
+        sheet_names, headers = self._workbook_structure(
+            content, selected_sheet, selected_header_row
+        )
+        available = set(self._header_columns(headers))
+        mapping = {
+            key: value
+            for key, value in template.import_mapping.items()
+            if value in available
+        }
+        return self._input_mapping_response(
+            project,
+            recommendation_type,
+            sheet_names=sheet_names,
+            sheet_name=selected_sheet,
+            header_row=selected_header_row,
+            data_start_row=(
+                template.data_start_row
+                if selected_sheet == template.sheet_name
+                and selected_header_row == template.header_row
+                else selected_header_row + 1
+            ),
+            headers=headers,
+            mapping=mapping,
+        )
+
+    async def confirm_input_mapping(
+        self,
+        project_id: uuid.UUID,
+        payload: BidInputMappingUpdateRequest,
+        actor_id: uuid.UUID,
+    ) -> BidInputMappingResponse:
+        async with transaction_scope(self.session):
+            project = await self._project_or_404(project_id, lock=True)
+            recommendation_type, template = await self._input_mapping_context(project)
+            if project.status != BidProjectStatus.IMPORTED.value or project.processed_item_count:
+                raise AppError(
+                    "BID_INPUT_MAPPING_LOCKED",
+                    "项目已开始匹配，不能再修改需求字段映射",
+                    409,
+                )
+            if payload.data_start_row <= payload.header_row:
+                raise AppError(
+                    "BID_INPUT_MAPPING_ROW_INVALID", "数据起始行必须位于表头行之后", 422
+                )
+            template_reference_count = await self.session.scalar(
+                select(func.count())
+                .select_from(BidProject)
+                .where(BidProject.template_id == template.id)
+            )
+            if (template_reference_count or 0) > 1:
+                template = BidTemplate(
+                    template_code=(
+                        f"TYPE1_MANUAL_{project_id.hex.upper()}"
+                        if recommendation_type
+                        is BidRecommendationType.TYPE_1_SPECIFICATION
+                        else f"TYPE2_MANUAL_{project_id.hex.upper()}"
+                    ),
+                    template_name=f"{template.template_name}·项目专属副本"[:255],
+                    version=1,
+                    sheet_name=template.sheet_name,
+                    header_row=template.header_row,
+                    data_start_row=template.data_start_row,
+                    import_mapping=dict(template.import_mapping),
+                    export_mapping=dict(template.export_mapping),
+                    fingerprint=template.fingerprint,
+                    is_active=True,
+                    created_by=actor_id,
+                    updated_by=actor_id,
+                )
+                self.session.add(template)
+                await self.session.flush()
+                project.template_id = template.id
+                project.template_version = template.version
+            original = await self.repository.original_file(project_id)
+            if original is None:
+                raise AppError("BID_PROJECT_ORIGINAL_NOT_FOUND", "项目原始文件不存在", 404)
+            content = await self.storage.read(original.storage_key)
+            sheet_names, headers = self._workbook_structure(
+                content, payload.sheet_name.strip(), payload.header_row
+            )
+            available = set(self._header_columns(headers))
+            allowed = {key for key, _, _ in _INPUT_MAPPING_FIELDS[recommendation_type]}
+            unknown = set(payload.mapping) - allowed
+            if unknown:
+                raise AppError(
+                    "BID_INPUT_MAPPING_FIELD_INVALID",
+                    f"包含不支持的需求字段：{'、'.join(sorted(unknown))}",
+                    422,
+                )
+            mapping = {
+                key: value.strip()
+                for key, value in payload.mapping.items()
+                if value is not None and value.strip()
+            }
+            missing_headers = sorted(set(mapping.values()) - available)
+            if missing_headers:
+                raise AppError(
+                    "BID_INPUT_MAPPING_HEADER_INVALID",
+                    f"客户表列不存在：{'、'.join(missing_headers)}",
+                    422,
+                )
+            if len(set(mapping.values())) != len(mapping):
+                raise AppError(
+                    "BID_INPUT_MAPPING_DUPLICATE", "同一个客户表列不能映射多个需求字段", 422
+                )
+            try:
+                if recommendation_type is BidRecommendationType.TYPE_1_SPECIFICATION:
+                    Type1InputColumnMapping.model_validate(mapping)
+                else:
+                    Type2InputColumnMapping.model_validate(mapping)
+            except ValueError as exc:
+                raise AppError(
+                    "BID_INPUT_MAPPING_INCOMPLETE", "需求字段映射缺少主匹配条件", 422
+                ) from exc
+
+            previous_sheet = template.sheet_name
+            previous_header_row = template.header_row
+            template.sheet_name = payload.sheet_name.strip()
+            template.header_row = payload.header_row
+            template.data_start_row = payload.data_start_row
+            template.import_mapping = mapping
+            template.fingerprint = self._fingerprint(
+                template.sheet_name, template.header_row, headers
+            )
+            template.updated_by = actor_id
+            parsed_rows = self._parse_rows(content, template)
+            if not parsed_rows:
+                raise AppError(
+                    "BID_EXCEL_NO_REQUIREMENT_ROWS", "确认映射后未解析到有效需求行", 422
+                )
+
+            await self.session.execute(
+                delete(BidProjectItem).where(BidProjectItem.project_id == project_id)
+            )
+            for row in parsed_rows:
+                self.session.add(BidProjectItem(project_id=project_id, **row))
+            project.import_status = BidImportStatus.PARSED.value
+            project.import_error = None
+            project.total_item_count = len(parsed_rows)
+            project.processed_item_count = 0
+            project.updated_by = actor_id
+            if (
+                previous_sheet != template.sheet_name
+                or previous_header_row != template.header_row
+            ):
+                project.output_mapping = {
+                    key: value
+                    for key, value in (project.output_mapping or {}).items()
+                    if value in available
+                }
+                project.output_mapping_confirmed_by = None
+                project.output_mapping_confirmed_at = None
+            self._add_event(
+                project_id,
+                actor_id,
+                "INPUT_MAPPING_CONFIRMED",
+                project.status,
+                project.status,
+                f"已确认客户需求字段映射并解析 {len(parsed_rows)} 行",
+            )
+            await self.session.flush()
+            return self._input_mapping_response(
+                project,
+                recommendation_type,
+                sheet_names=sheet_names,
+                sheet_name=template.sheet_name,
+                header_row=template.header_row,
+                data_start_row=template.data_start_row,
+                headers=headers,
+                mapping=mapping,
+            )
+
+    async def output_mapping(self, project_id: uuid.UUID) -> BidOutputMappingResponse:
+        project = await self._project_or_404(project_id)
+        recommendation_type, template = await self._output_mapping_context(project)
+        original = await self.repository.original_file(project_id)
+        if original is None:
+            raise AppError("BID_PROJECT_ORIGINAL_NOT_FOUND", "项目原始文件不存在", 404)
+        headers = self._workbook_headers(
+            await self.storage.read(original.storage_key), template.sheet_name, template.header_row
+        )
+        configured_mapping = self._normalize_output_mapping(
+            dict(project.output_mapping)
+            if project.output_mapping is not None
+            else dict(template.export_mapping)
+        )
+        if (
+            project.output_mapping is not None
+            and project.output_mapping_confirmed_at is None
+        ):
+            configured_mapping = self._with_obvious_price_mapping(
+                headers, configured_mapping
+            )
+        mapping = {
+            field: resolved_header
+            for field, configured_header in configured_mapping.items()
+            if (
+                resolved_header := self._resolve_export_header(
+                    field, configured_header, headers
+                )
+            )
+            is not None
+        }
+        legacy_confirmed = project.output_mapping is None
+        return self._output_mapping_response(
+            project,
+            template,
+            recommendation_type,
+            headers,
+            mapping,
+            confirmed=legacy_confirmed or project.output_mapping_confirmed_at is not None,
+        )
+
+    async def update_output_mapping(
+        self,
+        project_id: uuid.UUID,
+        payload: BidOutputMappingUpdateRequest,
+        actor_id: uuid.UUID,
+    ) -> BidOutputMappingResponse:
+        async with transaction_scope(self.session):
+            project = await self._project_or_404(project_id, lock=True)
+            recommendation_type, template = await self._output_mapping_context(project)
+            if project.status in {
+                BidProjectStatus.SUBMITTED.value,
+                BidProjectStatus.WON.value,
+                BidProjectStatus.LOST.value,
+            }:
+                raise AppError(
+                    "BID_OUTPUT_MAPPING_LOCKED", "项目已进入投标结果阶段，不能修改回填字段", 409
+                )
+            original = await self.repository.original_file(project_id)
+            if original is None:
+                raise AppError("BID_PROJECT_ORIGINAL_NOT_FOUND", "项目原始文件不存在", 404)
+            headers = self._workbook_headers(
+                await self.storage.read(original.storage_key),
+                template.sheet_name,
+                template.header_row,
+            )
+            available = set(self._header_columns(headers))
+            field_definitions = _OUTPUT_MAPPING_FIELDS[recommendation_type]
+            allowed = {key for key, _, _ in field_definitions}
+            unknown = set(payload.mapping) - allowed
+            if unknown:
+                raise AppError(
+                    "BID_OUTPUT_MAPPING_FIELD_INVALID",
+                    f"包含不支持的回填字段：{'、'.join(sorted(unknown))}",
+                    422,
+                )
+            mapping = {
+                key: value.strip()
+                for key, value in payload.mapping.items()
+                if value is not None and value.strip()
+            }
+            missing_headers = sorted(set(mapping.values()) - available)
+            if missing_headers:
+                raise AppError(
+                    "BID_OUTPUT_MAPPING_HEADER_INVALID",
+                    f"回填列不存在：{'、'.join(missing_headers)}",
+                    422,
+                )
+            if len(set(mapping.values())) != len(mapping):
+                raise AppError(
+                    "BID_OUTPUT_MAPPING_DUPLICATE", "同一个客户表列不能映射多个回填字段", 422
+                )
+            project.output_mapping = mapping
+            project.output_mapping_confirmed_by = actor_id
+            project.output_mapping_confirmed_at = datetime.now()
+            project.updated_by = actor_id
+            self._add_event(
+                project_id,
+                actor_id,
+                "OUTPUT_MAPPING_CONFIRMED",
+                project.status,
+                project.status,
+                "已确认客户原表回填字段映射",
+            )
+            await self.session.flush()
+            response = self._output_mapping_response(
+                project,
+                template,
+                recommendation_type,
+                headers,
+                mapping,
+                confirmed=True,
+            )
+        return response
+
     async def download(
         self, project_id: uuid.UUID, file_id: uuid.UUID
     ) -> tuple[BidProjectFile, bytes]:
@@ -723,13 +1081,22 @@ class BidProjectService:
             template = await self.session.get(BidTemplate, project.template_id)
             if template is None:
                 raise AppError("BID_TEMPLATE_NOT_FOUND", "项目模板不存在", 409)
-            resolved_statuses = [BidItemStatus.SELECTED.value, BidItemStatus.NO_QUOTE.value]
             if (
-                project.recommendation_type
-                == BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value
+                project.output_mapping is not None
+                and project.output_mapping_confirmed_at is None
             ):
-                # Type 2 is complete after deterministic comparison: an unmatched row
-                # is an explicit result and remains blank in the customer's workbook.
+                raise AppError(
+                    "BID_OUTPUT_MAPPING_NOT_CONFIRMED",
+                    "请先确认客户原表的回填字段映射",
+                    409,
+                )
+            resolved_statuses = [BidItemStatus.SELECTED.value, BidItemStatus.NO_QUOTE.value]
+            if project.recommendation_type in {
+                BidRecommendationType.TYPE_1_SPECIFICATION.value,
+                BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value,
+            }:
+                # For Types 1 and 2 an unmatched row is an explicit automatic result;
+                # it remains blank in the customer's workbook and does not block export.
                 resolved_statuses.append(BidItemStatus.NO_MATCH.value)
             unresolved_count = await self.session.scalar(
                 select(func.count())
@@ -744,9 +1111,23 @@ class BidProjectService:
             original = await self.repository.original_file(project_id)
             if original is None:
                 raise AppError("BID_PROJECT_ORIGINAL_NOT_FOUND", "项目原始文件不存在", 409)
-            selections = await self.repository.export_rows(project_id)
+            is_type1 = (
+                project.recommendation_type
+                == BidRecommendationType.TYPE_1_SPECIFICATION.value
+            )
+            selections = (
+                await self.repository.type1_export_rows(project_id)
+                if is_type1
+                else await self.repository.export_rows(project_id)
+            )
             content = self._build_export(
-                await self.storage.read(original.storage_key), template, selections
+                await self.storage.read(original.storage_key),
+                template,
+                selections,
+                expand_multiple_rows=is_type1,
+                export_mapping=self._normalize_output_mapping(
+                    project.output_mapping or template.export_mapping
+                ),
             )
             version = await self.repository.next_export_version(project_id)
             filename = f"{project.project_code}-报价文件-V{version}.xlsx"
@@ -919,6 +1300,13 @@ class BidProjectService:
         file_bytes: bytes,
         recommendation_type: BidRecommendationType | None = None,
     ) -> BidTemplate | None:
+        if recommendation_type in {
+            BidRecommendationType.TYPE_1_SPECIFICATION,
+            BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT,
+        }:
+            # 客户表随项目变化。类型 1/2 必须由各自 Agent 解析本次上传，
+            # 不能按表头指纹复用其他项目的输入或回填映射。
+            return None
         try:
             workbook = load_workbook(BytesIO(file_bytes), read_only=True, data_only=False)
         except Exception as exc:
@@ -941,34 +1329,61 @@ class BidProjectService:
                     == template.fingerprint
                 ):
                     return template
-            for profile in _BUILTIN_TEMPLATE_PROFILES:
-                if recommendation_type is not profile["recommendation_type"]:
-                    continue
-                sheet_name = str(profile["sheet_name"])
-                if sheet_name not in workbook.sheetnames:
-                    continue
-                header_row = cast(int, profile["header_row"])
-                headers = [self._text(cell.value) for cell in workbook[sheet_name][header_row]]
-                header_values = {header for header in headers if header}
-                required_headers = cast(tuple[str, ...], profile["required_headers"])
-                if not set(required_headers).issubset(header_values):
-                    continue
-                fingerprint = self._fingerprint(sheet_name, header_row, headers)
-                return BidTemplate(
-                    template_code=f"{profile['code']}-{fingerprint[:12]}",
-                    template_name=str(profile["name"]),
-                    version=1,
-                    sheet_name=sheet_name,
-                    header_row=header_row,
-                    data_start_row=header_row + 1,
-                    import_mapping=cast(dict[str, str], profile["import_mapping"]),
-                    export_mapping=cast(dict[str, str], profile["export_mapping"]),
-                    fingerprint=fingerprint,
-                    is_active=True,
-                )
         finally:
             workbook.close()
         return None
+
+    @classmethod
+    def _manual_input_mapping_template(
+        cls,
+        file_bytes: bytes,
+        *,
+        project_id: uuid.UUID,
+        recommendation_type: BidRecommendationType,
+        actor_id: uuid.UUID,
+    ) -> BidTemplate:
+        try:
+            workbook = load_workbook(BytesIO(file_bytes), read_only=True, data_only=False)
+        except Exception as exc:
+            raise AppError("BID_EXCEL_PARSE_FAILED", "Excel 文件无法读取", 422) from exc
+        try:
+            sheet = workbook[workbook.sheetnames[0]]
+            header_row = 1
+            headers: list[str | None] = []
+            for candidate_row in range(1, min(sheet.max_row, 30) + 1):
+                candidate_headers = [cls._text(cell.value) for cell in sheet[candidate_row]]
+                if len(cls._header_columns(candidate_headers)) >= 2:
+                    header_row = candidate_row
+                    headers = candidate_headers
+                    break
+            if not headers:
+                headers = [cls._text(cell.value) for cell in sheet[header_row]]
+            if not cls._header_columns(headers):
+                raise AppError("BID_TEMPLATE_HEADER_MISSING", "Excel 中未找到有效表头", 422)
+            prefix = (
+                "TYPE1_MANUAL"
+                if recommendation_type is BidRecommendationType.TYPE_1_SPECIFICATION
+                else "TYPE2_MANUAL"
+            )
+            return BidTemplate(
+                template_code=f"{prefix}_{project_id.hex.upper()}",
+                template_name=(
+                    "类型1·人工确认客户需求字段"
+                    if recommendation_type is BidRecommendationType.TYPE_1_SPECIFICATION
+                    else "类型2·人工确认客户需求字段"
+                ),
+                version=1,
+                sheet_name=sheet.title,
+                header_row=header_row,
+                data_start_row=header_row + 1,
+                import_mapping={},
+                export_mapping={},
+                fingerprint=cls._fingerprint(sheet.title, header_row, headers),
+                is_active=True,
+                created_by=actor_id,
+            )
+        finally:
+            workbook.close()
 
     def _parse_rows(self, file_bytes: bytes, template: BidTemplate) -> list[dict[str, Any]]:
         try:
@@ -1000,7 +1415,15 @@ class BidProjectService:
                     for header, index in header_columns.items()
                     if index < len(values)
                 }
-                if template.template_code.startswith("TYPE1_ZHONGXIN_SPECIFICATION"):
+                if (
+                    template.template_code.startswith(
+                        ("TYPE1_AI_", "TYPE1_ZHONGXIN_SPECIFICATION")
+                    )
+                    and (
+                        "调整后需报价物料" in source_data
+                        or "需报价物料" in source_data
+                    )
+                ):
                     quote_marker = self._text(source_data.get("调整后需报价物料")) or self._text(
                         source_data.get("需报价物料")
                     )
@@ -1010,6 +1433,8 @@ class BidProjectService:
                     key: self._text(source_data.get(header))
                     for key, header in template.import_mapping.items()
                 }
+                if self._is_summary_row(parsed, source_data):
+                    continue
                 specification = self._join_nonempty_text(
                     parsed.get("specification"), parsed.get("technical_requirements")
                 )
@@ -1078,14 +1503,243 @@ class BidProjectService:
         requirement = "指定三级类目推品：" + "、".join(categories)
         return requirement[:5000]
 
+    async def _output_mapping_context(
+        self, project: BidProject
+    ) -> tuple[BidRecommendationType, BidTemplate]:
+        try:
+            if project.recommendation_type is None:
+                raise ValueError("missing recommendation type")
+            recommendation_type = BidRecommendationType(project.recommendation_type)
+        except (TypeError, ValueError) as exc:
+            raise AppError(
+                "BID_OUTPUT_MAPPING_NOT_SUPPORTED", "只有类型 1、2 支持报价回填映射", 409
+            ) from exc
+        if recommendation_type not in _OUTPUT_MAPPING_FIELDS:
+            raise AppError(
+                "BID_OUTPUT_MAPPING_NOT_SUPPORTED", "只有类型 1、2 支持报价回填映射", 409
+            )
+        if project.template_id is None:
+            raise AppError("BID_TEMPLATE_REQUIRED", "项目尚未完成客户表字段识别", 409)
+        template = await self.session.get(BidTemplate, project.template_id)
+        if template is None:
+            raise AppError("BID_TEMPLATE_NOT_FOUND", "项目模板不存在", 404)
+        return recommendation_type, template
+
+    async def _input_mapping_context(
+        self, project: BidProject
+    ) -> tuple[BidRecommendationType, BidTemplate]:
+        try:
+            if project.recommendation_type is None:
+                raise ValueError("missing recommendation type")
+            recommendation_type = BidRecommendationType(project.recommendation_type)
+        except (TypeError, ValueError) as exc:
+            raise AppError(
+                "BID_INPUT_MAPPING_NOT_SUPPORTED", "只有类型 1、2 支持需求字段映射", 409
+            ) from exc
+        if recommendation_type not in _INPUT_MAPPING_FIELDS:
+            raise AppError(
+                "BID_INPUT_MAPPING_NOT_SUPPORTED", "只有类型 1、2 支持需求字段映射", 409
+            )
+        if project.template_id is None:
+            raise AppError("BID_TEMPLATE_REQUIRED", "AI 尚未生成客户表字段建议", 409)
+        template = await self.session.get(BidTemplate, project.template_id)
+        if template is None:
+            raise AppError("BID_TEMPLATE_NOT_FOUND", "项目模板不存在", 404)
+        return recommendation_type, template
+
+    @staticmethod
+    def _input_mapping_response(
+        project: BidProject,
+        recommendation_type: BidRecommendationType,
+        *,
+        sheet_names: list[str],
+        sheet_name: str,
+        header_row: int,
+        data_start_row: int,
+        headers: list[str | None],
+        mapping: dict[str, str],
+    ) -> BidInputMappingResponse:
+        return BidInputMappingResponse(
+            project_id=project.id,
+            sheet_names=sheet_names,
+            sheet_name=sheet_name,
+            header_row=header_row,
+            data_start_row=data_start_row,
+            headers=list(BidProjectService._header_columns(headers)),
+            fields=[
+                BidInputMappingFieldResponse(
+                    key=key,
+                    label=label,
+                    required=required,
+                    header=mapping.get(key),
+                )
+                for key, label, required in _INPUT_MAPPING_FIELDS[recommendation_type]
+            ],
+            mapping=mapping,
+            confirmed=project.import_status == BidImportStatus.PARSED.value,
+            import_error=project.import_error,
+        )
+
+    @staticmethod
+    def _workbook_structure(
+        file_bytes: bytes, sheet_name: str, header_row: int
+    ) -> tuple[list[str], list[str | None]]:
+        try:
+            workbook = load_workbook(BytesIO(file_bytes), read_only=True, data_only=False)
+        except Exception as exc:
+            raise AppError("BID_EXCEL_PARSE_FAILED", "Excel 文件无法读取", 422) from exc
+        try:
+            sheet_names = list(workbook.sheetnames)
+            if sheet_name not in sheet_names:
+                raise AppError("BID_TEMPLATE_SHEET_MISSING", "模板工作表不存在", 422)
+            sheet = workbook[sheet_name]
+            if header_row > sheet.max_row:
+                raise AppError("BID_TEMPLATE_HEADER_MISSING", "模板表头行不存在", 422)
+            headers = [BidProjectService._text(cell.value) for cell in sheet[header_row]]
+            if not BidProjectService._header_columns(headers):
+                raise AppError("BID_TEMPLATE_HEADER_MISSING", "所选行没有有效表头", 422)
+            return sheet_names, headers
+        finally:
+            workbook.close()
+
+    @staticmethod
+    def _workbook_headers(
+        file_bytes: bytes, sheet_name: str, header_row: int
+    ) -> list[str | None]:
+        try:
+            workbook = load_workbook(BytesIO(file_bytes), read_only=True, data_only=False)
+        except Exception as exc:
+            raise AppError("BID_EXCEL_PARSE_FAILED", "Excel 文件无法读取", 422) from exc
+        try:
+            if sheet_name not in workbook.sheetnames:
+                raise AppError("BID_TEMPLATE_SHEET_MISSING", "模板工作表不存在", 422)
+            sheet = workbook[sheet_name]
+            if header_row > sheet.max_row:
+                raise AppError("BID_TEMPLATE_HEADER_MISSING", "模板表头行不存在", 422)
+            return [BidProjectService._text(cell.value) for cell in sheet[header_row]]
+        finally:
+            workbook.close()
+
+    @staticmethod
+    def _output_mapping_response(
+        project: BidProject,
+        template: BidTemplate,
+        recommendation_type: BidRecommendationType,
+        headers: list[str | None],
+        mapping: dict[str, str],
+        *,
+        confirmed: bool,
+    ) -> BidOutputMappingResponse:
+        available_headers = list(BidProjectService._header_columns(headers))
+        return BidOutputMappingResponse(
+            project_id=project.id,
+            sheet_name=template.sheet_name,
+            header_row=template.header_row,
+            headers=available_headers,
+            suggested_headers=BidProjectService._suggested_output_headers(
+                headers,
+                mapping,
+                template.import_mapping,
+            ),
+            fields=[
+                BidOutputMappingFieldResponse(
+                    key=key,
+                    label=label,
+                    required=required,
+                    header=mapping.get(key),
+                )
+                for key, label, required in _OUTPUT_MAPPING_FIELDS[recommendation_type]
+            ],
+            mapping=mapping,
+            confirmed=confirmed,
+            confirmed_by=project.output_mapping_confirmed_by,
+            confirmed_at=project.output_mapping_confirmed_at,
+        )
+
+    @classmethod
+    def _suggested_output_headers(
+        cls,
+        headers: list[str | None],
+        mapping: dict[str, str],
+        import_mapping: dict[str, str],
+    ) -> list[str]:
+        """Show the current workbook's result block instead of every input column."""
+        columns = cls._header_columns(headers)
+        resolved_outputs = [
+            resolved
+            for field, configured in mapping.items()
+            if (resolved := cls._resolve_export_header(field, configured, headers)) is not None
+        ]
+        if not resolved_outputs:
+            return []
+        price_header = cls._resolve_export_header(
+            "agreement_price",
+            mapping.get("agreement_price", ""),
+            headers,
+        )
+        anchor_header = price_header or min(resolved_outputs, key=columns.__getitem__)
+        anchor_column = columns[anchor_header]
+        input_headers = {
+            resolved
+            for field, configured in import_mapping.items()
+            if (resolved := cls._resolve_export_header(field, configured, headers)) is not None
+        }
+        return [
+            header
+            for header, column in columns.items()
+            if column >= anchor_column and header not in input_headers
+        ]
+
+    @classmethod
+    def _with_obvious_price_mapping(
+        cls,
+        headers: list[str | None],
+        mapping: dict[str, str],
+    ) -> dict[str, str]:
+        if mapping.get("agreement_price"):
+            return mapping
+        price_labels = {
+            "供应商报价",
+            "商品报价",
+            "商品报价单价",
+            "报价单价",
+            "协议价",
+        }
+        matches = [
+            header
+            for header in cls._header_columns(headers)
+            if cls._layout_insensitive_header(header)
+            .replace("（", "")
+            .replace("）", "")
+            .replace("(", "")
+            .replace(")", "")
+            in price_labels
+        ]
+        if len(matches) != 1:
+            return mapping
+        return {**mapping, "agreement_price": matches[0]}
+
+    @staticmethod
+    def _normalize_output_mapping(mapping: dict[str, str]) -> dict[str, str]:
+        """Map the removed synthetic quote field to the real product agreement price."""
+        normalized = dict(mapping)
+        legacy_header = normalized.pop("selected_unit_price", None)
+        if legacy_header and not normalized.get("agreement_price"):
+            normalized["agreement_price"] = legacy_header
+        return normalized
+
     def _build_export(
         self,
         original_bytes: bytes,
         template: BidTemplate,
         selections: list[tuple[BidProjectItem, Any]],
+        *,
+        expand_multiple_rows: bool = False,
+        export_mapping: dict[str, str] | None = None,
     ) -> bytes:
-        if not template.export_mapping.get("selected_unit_price"):
-            raise AppError("BID_EXPORT_PRICE_COLUMN_MISSING", "模板未配置报价写入列", 409)
+        configured_mapping = self._normalize_output_mapping(
+            export_mapping or template.export_mapping
+        )
         workbook = load_workbook(BytesIO(original_bytes), data_only=False)
         try:
             sheet = workbook[template.sheet_name]
@@ -1093,19 +1747,31 @@ class BidProjectService:
             header_columns = {
                 key: index + 1 for key, index in self._header_columns(headers).items()
             }
-            if any(header not in header_columns for header in template.export_mapping.values()):
+            resolved_export_mapping = {
+                field: self._resolve_export_header(field, configured_header, headers)
+                for field, configured_header in configured_mapping.items()
+            }
+            if any(header is None for header in resolved_export_mapping.values()):
                 raise AppError("BID_EXPORT_COLUMN_MISSING", "原始文件缺少已配置的结果写入列", 409)
-            for item, selection in selections:
+            export_rows = (
+                self._expand_type1_export_rows(sheet, selections)
+                if expand_multiple_rows
+                else [(item.source_row_number, item, selection) for item, selection in selections]
+            )
+            for target_row_number, item, selection in export_rows:
                 product = selection.product_snapshot or {}
                 supplier = selection.supplier_snapshot or {}
                 values = {
+                    **(selection.price_snapshot or {}),
+                    **product,
+                    **supplier,
+                    "agreement_price": (
+                        (selection.price_snapshot or {}).get("agreement_price")
+                        or product.get("agreement_price")
+                        or selection.selected_unit_price
+                    ),
                     "selected_unit_price": selection.selected_unit_price,
-                    "sku": product.get("sku"),
-                    "product_name": product.get("product_name"),
-                    "brand": product.get("brand"),
-                    "model": product.get("model"),
                     "unit": item.unit,
-                    "supplier_name": supplier.get("supplier_name"),
                     "note": selection.note,
                     "is_same_product": (
                         "否"
@@ -1119,8 +1785,10 @@ class BidProjectService:
                         "price_valid_until"
                     ),
                 }
-                for field, header in template.export_mapping.items():
-                    target = sheet.cell(item.source_row_number, header_columns[header])
+                for field, resolved_header in resolved_export_mapping.items():
+                    assert resolved_header is not None
+                    header = resolved_header
+                    target = sheet.cell(target_row_number, header_columns[header])
                     if target.value is None or not str(target.value).strip():
                         target.value = values.get(field)
             output = BytesIO()
@@ -1128,6 +1796,58 @@ class BidProjectService:
             return output.getvalue()
         finally:
             workbook.close()
+
+    @staticmethod
+    def _expand_type1_export_rows(
+        sheet: Any,
+        selections: list[tuple[BidProjectItem, Any]],
+    ) -> list[tuple[int, BidProjectItem, Any]]:
+        grouped: dict[int, list[tuple[BidProjectItem, Any]]] = {}
+        for item, selection in selections:
+            grouped.setdefault(item.source_row_number, []).append((item, selection))
+
+        for source_row_number in sorted(grouped, reverse=True):
+            extra_count = len(grouped[source_row_number]) - 1
+            if extra_count <= 0:
+                continue
+            sheet.insert_rows(source_row_number + 1, amount=extra_count)
+            source_dimension = sheet.row_dimensions[source_row_number]
+            for offset in range(1, extra_count + 1):
+                target_row_number = source_row_number + offset
+                target_dimension = sheet.row_dimensions[target_row_number]
+                target_dimension.height = source_dimension.height
+                target_dimension.hidden = source_dimension.hidden
+                target_dimension.outlineLevel = source_dimension.outlineLevel
+                for column in range(1, sheet.max_column + 1):
+                    source_cell = sheet.cell(source_row_number, column)
+                    target_cell = sheet.cell(target_row_number, column)
+                    value = source_cell.value
+                    if isinstance(value, str) and value.startswith("="):
+                        try:
+                            value = Translator(
+                                value, origin=source_cell.coordinate
+                            ).translate_formula(target_cell.coordinate)
+                        except ValueError:
+                            pass
+                    target_cell.value = value
+                    if source_cell.has_style:
+                        target_cell._style = copy(source_cell._style)
+                    if source_cell.hyperlink:
+                        target_cell._hyperlink = copy(source_cell.hyperlink)
+                    if source_cell.comment:
+                        target_cell.comment = copy(source_cell.comment)
+
+        expanded: list[tuple[int, BidProjectItem, Any]] = []
+        inserted_before = 0
+        for source_row_number in sorted(grouped):
+            matches = grouped[source_row_number]
+            target_start = source_row_number + inserted_before
+            expanded.extend(
+                (target_start + offset, item, selection)
+                for offset, (item, selection) in enumerate(matches)
+            )
+            inserted_before += len(matches) - 1
+        return expanded
 
     async def _project_or_404(self, project_id: uuid.UUID, *, lock: bool = False) -> BidProject:
         project = await self.repository.project_by_id(project_id, lock=lock)
@@ -1262,6 +1982,77 @@ class BidProjectService:
             if totals[header] > 1:
                 columns[f"{header}#{counts[header]}"] = index
         return columns
+
+    @classmethod
+    def _resolve_export_header(
+        cls,
+        field: str,
+        configured_header: str,
+        headers: list[str | None],
+    ) -> str | None:
+        available_headers = tuple(cls._header_columns(headers))
+        if configured_header in available_headers:
+            return configured_header
+
+        configured_key = cls._layout_insensitive_header(configured_header)
+        layout_matches = [
+            header
+            for header in available_headers
+            if cls._layout_insensitive_header(header) == configured_key
+        ]
+        if len(layout_matches) == 1:
+            return layout_matches[0]
+
+        semantic_prefixes = {
+            "discount_compliance": ("是否满足平台承诺折扣率",),
+            "price_valid_until": ("价格有效期",),
+        }
+        prefixes = tuple(
+            cls._layout_insensitive_header(prefix)
+            for prefix in semantic_prefixes.get(field, ())
+        )
+        semantic_matches = [
+            header
+            for header in available_headers
+            if prefixes
+            and cls._layout_insensitive_header(header).startswith(prefixes)
+        ]
+        return semantic_matches[0] if len(semantic_matches) == 1 else None
+
+    @staticmethod
+    def _layout_insensitive_header(value: str) -> str:
+        return re.sub(r"\s+", "", value).casefold()
+
+    @classmethod
+    def _is_summary_row(
+        cls,
+        parsed: dict[str, str | None],
+        source_data: Mapping[str, object],
+    ) -> bool:
+        identity_values = [
+            cls._summary_marker(parsed.get(field))
+            for field in (
+                "buyer_item_code",
+                "product_name",
+                "brand",
+                "model",
+                "specification",
+                "technical_requirements",
+                "category_text",
+            )
+            if parsed.get(field)
+        ]
+        if identity_values:
+            return all(value in _SUMMARY_ROW_MARKERS for value in identity_values)
+        return any(
+            cls._summary_marker(value) in _SUMMARY_ROW_MARKERS
+            for value in source_data.values()
+            if value is not None and str(value).strip()
+        )
+
+    @staticmethod
+    def _summary_marker(value: object) -> str:
+        return re.sub(r"[\s:：()（）]+", "", str(value)).casefold()
 
     @staticmethod
     def _same_selected_product(item: BidProjectItem, product: dict[str, object]) -> str:

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-const http = vi.hoisted(() => ({ get: vi.fn(), patch: vi.fn(), post: vi.fn() }))
+const http = vi.hoisted(() => ({ get: vi.fn(), patch: vi.fn(), post: vi.fn(), delete: vi.fn() }))
 vi.mock("../shared/http/runtime", () => ({ http }))
 
 describe("recommendation api", () => {
@@ -47,5 +47,31 @@ describe("recommendation api", () => {
 
     expect(result.candidates[0].confirmation).toEqual(confirmation)
     expect(result.candidates[0].confirmation?.fulfillment_cycle).toBe("48小时")
+  })
+
+  it("uses the candidate confirmation endpoint when revoking a selection", async () => {
+    http.delete.mockResolvedValue(true)
+    const { recommendationApi } = await import("./recommendation")
+
+    await recommendationApi.removeConfirmation("c1")
+
+    expect(http.delete).toHaveBeenCalledWith(
+      "/api/v1/recommendation-projects/candidates/c1/confirmation",
+    )
+  })
+
+  it("uses the Run endpoint when revoking multiple selections", async () => {
+    http.post.mockResolvedValue({ unconfirmed_count: 3 })
+    const { recommendationApi } = await import("./recommendation")
+
+    await recommendationApi.unconfirmMany("r1", {
+      selectAll: true,
+      excludedCandidateIds: ["c2"],
+    })
+
+    expect(http.post).toHaveBeenCalledWith(
+      "/api/v1/recommendation-projects/runs/r1/unconfirmations",
+      { candidate_ids: [], select_all: true, excluded_candidate_ids: ["c2"] },
+    )
   })
 })

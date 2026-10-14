@@ -12,6 +12,23 @@ from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
 from app.modules.supplier.infrastructure.models import Supplier
 
 
+def test_type1_type2_only_apply_price_cap_when_requirement_has_limit() -> None:
+    product = Product(
+        id=uuid.uuid4(),
+        source_supplier_id=uuid.uuid4(),
+        sku="OPTIONAL-LIMIT-001",
+        product_name="无客户限价测试商品",
+        cost_price=Decimal("100"),
+        agreement_price=Decimal("500"),
+        status=ProductStatus.ACTIVE,
+    )
+
+    assert MatchingService._is_quotable_type1_product(product, None)
+    assert MatchingService._is_quotable_type2_product(product, None)
+    assert not MatchingService._is_quotable_type1_product(product, Decimal("220"))
+    assert not MatchingService._is_quotable_type2_product(product, Decimal("220"))
+
+
 def test_type2_candidate_documents_are_built_once_and_prompt_pool_is_bounded(
     monkeypatch,
 ) -> None:
@@ -36,6 +53,7 @@ def test_type2_candidate_documents_are_built_once_and_prompt_pool_is_bounded(
             product_specification="适用 CS1821W",
             packaging_list="单支装",
             cost_price=Decimal(100 + index),
+            agreement_price=Decimal(100 + index),
             status=ProductStatus.ACTIVE,
         )
         for index in range(30)
@@ -150,6 +168,7 @@ def test_type2_extracts_brand_model_from_parameter_text_and_excludes_quantity() 
         model="EJC3425WHT",
         product_name="乐扣乐扣保温杯",
         cost_price=Decimal("89"),
+        agreement_price=Decimal("89"),
         status=ProductStatus.ACTIVE,
     )
     item = BidProjectItem(
@@ -197,6 +216,7 @@ def test_type2_identifier_match_is_rejected_when_explicit_model_conflicts() -> N
         model="LT1821C",
         product_name="联想 LT1821C 粉盒",
         cost_price=Decimal("80"),
+        agreement_price=Decimal("80"),
         status=ProductStatus.ACTIVE,
     )
     item = BidProjectItem(

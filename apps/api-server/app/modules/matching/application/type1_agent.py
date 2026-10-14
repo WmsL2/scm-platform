@@ -76,12 +76,13 @@ class Type1InputColumnMapping(BaseModel):
 class Type1OutputColumnMapping(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    selected_unit_price: str = Field(min_length=1)
+    agreement_price: str | None = None
     sku: str | None = None
     product_name: str | None = None
     brand: str | None = None
     model: str | None = None
     unit: str | None = None
+    supplier_name: str | None = None
     note: str | None = None
 
 
@@ -104,7 +105,7 @@ class Type1TemplateMappingSuggestion(BaseModel):
 class Type1CandidateContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    candidate_key: str = Field(pattern=r"^P\d{2}$")
+    candidate_key: str = Field(pattern=r"^P\d+$")
     product_name: str | None = None
     brand: str | None = None
     model: str | None = None
@@ -158,8 +159,14 @@ class Type1Agent:
                 "以三级类目、商品名称、规格型号或规格参数、主要技术要求、限价为核心，并识别客户"
                 "已经填写的行备注或特殊备注。列名可以不同，规格和技术要求也可能分散在多个列。"
                 "数量、单位、客户物料编码、品牌和型号可作为辅助输入，但不得替代上述核心语义。"
-                "只选择服务器提供的真实工作表、表头行和表头原文，不得创造列名。输出列至少找到"
-                "商品报价或等价的单价回填列。空白的结果备注列是输出列，不是客户要求。重复表头"
+                "只选择服务器提供的真实工作表、表头行和表头原文，不得创造列名。优先准确找到"
+                "商品报价、供应商报价或等价的单价回填列，并映射到商品主数据 "
+                "agreement_price（协议价）；"
+                "无法唯一确认的输出列返回null，交由人工确认，严禁猜测。"
+                "如果商品报价列之后是连续的空白结果区域，应把商品报价列作为输出区域起点，并尽量"
+                "识别其中商品编码、品牌、型号、单位、供应商和备注等可明确判断的回填列；不得把"
+                "商品报价列之前的物料信息、限价、采购量等需求输入列当成回填列。"
+                "空白的结果备注列是输出列，不是客户要求。重复表头"
                 "按物理次序使用原表头或“表头#1”“表头#2”。严格返回JSON。"
             ),
             user_prompt=json.dumps(
@@ -187,6 +194,9 @@ class Type1Agent:
             "规格型号或规格参数、主要技术要求以及客户已填写的行备注和项目备注判断。品牌默认"
             "可以替换；只有客户在需求或备注中明确限定品牌时，品牌才是硬条件。限价、正式商品"
             "状态、供应商资格和最终报价由服务器代码校验，不参与商品身份判断。"
+            "important_fields和normalized_fields是人工确认后的主要参考字段；source_row仍包含"
+            "客户原表该行其他非空字段，即使没有建立主要字段映射，也必须作为次要上下文阅读，"
+            "用于补充判断明确要求或冲突，但不得反过来取代主要字段、扩大候选召回或绕过代码硬规则。"
             "候选商品只要已知信息没有与客户明确要求冲突，就可以保留。商品主数据没有某项"
             "属性、字段为空或文本未提及，只表示未知，不得因此排除。只有商品名称、类目、型号、"
             "规格、材质、尺寸、功能、包装或备注中的已知事实与客户要求明确冲突时才排除。"

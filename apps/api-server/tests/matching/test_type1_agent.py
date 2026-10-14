@@ -59,7 +59,7 @@ async def test_type1_template_agent_uses_fixed_reference_semantics_and_notes() -
                         "max_price": "限价",
                         "row_note": "特殊备注",
                     },
-                    "output_mapping": {"selected_unit_price": "报价"},
+                    "output_mapping": {"agreement_price": "报价"},
                 }
             )
         ]
@@ -73,6 +73,20 @@ async def test_type1_template_agent_uses_fixed_reference_semantics_and_notes() -
     prompt = provider.calls[0]["system_prompt"]
     assert "三级类目、商品名称、规格型号或规格参数、主要技术要求、限价" in prompt
     assert "行备注或特殊备注" in prompt
+
+
+def test_type1_template_mapping_allows_human_fallback_for_output_column() -> None:
+    mapping = Type1TemplateMappingSuggestion.model_validate(
+        {
+            "sheet_name": "需求明细",
+            "header_row": 1,
+            "data_start_row": 2,
+            "input_mapping": {"product_name": "商品名称"},
+            "output_mapping": {"agreement_price": None},
+        }
+    )
+
+    assert mapping.output_mapping.agreement_price is None
 
 
 @pytest.mark.asyncio
@@ -112,8 +126,11 @@ async def test_type1_match_agent_treats_missing_product_fields_as_unknown() -> N
     assert "只表示未知，不得因此排除" in prompt
     assert "明确冲突时才排除" in prompt
     assert "数量只用于报价数量" in prompt
+    assert "没有建立主要字段映射" in prompt
+    assert "作为次要上下文阅读" in prompt
     payload = json.loads(provider.calls[0]["user_prompt"])
     assert payload["project_remark"] == "备注优先参考"
+    assert payload["requirements"][0]["source_row"]["特殊备注"] == "单支装"
 
 
 @pytest.mark.asyncio

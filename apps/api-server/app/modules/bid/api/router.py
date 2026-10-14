@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 from io import BytesIO
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -20,6 +21,10 @@ from app.modules.bid.domain.lifecycle import (
     BidRecommendationType,
 )
 from app.modules.bid.schemas import (
+    BidInputMappingResponse,
+    BidInputMappingUpdateRequest,
+    BidOutputMappingResponse,
+    BidOutputMappingUpdateRequest,
     BidProjectCreateResponse,
     BidProjectDetailResponse,
     BidProjectFileResponse,
@@ -202,6 +207,70 @@ async def get_bid_project(
     return success(await BidProjectService(session).get(project_id))
 
 
+@router.get(
+    "/{project_id}/input-mapping",
+    response_model=ApiResponse[BidInputMappingResponse],
+)
+async def get_bid_input_mapping(
+    project_id: uuid.UUID,
+    _: Annotated[CurrentUser, Depends(require_permission("bid:detail"))],
+    session: SessionDep,
+    sheet_name: Annotated[str | None, Query()] = None,
+    header_row: Annotated[int | None, Query(ge=1)] = None,
+) -> ApiResponse[BidInputMappingResponse]:
+    return success(
+        await BidProjectService(session).input_mapping(
+            project_id, sheet_name=sheet_name, header_row=header_row
+        )
+    )
+
+
+@router.put(
+    "/{project_id}/input-mapping",
+    response_model=ApiResponse[BidInputMappingResponse],
+)
+async def put_bid_input_mapping(
+    project_id: uuid.UUID,
+    payload: BidInputMappingUpdateRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("bid:update"))],
+    session: SessionDep,
+) -> ApiResponse[BidInputMappingResponse]:
+    return success(
+        await BidProjectService(session).confirm_input_mapping(
+            project_id, payload, current.user_id
+        )
+    )
+
+
+@router.get(
+    "/{project_id}/output-mapping",
+    response_model=ApiResponse[BidOutputMappingResponse],
+)
+async def get_bid_output_mapping(
+    project_id: uuid.UUID,
+    _: Annotated[CurrentUser, Depends(require_permission("bid:detail"))],
+    session: SessionDep,
+) -> ApiResponse[BidOutputMappingResponse]:
+    return success(await BidProjectService(session).output_mapping(project_id))
+
+
+@router.put(
+    "/{project_id}/output-mapping",
+    response_model=ApiResponse[BidOutputMappingResponse],
+)
+async def put_bid_output_mapping(
+    project_id: uuid.UUID,
+    payload: BidOutputMappingUpdateRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("bid:update"))],
+    session: SessionDep,
+) -> ApiResponse[BidOutputMappingResponse]:
+    return success(
+        await BidProjectService(session).update_output_mapping(
+            project_id, payload, current.user_id
+        )
+    )
+
+
 @router.patch("/{project_id}", response_model=ApiResponse[BidProjectDetailResponse])
 async def update_bid_project(
     project_id: uuid.UUID,
@@ -248,7 +317,12 @@ async def download_bid_project_file(
     return StreamingResponse(
         BytesIO(content),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{file.original_filename}"'},
+        headers={
+            "Content-Disposition": (
+                "attachment; "
+                f"filename*=UTF-8''{quote(file.original_filename, safe='')}"
+            )
+        },
     )
 
 

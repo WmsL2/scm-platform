@@ -26,6 +26,8 @@ from app.modules.recommendation.infrastructure.ppt_repository import PptSolution
 from app.modules.recommendation.schemas import (
     BatchConfirmationRequest,
     BatchConfirmationResult,
+    BatchUnconfirmationRequest,
+    BatchUnconfirmationResult,
     ConfirmationUpdateRequest,
     RecommendationCandidatePageResponse,
     RecommendationConfirmationResponse,
@@ -161,6 +163,21 @@ async def confirm_candidates(
 ) -> ApiResponse[BatchConfirmationResult]:
     return success(
         await RecommendationService(session).confirm_candidates(run_id, payload, current.user_id)
+    )
+
+
+@router.post(
+    "/runs/{run_id}/unconfirmations",
+    response_model=ApiResponse[BatchUnconfirmationResult],
+)
+async def unconfirm_candidates(
+    run_id: uuid.UUID,
+    payload: BatchUnconfirmationRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("recommendation:review"))],
+    session: SessionDep,
+) -> ApiResponse[BatchUnconfirmationResult]:
+    return success(
+        await RecommendationService(session).unconfirm_candidates(run_id, payload, current.user_id)
     )
 
 

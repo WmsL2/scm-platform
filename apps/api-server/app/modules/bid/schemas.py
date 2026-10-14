@@ -75,6 +75,61 @@ class BidProjectCreateResponse(BaseModel):
     total_item_count: int
 
 
+class BidOutputMappingFieldResponse(BaseModel):
+    key: str
+    label: str
+    required: bool
+    header: str | None
+
+
+class BidOutputMappingResponse(BaseModel):
+    project_id: UUID
+    sheet_name: str
+    header_row: int
+    headers: list[str]
+    suggested_headers: list[str]
+    fields: list[BidOutputMappingFieldResponse]
+    mapping: dict[str, str]
+    confirmed: bool
+    confirmed_by: UUID | None
+    confirmed_at: datetime | None
+
+
+class BidOutputMappingUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mapping: dict[str, str | None]
+
+
+class BidInputMappingFieldResponse(BaseModel):
+    key: str
+    label: str
+    required: bool
+    header: str | None
+
+
+class BidInputMappingResponse(BaseModel):
+    project_id: UUID
+    sheet_names: list[str]
+    sheet_name: str
+    header_row: int
+    data_start_row: int
+    headers: list[str]
+    fields: list[BidInputMappingFieldResponse]
+    mapping: dict[str, str]
+    confirmed: bool
+    import_error: str | None
+
+
+class BidInputMappingUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sheet_name: str = Field(min_length=1, max_length=128)
+    header_row: int = Field(ge=1)
+    data_start_row: int = Field(ge=2)
+    mapping: dict[str, str | None]
+
+
 class BidCurrentSelectionResponse(BaseModel):
     selection_id: UUID
     product_id: UUID

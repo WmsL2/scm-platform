@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-const http = vi.hoisted(() => ({ get: vi.fn(), getBlob: vi.fn(), patch: vi.fn(), post: vi.fn() }))
+const http = vi.hoisted(() => ({ get: vi.fn(), getBlob: vi.fn(), patch: vi.fn(), post: vi.fn(), put: vi.fn() }))
 vi.mock("../shared/http/runtime", () => ({ http }))
 
 describe("bid api", () => {
@@ -63,5 +63,37 @@ describe("bid api", () => {
     await bidApi.recommendationTemplateStructure("p1", "f1", { sheet_name: "结果表", header_row: 2 })
 
     expect(http.get).toHaveBeenCalledWith("/api/v1/bid-projects/p1/recommendation-templates/f1/structure?sheet_name=%E7%BB%93%E6%9E%9C%E8%A1%A8&header_row=2")
+  })
+
+  it("reads and confirms the project output mapping", async () => {
+    http.get.mockResolvedValue({ fields: [] }); http.put.mockResolvedValue({ confirmed: true })
+    const { bidApi } = await import("./bid")
+
+    await bidApi.outputMapping("p1")
+    await bidApi.updateOutputMapping("p1", { selected_unit_price: "商品报价", note: null })
+
+    expect(http.get).toHaveBeenCalledWith("/api/v1/bid-projects/p1/output-mapping")
+    expect(http.put).toHaveBeenCalledWith("/api/v1/bid-projects/p1/output-mapping", { mapping: { selected_unit_price: "商品报价", note: null } })
+  })
+
+  it("reads and confirms the Type 1/2 input mapping before parsing", async () => {
+    http.get.mockResolvedValue({ fields: [] }); http.put.mockResolvedValue({ confirmed: true })
+    const { bidApi } = await import("./bid")
+
+    await bidApi.inputMapping("p1", { sheet_name: "需求表", header_row: 3 })
+    await bidApi.confirmInputMapping("p1", {
+      sheet_name: "需求表",
+      header_row: 3,
+      data_start_row: 4,
+      mapping: { brand: "品牌", model: "型号" },
+    })
+
+    expect(http.get).toHaveBeenCalledWith("/api/v1/bid-projects/p1/input-mapping?sheet_name=%E9%9C%80%E6%B1%82%E8%A1%A8&header_row=3")
+    expect(http.put).toHaveBeenCalledWith("/api/v1/bid-projects/p1/input-mapping", {
+      sheet_name: "需求表",
+      header_row: 3,
+      data_start_row: 4,
+      mapping: { brand: "品牌", model: "型号" },
+    })
   })
 })

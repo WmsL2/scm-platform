@@ -88,6 +88,8 @@ Supplier：
 
 # Sprint 5：Customer / Matching / Quotation
 
+类型 1/2 已由 Revision `20261013_0056` 在 `scm_bid_project` 增加项目级 `output_mapping`、`output_mapping_confirmed_by` 和 `output_mapping_confirmed_at`。该快照仅控制客户 ORIGINAL 原表回填位置，与模板级输入映射及商品匹配隔离；历史项目允许为空并继续使用冻结模板映射。
+
 计划：
 
 - `scm_customer`

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import cast
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.bid.domain.lifecycle import BidFileType
@@ -14,6 +14,8 @@ from app.modules.bid.infrastructure.models import (
     BidProjectFile,
     BidProjectItem,
     BidTemplate,
+    MatchCandidate,
+    MatchTask,
 )
 
 
@@ -121,6 +123,7 @@ class BidProjectRepository:
         page_size: int,
         status: str | None,
         keyword: str | None,
+        matched_first: bool = False,
     ) -> tuple[list[tuple[BidProjectItem, BidItemSelection | None]], int]:
         statement = (
             select(BidProjectItem, BidItemSelection)
@@ -144,7 +147,22 @@ class BidProjectRepository:
             )
             statement = statement.where(condition)
             count_statement = count_statement.where(condition)
-        statement = statement.order_by(BidProjectItem.sheet_name, BidProjectItem.source_row_number)
+        if matched_first:
+            statement = statement.order_by(
+                case(
+                    (
+                        BidProjectItem.status.in_(("SELECTED", "UNIQUE_MATCH", "MULTIPLE_MATCH")),
+                        0,
+                    ),
+                    else_=1,
+                ),
+                BidProjectItem.sheet_name,
+                BidProjectItem.source_row_number,
+            )
+        else:
+            statement = statement.order_by(
+                BidProjectItem.sheet_name, BidProjectItem.source_row_number
+            )
         statement = statement.offset((page - 1) * page_size).limit(page_size)
         rows = cast(
             list[tuple[BidProjectItem, BidItemSelection | None]],
@@ -161,3 +179,41 @@ class BidProjectRepository:
             .where(BidProjectItem.project_id == project_id)
         )
         return [(row[0], row[1]) for row in rows.all()]
+
+    async def type1_export_rows(
+        self, project_id: uuid.UUID
+    ) -> list[tuple[BidProjectItem, BidItemSelection]]:
+        latest_task_id = await self.session.scalar(
+            select(MatchTask.id)
+            .where(MatchTask.project_id == project_id, MatchTask.status == "COMPLETED")
+            .order_by(MatchTask.created_at.desc(), MatchTask.id.desc())
+            .limit(1)
+        )
+        if latest_task_id is None:
+            return []
+        rows = (
+            await self.session.execute(
+                select(BidProjectItem, BidItemSelection, MatchCandidate)
+                .join(MatchCandidate, MatchCandidate.project_item_id == BidProjectItem.id)
+                .join(BidItemSelection, BidItemSelection.candidate_id == MatchCandidate.id)
+                .where(
+                    BidProjectItem.project_id == project_id,
+                    BidProjectItem.status == "SELECTED",
+                    MatchCandidate.match_task_id == latest_task_id,
+                )
+                .order_by(
+                    BidProjectItem.sheet_name,
+                    BidProjectItem.source_row_number,
+                    MatchCandidate.rank,
+                    BidItemSelection.created_at.desc(),
+                )
+            )
+        ).all()
+        result: list[tuple[BidProjectItem, BidItemSelection]] = []
+        seen_candidates: set[uuid.UUID] = set()
+        for item, selection, candidate in rows:
+            if candidate.id in seen_candidates:
+                continue
+            seen_candidates.add(candidate.id)
+            result.append((item, selection))
+        return result

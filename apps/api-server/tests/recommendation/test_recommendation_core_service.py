@@ -30,6 +30,7 @@ from app.modules.recommendation.infrastructure.models import (
 )
 from app.modules.recommendation.schemas import (
     BatchConfirmationRequest,
+    BatchUnconfirmationRequest,
     CategoryChoiceInput,
     CategoryPath,
     ConfirmationUpdateRequest,
@@ -244,6 +245,14 @@ async def test_free_recommendation_run_filters_candidates_and_confirms_snapshot(
             actor_id,
         )
         assert batch_confirmed.confirmed_count == 1
+        batch_unconfirmed = await service.unconfirm_candidates(
+            run.id,
+            BatchUnconfirmationRequest(candidate_ids=[saved[1].id]),
+            actor_id,
+        )
+        assert batch_unconfirmed.unconfirmed_count == 1
+        candidate_page = await service.list_candidates(run.id, PageParams(page=1, page_size=50))
+        assert candidate_page.confirmed_total == 1  # type: ignore[union-attr]
 
         # V4 recalls every product meeting numeric hard conditions, without the
         # historical category/scene/quantity inputs, and pages the frozen set.

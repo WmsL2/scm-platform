@@ -14,6 +14,12 @@
 
 模板保存工作表、表头行、数据起始行、字段映射、报价列映射和指纹。没有识别到模板时，系统保存源文件并将导入状态标记为待映射，不猜测字段。
 
+类型 1/2 新项目每次都由对应类型 Agent 从本次上传工作簿识别输入列与结果列。创建阶段只保存当前项目的原文件和建议，不立即生成需求行；工作台先由人工确认 Sheet、表头行、数据起始行及“客户 Excel 列 → 类型专属需求字段”，确认后服务端才重新读取 ORIGINAL 并解析需求。AI 失败时仍为当前项目建立空白人工映射入口，不复用其他项目模板。
+
+输入映射只标记结构化主参考字段，不是允许参与匹配的列白名单。未映射的其他非空原表列仍完整保存在需求行 `source_data`，并作为类型专属 Agent 的次要上下文用于发现补充要求和明确冲突；主匹配入口、确定性召回及价格等硬规则仍只由对应类型的正式规则控制。
+
+结果列另存为项目级 `output_mapping` 并单独确认。回填映射只控制 ORIGINAL 副本的结果写入位置，不参与需求解析或商品匹配，也不回写其他项目模板。历史项目没有项目级快照时，其冻结映射也必须重新解析为当前 ORIGINAL 中真实存在的表头，不存在的旧列名直接丢弃。
+
 ## 状态规则
 
 `IMPORTED → MATCHING → SELECTING → READY → EXPORTED → SUBMITTED → WON / LOST`
@@ -34,6 +40,10 @@
 - `GET /api/v1/bid-projects`：项目分页列表。
 - `GET /api/v1/bid-projects/{id}`：项目详情和事件历史。
 - `GET /api/v1/bid-projects/{id}/items`：需求行服务端分页。
+- `GET /api/v1/bid-projects/{id}/input-mapping`：读取类型 1/2 当前项目的 Sheet、真实表头、类型专属需求字段及 AI 建议；可通过查询参数切换 Sheet 和表头行。
+- `PUT /api/v1/bid-projects/{id}/input-mapping`：人工确认输入映射并从当前项目 ORIGINAL 解析需求行；解析完成前禁止开始匹配。
+- `GET /api/v1/bid-projects/{id}/output-mapping`：读取类型 1/2 当前客户原表的回填字段预识别结果。
+- `PUT /api/v1/bid-projects/{id}/output-mapping`：人工确认项目级回填字段；只允许选择当前原表中真实存在的列。
 - `GET /api/v1/bid-projects/{id}/files`：文件版本列表。
 - `GET /api/v1/bid-projects/{id}/files/{file_id}/download`：下载文件。
 - `POST /api/v1/bid-projects/{id}/exports`：生成新的报价版本。
@@ -52,6 +62,6 @@
 
 ## Web 工作台
 
-Web Admin 已提供项目列表、创建、详情、事件与文件版本，以及按需求行服务端分页的匹配工作台。候选仅在用户打开对应行时加载；已选品行展示持久化的不可变快照。未识别模板仍为数据门禁，页面不会猜测或伪造字段映射。
+Web Admin 已提供项目列表、创建、详情、事件与文件版本，以及按需求行服务端分页的匹配工作台。类型 1/2 创建后先纵向复核输入映射，解析成功后再独立复核结果回填映射，最后由用户主动开始匹配。候选仅在用户打开对应行时加载；已选品行展示持久化的不可变快照。页面不会猜测或伪造不存在的字段。
 
 匹配接口分别需要 `bid:match`、`bid:detail`、`bid:select` 权限。候选只来自 `ACTIVE` Product 和 `ARCHIVED + NORMAL + not deleted` 的来源供应商；价格不参与商品身份评分。
