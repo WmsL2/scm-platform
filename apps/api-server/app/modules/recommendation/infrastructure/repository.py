@@ -419,6 +419,24 @@ class RecommendationRepository:
         rows = await self.session.execute(statement)
         return [(row[0], row[1]) for row in rows]
 
+    async def confirmed_candidates_for_update(
+        self, run_id: uuid.UUID, excluded_candidate_ids: Sequence[uuid.UUID] = ()
+    ) -> list[tuple[RecommendationCandidate, RecommendationConfirmation]]:
+        statement = (
+            select(RecommendationCandidate, RecommendationConfirmation)
+            .join(
+                RecommendationConfirmation,
+                RecommendationConfirmation.candidate_id == RecommendationCandidate.id,
+            )
+            .where(RecommendationCandidate.run_id == run_id)
+            .order_by(RecommendationCandidate.rank)
+            .with_for_update()
+        )
+        if excluded_candidate_ids:
+            statement = statement.where(~RecommendationCandidate.id.in_(excluded_candidate_ids))
+        rows = await self.session.execute(statement)
+        return [(row[0], row[1]) for row in rows]
+
     async def confirmed_candidates_for_export(
         self, run_id: uuid.UUID
     ) -> list[tuple[RecommendationCandidate, RecommendationConfirmation]]:

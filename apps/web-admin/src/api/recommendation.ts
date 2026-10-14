@@ -126,6 +126,17 @@ export const recommendationApi = {
       excluded_candidate_ids: normalized.excludedCandidateIds ?? [],
     })
   },
+  unconfirmMany(
+    runId: string,
+    selection: string[] | { candidateIds?: string[]; selectAll?: boolean; excludedCandidateIds?: string[] },
+  ): Promise<{ unconfirmed_count: number }> {
+    const normalized = Array.isArray(selection) ? { candidateIds: selection } : selection
+    return http.post(`${base}/runs/${runId}/unconfirmations`, {
+      candidate_ids: normalized.candidateIds ?? [],
+      select_all: normalized.selectAll ?? false,
+      excluded_candidate_ids: normalized.excludedCandidateIds ?? [],
+    })
+  },
   completeSelection(projectId: string, runId: string): Promise<{ id: string; status: string; submitted_file_id: string | null }> {
     return http.post(`${base}/${projectId}/runs/${runId}/commands/complete-selection`)
   },
