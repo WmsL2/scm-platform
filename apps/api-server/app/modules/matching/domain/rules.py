@@ -6,6 +6,7 @@ import uuid
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
+from functools import lru_cache
 from typing import Mapping, Sequence
 
 from app.modules.catalog.domain.lifecycle import ProductStatus
@@ -159,8 +160,9 @@ class _BrandModelMatches:
 BrandCatalog = tuple[_BrandCatalogGroup, ...]
 
 
+@lru_cache(maxsize=65_536)
 def normalize_match_text(value: str | None) -> str:
-    """Normalize case, width, whitespace, separators, and brackets deterministically."""
+    """Normalize text once and reuse it across the bounded matching working set."""
     if value is None:
         return ""
     normalized = unicodedata.normalize("NFKC", value).casefold().strip()

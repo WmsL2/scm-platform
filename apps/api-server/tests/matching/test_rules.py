@@ -72,6 +72,21 @@ def test_normalize_match_text(value: str | None, expected: str) -> None:
     assert normalize_match_text(value) == expected
 
 
+def test_normalize_match_text_reuses_bounded_cache_without_changing_result() -> None:
+    normalize_match_text.cache_clear()
+
+    first = normalize_match_text(" Ｃｌｅａｒ　ARC-3 ")
+    after_first = normalize_match_text.cache_info()
+    second = normalize_match_text(" Ｃｌｅａｒ　ARC-3 ")
+    after_second = normalize_match_text.cache_info()
+
+    assert first == second == "cleararc3"
+    assert after_first.misses == 1
+    assert after_second.misses == 1
+    assert after_second.hits == 1
+    assert after_second.maxsize == 65_536
+
+
 @pytest.mark.parametrize(
     ("product_status", "archive_status", "cooperation_status", "supplier_is_deleted"),
     [

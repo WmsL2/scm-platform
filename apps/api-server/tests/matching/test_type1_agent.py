@@ -126,8 +126,11 @@ async def test_type1_match_agent_treats_missing_product_fields_as_unknown() -> N
     assert "只表示未知，不得因此排除" in prompt
     assert "明确冲突时才排除" in prompt
     assert "数量只用于报价数量" in prompt
+    assert "没有建立主要字段映射" in prompt
+    assert "作为次要上下文阅读" in prompt
     payload = json.loads(provider.calls[0]["user_prompt"])
     assert payload["project_remark"] == "备注优先参考"
+    assert payload["requirements"][0]["source_row"]["特殊备注"] == "单支装"
 
 
 @pytest.mark.asyncio

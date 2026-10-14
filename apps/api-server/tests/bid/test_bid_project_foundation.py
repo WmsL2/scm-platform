@@ -25,10 +25,13 @@ from app.modules.bid.domain.lifecycle import (
 )
 from app.modules.bid.infrastructure.models import BidProject, BidProjectItem, BidTemplate
 from app.modules.bid.infrastructure.repository import BidProjectRepository
-from app.modules.bid.schemas import BidOutputMappingUpdateRequest
+from app.modules.bid.schemas import BidInputMappingUpdateRequest, BidOutputMappingUpdateRequest
 from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMN_KEYS
 from app.modules.matching.application.service import MatchingService
-from app.modules.matching.application.type1_agent import Type1TemplateMappingSuggestion
+from app.modules.matching.application.type1_agent import (
+    Type1AgentContractError,
+    Type1TemplateMappingSuggestion,
+)
 from app.modules.matching.application.type2_agent import Type2TemplateMappingSuggestion
 
 
@@ -104,6 +107,82 @@ async def test_project_creation_parses_frozen_template(tmp_path: Path) -> None:
         await session.rollback()
 
 
+def test_type1_type2_row_parser_skips_formula_summary_rows() -> None:
+    headers = ["商品编码", "商品名称", "数量合计", "参考价格"]
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Sheet1"
+    sheet.append(headers)
+    sheet.append(["SKU-001", "正常商品", 2, 10])
+    sheet.append(["SKU-TOTAL", "合计", 1, 20])
+    sheet.append([None, "合计", "=SUM(C2:C3)", None])
+    output = BytesIO()
+    workbook.save(output)
+    workbook.close()
+    template = BidTemplate(
+        template_code="summary-row-test",
+        template_name="汇总行测试",
+        version=1,
+        sheet_name="Sheet1",
+        header_row=1,
+        data_start_row=2,
+        import_mapping={
+            "buyer_item_code": "商品编码",
+            "product_name": "商品名称",
+            "quantity": "数量合计",
+            "max_price": "参考价格",
+        },
+        export_mapping={},
+        fingerprint="summary-row-test",
+    )
+
+    service = BidProjectService.__new__(BidProjectService)
+    rows = service._parse_rows(output.getvalue(), template)
+
+    assert [row["product_name"] for row in rows] == ["正常商品", "合计"]
+    assert [row["quantity"] for row in rows] == [Decimal("2"), Decimal("1")]
+
+
+@pytest.mark.asyncio
+async def test_type1_ai_mapping_failure_still_allows_manual_confirmation(
+    tmp_path: Path,
+) -> None:
+    file_bytes, _headers = _workbook_bytes()
+    actor_id = uuid.uuid4()
+
+    class FailedType1MappingAgent:
+        async def suggest_template_mapping(
+            self, _file_bytes: bytes, *, project_remark: str | None
+        ) -> Type1TemplateMappingSuggestion:
+            raise Type1AgentContractError("invalid mapping")
+
+    async with SessionLocal() as session:
+        service = BidProjectService(
+            session,
+            LocalFileStorage(tmp_path),
+            type1_agent=FailedType1MappingAgent(),  # type: ignore[arg-type]
+        )
+        created = await service.create(
+            project_name="类型1人工兜底",
+            buyer_name="测试需求商",
+            start_at=None,
+            deadline_at=None,
+            remark=None,
+            filename="需求.xlsx",
+            file_bytes=file_bytes,
+            recommendation_type=BidRecommendationType.TYPE_1_SPECIFICATION,
+            actor_id=actor_id,
+        )
+
+        assert created.import_status == BidImportStatus.MAPPING_REQUIRED
+        mapping = await service.input_mapping(created.id)
+        assert mapping.mapping == {}
+        assert mapping.sheet_name == "需求明细"
+        assert mapping.header_row == 1
+        assert "商品名称" in mapping.headers
+        await session.rollback()
+
+
 @pytest.mark.asyncio
 async def test_type1_output_mapping_is_project_scoped_and_requires_confirmation(
     tmp_path: Path,
@@ -161,8 +240,35 @@ async def test_type1_output_mapping_is_project_scoped_and_requires_confirmation(
         project = await session.get(BidProject, created.id)
         assert project is not None
         assert project.template_id != template.id
+        assert created.import_status == BidImportStatus.MAPPING_REQUIRED
+        assert created.total_item_count == 0
         assert project.output_mapping == {"agreement_price": "报价"}
         assert project.output_mapping_confirmed_at is None
+
+        input_mapping = await service.input_mapping(created.id)
+        assert input_mapping.confirmed is False
+        assert input_mapping.mapping == {
+            "product_name": "商品名称",
+            "specification": "规格",
+        }
+        assert input_mapping.sheet_names == ["需求明细"]
+
+        with pytest.raises(AppError, match="请先人工确认客户需求字段映射"):
+            await MatchingService(session).start(created.id, actor_id)
+
+        confirmed_input = await service.confirm_input_mapping(
+            created.id,
+            BidInputMappingUpdateRequest(
+                sheet_name="需求明细",
+                header_row=1,
+                data_start_row=2,
+                mapping={"product_name": "商品名称", "specification": "规格"},
+            ),
+            actor_id,
+        )
+        assert confirmed_input.confirmed is True
+        assert project.import_status == BidImportStatus.PARSED.value
+        assert project.total_item_count == 1
 
         initial = await service.output_mapping(created.id)
         assert initial.confirmed is False
@@ -265,6 +371,19 @@ async def test_output_mapping_returns_headers_resolved_against_the_current_workb
         project = await session.get(BidProject, created.id)
         assert project is not None
         assert project.template_id != template.id
+        assert created.import_status == BidImportStatus.MAPPING_REQUIRED
+        await service.confirm_input_mapping(
+            created.id,
+            BidInputMappingUpdateRequest(
+                sheet_name=sheet_name,
+                header_row=1,
+                data_start_row=2,
+                mapping={"brand": "品牌", "model": "型号"},
+            ),
+            actor_id,
+        )
+        assert project.import_status == BidImportStatus.PARSED.value
+        assert project.total_item_count == 1
         assert project.output_mapping == {}
         project.output_mapping = {
             "selected_unit_price": "商品报价（单价）",

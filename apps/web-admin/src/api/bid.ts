@@ -1,11 +1,13 @@
 import { http } from "../shared/http/runtime"
-import type { BidCandidate, BidFileType, BidItemPage, BidItemStatus, BidOutputMapping, BidProjectCreateResult, BidProjectDetail, BidProjectFile, BidProjectPage, BidProjectStatus, BidProjectStatusResult, BidProjectType, BidRecommendationType, BidSelectionResult, NoQuoteReason, StartMatchingResult } from "../types/bid"
+import type { BidCandidate, BidFileType, BidInputMapping, BidItemPage, BidItemStatus, BidOutputMapping, BidProjectCreateResult, BidProjectDetail, BidProjectFile, BidProjectPage, BidProjectStatus, BidProjectStatusResult, BidProjectType, BidRecommendationType, BidSelectionResult, NoQuoteReason, StartMatchingResult } from "../types/bid"
 import type { RecommendationTemplateFile, RecommendationTemplateMapping, RecommendationTemplateMappingUpdate, RecommendationTemplateStructure } from "../types/recommendation"
 const base = "/api/v1/bid-projects"
 function query(values: Record<string, string | number | undefined>): string { const params = new URLSearchParams(); Object.entries(values).forEach(([key, value]) => { if (value !== undefined && String(value).trim() !== "") params.set(key, String(value)) }); const value = params.toString(); return value ? `?${value}` : "" }
 export const bidApi = {
   list(params: { page?: number; page_size?: number; keyword?: string; status?: BidProjectStatus } = {}): Promise<BidProjectPage> { return http.get(`${base}${query(params)}`) },
   get(id: string): Promise<BidProjectDetail> { return http.get(`${base}/${id}`) },
+  inputMapping(id: string, params: { sheet_name?: string; header_row?: number } = {}): Promise<BidInputMapping> { return http.get(`${base}/${id}/input-mapping${query(params)}`) },
+  confirmInputMapping(id: string, body: { sheet_name: string; header_row: number; data_start_row: number; mapping: Record<string, string | null> }): Promise<BidInputMapping> { return http.put(`${base}/${id}/input-mapping`, body) },
   outputMapping(id: string): Promise<BidOutputMapping> { return http.get(`${base}/${id}/output-mapping`) },
   updateOutputMapping(id: string, mapping: Record<string, string | null>): Promise<BidOutputMapping> { return http.put(`${base}/${id}/output-mapping`, { mapping }) },
   update(id: string, body: { project_name: string; buyer_name: string; start_at: string | null; deadline_at: string | null; remark: string | null }): Promise<BidProjectDetail> { return http.patch(`${base}/${id}`, body) },

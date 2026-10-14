@@ -21,6 +21,8 @@ from app.modules.bid.domain.lifecycle import (
     BidRecommendationType,
 )
 from app.modules.bid.schemas import (
+    BidInputMappingResponse,
+    BidInputMappingUpdateRequest,
     BidOutputMappingResponse,
     BidOutputMappingUpdateRequest,
     BidProjectCreateResponse,
@@ -203,6 +205,41 @@ async def get_bid_project(
     session: SessionDep,
 ) -> ApiResponse[BidProjectDetailResponse]:
     return success(await BidProjectService(session).get(project_id))
+
+
+@router.get(
+    "/{project_id}/input-mapping",
+    response_model=ApiResponse[BidInputMappingResponse],
+)
+async def get_bid_input_mapping(
+    project_id: uuid.UUID,
+    _: Annotated[CurrentUser, Depends(require_permission("bid:detail"))],
+    session: SessionDep,
+    sheet_name: Annotated[str | None, Query()] = None,
+    header_row: Annotated[int | None, Query(ge=1)] = None,
+) -> ApiResponse[BidInputMappingResponse]:
+    return success(
+        await BidProjectService(session).input_mapping(
+            project_id, sheet_name=sheet_name, header_row=header_row
+        )
+    )
+
+
+@router.put(
+    "/{project_id}/input-mapping",
+    response_model=ApiResponse[BidInputMappingResponse],
+)
+async def put_bid_input_mapping(
+    project_id: uuid.UUID,
+    payload: BidInputMappingUpdateRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("bid:update"))],
+    session: SessionDep,
+) -> ApiResponse[BidInputMappingResponse]:
+    return success(
+        await BidProjectService(session).confirm_input_mapping(
+            project_id, payload, current.user_id
+        )
+    )
 
 
 @router.get(

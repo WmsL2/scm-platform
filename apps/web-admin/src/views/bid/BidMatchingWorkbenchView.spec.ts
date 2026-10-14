@@ -44,6 +44,17 @@ describe("BidMatchingWorkbenchView", () => {
     expect(source).toContain("客户需求和回填字段已确认。请点击")
     expect(source).toContain('@click="startMatching"')
     expect(source).not.toContain("onMounted(() => void startMatching())")
+    expect(source).toContain("bidApi.inputMapping(id)")
+    expect(source).toContain("bidApi.confirmInputMapping")
+    expect(source).toContain("客户需求主要字段确认")
+    expect(source).toContain("客户 Excel 列（不可修改）")
+    expect(source).toContain("AI 先预识别主要参考字段，人工确认后才解析需求并允许匹配")
+    expect(source).toContain("未映射的其他非空客户列仍会完整保留")
+    expect(source).toContain("次要参考（不设为主字段）")
+    expect(source).toContain('label="1. 需求主要字段"')
+    expect(source).toContain('label="2. 结果回填字段"')
+    expect(source).toContain('name="output" :disabled="!outputMapping"')
+    expect(source).toContain('mappingTab.value = "output"')
   })
 
   it("reviews AI-prefilled output columns without changing matching inputs", () => {
