@@ -170,6 +170,18 @@ class PptRenderer:
                 template=template,
                 manifest=manifest,
             )
+        if template.version == "5" and template.code == "CATALOG_MINIMAL":
+            from app.modules.recommendation.application.ppt_official_template_catalog_v5 import (
+                render_catalog_minimal_v5,
+            )
+
+            return render_catalog_minimal_v5(
+                source,
+                images=images,
+                template=template,
+                manifest=manifest,
+                layout_preview=self._layout_preview,
+            )
         presentation = Presentation(str(resolve_ppt_template_asset(template)))
         prototype = presentation.slides[manifest.product_slide_index]
         cover = (

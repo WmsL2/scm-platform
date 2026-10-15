@@ -12,6 +12,13 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Callable
 
+from app.modules.recommendation.application.ppt_official_template_catalog_v5 import (
+    standardize_catalog_minimal_v5,
+    validate_catalog_minimal_v5_runtime,
+)
+from app.modules.recommendation.application.ppt_official_template_catalog_v5 import (
+    verify_no_sample_media as verify_no_catalog_sample_media,
+)
 from app.modules.recommendation.application.ppt_official_template_festive_v5 import (
     standardize_jd_festive_red_v5,
     validate_jd_festive_red_v5_runtime,
@@ -80,11 +87,23 @@ def build_jd_festive_red_v5_runtime_asset(original: Path, runtime: Path) -> None
     )
 
 
+def build_catalog_minimal_v5_runtime_asset(original: Path, runtime: Path) -> None:
+    """Build template 3 only inside an authorised private workspace."""
+    _build_atomic_runtime_asset(
+        original,
+        runtime,
+        code="CATALOG_MINIMAL",
+        standardize=standardize_catalog_minimal_v5,
+        verify_media=verify_no_catalog_sample_media,
+        validate_runtime=validate_catalog_minimal_v5_runtime,
+    )
+
+
 def main() -> None:
     parser = ArgumentParser()
     parser.add_argument(
         "--template-code",
-        choices=("JD_DETAIL_RED", "JD_FESTIVE_RED"),
+        choices=("JD_DETAIL_RED", "JD_FESTIVE_RED", "CATALOG_MINIMAL"),
         default="JD_DETAIL_RED",
     )
     args = parser.parse_args()
@@ -92,6 +111,7 @@ def main() -> None:
     filenames = {
         "JD_DETAIL_RED": ("模版1.pptx", "JD_DETAIL_RED_OFFICIAL_CLEAN_v5.pptx"),
         "JD_FESTIVE_RED": ("模版2.pptx", "JD_FESTIVE_RED_OFFICIAL_CLEAN_v5.pptx"),
+        "CATALOG_MINIMAL": ("模版3.pptx", "CATALOG_MINIMAL_OFFICIAL_CLEAN_v5.pptx"),
     }
     original_filename, runtime_filename = filenames[args.template_code]
     original = root / ".codex-assets" / "official-ppt" / "originals" / original_filename
@@ -100,6 +120,8 @@ def main() -> None:
         raise SystemExit(f"private original is unavailable: {original}")
     if args.template_code == "JD_FESTIVE_RED":
         build_jd_festive_red_v5_runtime_asset(original, runtime)
+    elif args.template_code == "CATALOG_MINIMAL":
+        build_catalog_minimal_v5_runtime_asset(original, runtime)
     else:
         build_runtime_asset(original, runtime)
     print(runtime)

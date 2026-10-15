@@ -408,6 +408,14 @@ class Type3RecommendationService:
                 or 0
             )
             run.status = "WAITING_CONFIRMATION" if count else "NO_CANDIDATES"
+            if count:
+                project = await self._project(run.project_id, for_update=True)
+                self._move_project_to_selecting(
+                    project,
+                    actor_id=run.created_by,
+                    event_type="TYPE3_CANDIDATES_READY",
+                    note=f"已生成 {count} 件类型 3 候选商品，进入人工选品",
+                )
 
     async def fail(self, run_id: uuid.UUID, message: str) -> None:
         async with transaction_scope(self.session):
@@ -637,6 +645,46 @@ class Type3RecommendationService:
             project.updated_by = actor_id
             run.status = "CONFIRMED"
 
+    async def recover_selection(
+        self, project_id: uuid.UUID, run_id: uuid.UUID, actor_id: uuid.UUID
+    ) -> None:
+        """Recover a historic completed candidate run that missed the SELECTING transition."""
+        async with transaction_scope(self.session):
+            project = await self._project(project_id, for_update=True)
+            run = await self._run(run_id, for_update=True)
+            if run.project_id != project.id:
+                raise AppError("TYPE3_RUN_NOT_FOUND", "类型 3 推品任务不存在", 404)
+            if run.status != "WAITING_CONFIRMATION":
+                raise AppError(
+                    "TYPE3_SELECTION_RECOVERY_NOT_ALLOWED",
+                    "当前推品任务不能恢复到待选品状态",
+                    409,
+                )
+            count = int(
+                await self.session.scalar(
+                    select(func.count(Type3Candidate.id)).where(Type3Candidate.run_id == run.id)
+                )
+                or 0
+            )
+            if not count:
+                raise AppError(
+                    "TYPE3_SELECTION_RECOVERY_NO_CANDIDATES",
+                    "当前推品任务没有候选商品，不能恢复待选品状态",
+                    409,
+                )
+            if project.status != BidProjectStatus.MATCHING.value:
+                raise AppError(
+                    "TYPE3_SELECTION_RECOVERY_NOT_ALLOWED",
+                    "当前项目状态不能恢复到待选品状态",
+                    409,
+                )
+            self._move_project_to_selecting(
+                project,
+                actor_id=actor_id,
+                event_type="TYPE3_SELECTION_RECOVERED",
+                note=f"恢复 {count} 件已生成候选商品的人工选品，无需重新调用 AI",
+            )
+
     async def reopen_selection(
         self, project_id: uuid.UUID, run_id: uuid.UUID, actor_id: uuid.UUID
     ) -> None:
@@ -798,6 +846,33 @@ class Type3RecommendationService:
         if project is None:
             raise AppError("TYPE3_PROJECT_NOT_FOUND", "类型 3 项目不存在", 404)
         return project
+
+    def _move_project_to_selecting(
+        self,
+        project: BidProject,
+        *,
+        actor_id: uuid.UUID,
+        event_type: str,
+        note: str,
+    ) -> bool:
+        """Move an active Type-3 project to manual selection and audit the transition."""
+        if project.status != BidProjectStatus.MATCHING.value:
+            return False
+        previous_status = project.status
+        ensure_transition(project.status, BidProjectStatus.SELECTING)
+        project.status = BidProjectStatus.SELECTING.value
+        project.updated_by = actor_id
+        self.session.add(
+            BidProjectEvent(
+                project_id=project.id,
+                actor_id=actor_id,
+                event_type=event_type,
+                from_status=previous_status,
+                to_status=project.status,
+                note=note,
+            )
+        )
+        return True
 
     async def _project_and_template(
         self, project_id: uuid.UUID, *, for_update: bool = False

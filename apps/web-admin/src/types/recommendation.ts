@@ -34,9 +34,4 @@ export const RUN_STATUS_LABELS: Record<RecommendationRunStatus, string> = {
 
 export const TEMPLATE_MAPPING_FIELDS: Array<{ key: string; label: string }> = [
   ...PRODUCT_EXPORT_COLUMN_DEFINITIONS,
-  { key: "factory_direct", label: "是否厂直（人工确认）" },
-  { key: "supports_jd_or_sf", label: "是否支持京东或者顺丰物流（派生）" },
-  { key: "campaign_price", label: "活动价" }, { key: "delivery_status", label: "发货状态" },
-  { key: "inventory_status", label: "库存状态" }, { key: "fulfillment_cycle", label: "履约说明" },
-  { key: "evidence", label: "依据与备注" },
 ]

@@ -83,6 +83,14 @@ PPT_V5_TEMPLATES: tuple[PptTemplateDefinition, ...] = (
         "/ppt-template-previews/union-quote-white.svg",
         single_product_only=False,
     ),
+    PptTemplateDefinition(
+        "CATALOG_MINIMAL",
+        "极简商品画册版",
+        "正式极简画册客户版，当前仅支持单品生成",
+        "5",
+        "/ppt-template-previews/catalog-minimal.svg",
+        single_product_only=True,
+    ),
 )
 
 

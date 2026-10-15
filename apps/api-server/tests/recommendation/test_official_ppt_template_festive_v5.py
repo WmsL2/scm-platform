@@ -501,12 +501,70 @@ def test_selling_points_use_actual_page_capacity_instead_of_four_item_limit(
     assert len(deck.slides) == 2
 
 
-def test_seven_short_selling_points_still_fail_when_page_really_overflows(
+def test_seven_points_with_two_line_title_use_bounded_supplement_image_adaptation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reported 8-line selling block must not fail by only 15.6pt."""
+    runtime = _runtime(tmp_path)
+    source = _source()
+    product = source["single_products"][0]["product"]  # type: ignore[index]
+    product.update(
+        product_name="宽" * 35,
+        selling_points="\n".join(f"虚构卖点 {index}" for index in range(1, 8)),
+    )
+    source["single_products"][0]["renderer_supplementary_image_ids"] = ["one", "two", "three"]  # type: ignore[index]
+    images = {
+        "fictional-1": _png((200, 20, 20), (300, 80)),
+        "one": _png((20, 200, 20), (80, 300)),
+        "two": _png((20, 20, 200), (100, 100)),
+        "three": _png((200, 200, 20), (140, 100)),
+    }
+
+    baseline = _slots(Presentation(runtime))
+    deck = _render(runtime, source, monkeypatch, images)
+    slots = _slots(deck)
+    selling = slots["SCM_FIELD_SELLING_POINTS"]
+    reference = slots["SCM_FIELD_REFERENCE"]
+    assert len(reference.text.splitlines()) == 3
+    assert [paragraph.text for paragraph in selling.text_frame.paragraphs[1:8]] == [
+        f"虚构卖点 {index}" for index in range(1, 8)
+    ]
+    assert selling.top == baseline["SCM_FIELD_SELLING_POINTS"].top
+    for name in festive._SUPPLEMENT_IMAGE_SLOT_NAMES:
+        picture = slots[name]
+        slot_top = baseline[name].top + int(64.8 * festive._EMU_PER_POINT)
+        slot_height = baseline[name].height - int(15.6 * festive._EMU_PER_POINT)
+        assert picture.left >= baseline[name].left and picture.left + picture.width <= (
+            baseline[name].left + baseline[name].width
+        )
+        rounding_tolerance = festive._EMU_PER_POINT
+        assert (
+            picture.top >= slot_top - rounding_tolerance
+            and picture.top + picture.height <= slot_top + slot_height + rounding_tolerance
+        )
+        assert picture.height <= slot_height + 2 * rounding_tolerance
+        assert picture.top + picture.height <= deck.slide_height
+        assert (
+            abs(picture.width / picture.height - picture.image.size[0] / picture.image.size[1])
+            < 0.001
+        )
+        assert (
+            picture.crop_left
+            == picture.crop_right
+            == picture.crop_top
+            == picture.crop_bottom
+            == 0
+        )
+
+
+def test_supplement_adaptation_still_rejects_genuinely_unfit_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = _source()
-    source["single_products"][0]["product"]["selling_points"] = "\n".join(  # type: ignore[index]
-        f"虚构卖点 {index}" for index in range(1, 8)
+    product = source["single_products"][0]["product"]  # type: ignore[index]
+    product.update(
+        product_name="宽" * 35,
+        selling_points="\n".join("宽" * 140 for _ in range(7)),
     )
     with pytest.raises(AppError, match="selling_points") as error:
         _render(_runtime(tmp_path), source, monkeypatch)

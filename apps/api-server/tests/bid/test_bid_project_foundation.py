@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from openpyxl import Workbook, load_workbook
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.common.contracts import AppError, PageParams
 from app.core.database import SessionLocal
@@ -23,7 +23,13 @@ from app.modules.bid.domain.lifecycle import (
     BidRecommendationType,
     ensure_transition,
 )
-from app.modules.bid.infrastructure.models import BidProject, BidProjectItem, BidTemplate
+from app.modules.bid.infrastructure.models import (
+    BidProject,
+    BidProjectEvent,
+    BidProjectFile,
+    BidProjectItem,
+    BidTemplate,
+)
 from app.modules.bid.infrastructure.repository import BidProjectRepository
 from app.modules.bid.schemas import BidInputMappingUpdateRequest, BidOutputMappingUpdateRequest
 from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMN_KEYS
@@ -104,6 +110,55 @@ async def test_project_creation_parses_frozen_template(tmp_path: Path) -> None:
         rows = await service.items(response.id, page_params=PageParams(), status=None)
         assert rows.total == 1
         assert rows.items[0].product_name == "测试商品"
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_purge_removes_project_owned_rows_and_uploaded_file(tmp_path: Path) -> None:
+    file_bytes, _headers = _workbook_bytes()
+    actor_id = uuid.uuid4()
+    storage = LocalFileStorage(tmp_path)
+    async with SessionLocal() as session:
+        service = BidProjectService(session, storage)
+        created = await service.create(
+            project_name="永久删除验证项目",
+            buyer_name="测试需求商",
+            start_at=None,
+            deadline_at=None,
+            remark=None,
+            filename="purge.xlsx",
+            file_bytes=file_bytes,
+            actor_id=actor_id,
+        )
+        project = await session.get(BidProject, created.id)
+        assert project is not None
+        project_code = project.project_code
+        files = await service.files(created.id)
+        assert len(files) == 1
+        storage_keys = list(
+            await session.scalars(
+                select(BidProjectFile.storage_key).where(BidProjectFile.project_id == created.id)
+            )
+        )
+        assert len(storage_keys) == 1
+
+        with pytest.raises(AppError) as exc_info:
+            await service.purge(created.id, "BID00000000", actor_id)
+        assert exc_info.value.code == "BID_PROJECT_PURGE_CONFIRM_MISMATCH"
+        assert await session.get(BidProject, created.id) is not None
+
+        result = await service.purge(created.id, project_code, actor_id)
+        assert result.id == created.id
+        assert result.status == "PURGED"
+        assert await session.get(BidProject, created.id) is None
+        for model in (BidProjectFile, BidProjectItem, BidProjectEvent):
+            assert (
+                await session.scalar(
+                    select(func.count()).select_from(model).where(model.project_id == created.id)
+                )
+                == 0
+            )
+        assert not (tmp_path / storage_keys[0]).exists()
         await session.rollback()
 
 

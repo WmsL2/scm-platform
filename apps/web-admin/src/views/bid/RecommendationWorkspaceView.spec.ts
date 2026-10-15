@@ -36,6 +36,12 @@ function configure() {
   recommendationApi.confirmMany.mockResolvedValue({ confirmed_count: 1 })
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => { resolve = done })
+  return { promise, resolve }
+}
+
 async function mountWorkspace() {
   configure()
   const wrapper = mount(RecommendationWorkspaceView, {
@@ -67,12 +73,12 @@ describe("RecommendationWorkspaceView", () => {
     expect(wrapper.text()).not.toContain("人工核验")
   })
 
-  it("allows a historical pending manual flag to enter the direct confirmation flow", async () => {
+  it("confirms a historical pending candidate directly without a supplement dialog", async () => {
     const wrapper = await mountWorkspace()
     await wrapper.findAll("button").find((item) => item.text().includes("确认选品"))!.trigger("click")
     await flushPromises()
-    await wrapper.findAll("button").find((item) => item.text().includes("确认保存"))!.trigger("click")
-    expect(recommendationApi.confirm).toHaveBeenCalledWith("candidate-1", expect.any(Object))
+    expect(recommendationApi.confirm).toHaveBeenCalledWith("candidate-1", {})
+    expect(wrapper.text()).not.toContain("人工确认候选商品")
   })
 
   it("allows the same historical candidate to be batch-confirmed", async () => {
@@ -83,9 +89,29 @@ describe("RecommendationWorkspaceView", () => {
     expect(recommendationApi.confirmMany).toHaveBeenCalledWith("run-1", { candidateIds: ["candidate-1"] })
   })
 
+  it("allows Excel generation before selection is completed without a confirmation-count cap", async () => {
+    const wrapper = await mountWorkspace()
+    const view = wrapper.vm as unknown as {
+      run: { status: string; candidate_page: { confirmed_total: number } }
+    }
+    view.run.status = "CONFIRMED"
+    view.run.candidate_page.confirmed_total = 1
+    await flushPromises()
+
+    const exportButton = wrapper.findAll("button").find((item) => item.text().includes("生成 Excel"))
+    expect(exportButton).toBeDefined()
+    expect(exportButton!.attributes("disabled")).toBeUndefined()
+
+    view.run.candidate_page.confirmed_total = 5_001
+    await flushPromises()
+    expect(exportButton!.attributes("disabled")).toBeUndefined()
+  })
+
   it("retains no manual API or checkbox gate in the workspace source", () => {
     expect(source).not.toContain("updateManualChecks")
     expect(source).not.toContain("manualChecksPassed")
+    expect(source).not.toContain("人工确认候选商品")
+    expect(source).not.toContain("openConfirmation")
     expect(source).toContain("confirmMany")
   })
 
@@ -120,5 +146,40 @@ describe("RecommendationWorkspaceView", () => {
     expect(source).toContain("全选全部已确认商品")
     expect(source).toContain("await refreshRun()")
     expect(source).toContain("pre-mutation count")
+  })
+
+  it("keeps the newest completed candidate snapshot when an older refresh returns late", async () => {
+    const wrapper = await mountWorkspace()
+    const stale = deferred<object>()
+    const fresh = deferred<object>()
+    recommendationApi.run.mockReset()
+    recommendationApi.run
+      .mockImplementationOnce(() => stale.promise)
+      .mockImplementationOnce(() => fresh.promise)
+    const view = wrapper.vm as unknown as { refreshRun: () => Promise<void> }
+
+    const firstRefresh = view.refreshRun()
+    const secondRefresh = view.refreshRun()
+    fresh.resolve({
+      id: "run-1", project_id: "project-1", status: "WAITING_CONFIRMATION", progress_percent: 100,
+      progress_message: null, raw_requirement_snapshot: project.remark, parsed_requirement: null,
+      provider: "fake", model: "fake", prompt_version: "test", error: null, category_choices: [],
+      candidates: [candidate, { ...candidate, id: "candidate-2", product_id: "product-2" }],
+      candidate_page: { items: [candidate, { ...candidate, id: "candidate-2", product_id: "product-2" }], total: 2, page: 1, page_size: 50, unconfirmed_total: 2, confirmed_total: 0 },
+      created_at: "2026-10-15T00:00:00", updated_at: "2026-10-15T00:00:00",
+    })
+    await secondRefresh
+    stale.resolve({
+      id: "run-1", project_id: "project-1", status: "RANKING", progress_percent: 80,
+      progress_message: "正在生成候选", raw_requirement_snapshot: project.remark, parsed_requirement: null,
+      provider: "fake", model: "fake", prompt_version: "test", error: null, category_choices: [],
+      candidates: [], candidate_page: { items: [], total: 0, page: 1, page_size: 50, unconfirmed_total: 0, confirmed_total: 0 },
+      created_at: "2026-10-15T00:00:00", updated_at: "2026-10-15T00:00:00",
+    })
+    await firstRefresh
+    await flushPromises()
+
+    expect((wrapper.vm as unknown as { run: { candidate_page: { total: number } } }).run.candidate_page.total).toBe(2)
+    expect(wrapper.text()).toContain("待人工确认")
   })
 })
