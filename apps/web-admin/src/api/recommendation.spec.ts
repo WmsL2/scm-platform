@@ -20,11 +20,17 @@ describe("recommendation api", () => {
     await recommendationApi.start("p1")
     await recommendationApi.confirm("c1", { campaign_price: "100.00", fulfillment_cycle: "三天" })
     await recommendationApi.confirmMany("r1", ["c1", "c2"])
+    await recommendationApi.export("p1", "r1")
 
     expect(http.get).toHaveBeenNthCalledWith(1, "/api/v1/recommendation-projects/p1/runs")
     expect(http.get).toHaveBeenNthCalledWith(2, "/api/v1/recommendation-projects/runs/r1")
     expect(http.get).toHaveBeenNthCalledWith(3, "/api/v1/recommendation-projects/runs/r1/candidates?page=1&page_size=50")
     expect(http.post).toHaveBeenCalledWith("/api/v1/recommendation-projects/p1/runs", undefined, { timeoutMs: 300_000 })
+    expect(http.post).toHaveBeenCalledWith(
+      "/api/v1/recommendation-projects/p1/runs/r1/exports",
+      undefined,
+      { timeoutMs: 900_000 },
+    )
     expect(http.patch).toHaveBeenCalledWith("/api/v1/recommendation-projects/candidates/c1/confirmation", { campaign_price: "100.00", fulfillment_cycle: "三天" })
     expect(http.post).toHaveBeenCalledWith("/api/v1/recommendation-projects/runs/r1/confirmations", { candidate_ids: ["c1", "c2"], select_all: false, excluded_candidate_ids: [] })
   })

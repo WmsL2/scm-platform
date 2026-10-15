@@ -32,7 +32,6 @@ from app.modules.recommendation.infrastructure.models import (
     RecommendationExport,
     RecommendationRun,
 )
-from app.modules.recommendation.schemas import ConfirmationUpdateRequest
 from app.modules.recommendation.template.models import RecommendationTemplateMapping
 from app.modules.recommendation.template.schemas import RecommendationRunStatus
 from app.modules.supplier.domain.rules import ArchiveStatus, CooperationStatus
@@ -144,6 +143,46 @@ def test_export_column_mapping_writes_repeated_field_to_duplicate_headers() -> N
     result.close()
 
 
+def test_export_leaves_non_product_and_derived_fields_blank() -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "推荐清单"
+    sheet.append(["是否厂直", "是否支持京东或者顺丰物流", "活动价"])
+    output = BytesIO()
+    workbook.save(output)
+    workbook.close()
+
+    candidate = cast(
+        Any,
+        SimpleNamespace(
+            product_snapshot={"shipping_courier": "京东物流"},
+            supplier_snapshot={},
+            price_snapshot={},
+        ),
+    )
+    confirmation = cast(Any, SimpleNamespace(factory_direct="PENDING", campaign_price=None))
+    exported = RecommendationExportService._build_workbook(
+        output.getvalue(),
+        "推荐清单",
+        1,
+        2,
+        {
+            "version": 2,
+            "columns": [
+                {"column_index": 1, "field_key": "factory_direct"},
+                {"column_index": 2, "field_key": "supports_jd_or_sf"},
+                {"column_index": 3, "field_key": "campaign_price"},
+            ],
+        },
+        [(candidate, confirmation)],
+    )
+
+    result = load_workbook(BytesIO(exported), data_only=False)
+    result_sheet = result["推荐清单"]
+    assert [result_sheet.cell(2, index).value for index in range(1, 4)] == [None, None, None]
+    result.close()
+
+
 def test_type3_export_preserves_customer_category_cells_outside_mapped_columns() -> None:
     workbook = Workbook()
     sheet = workbook.active
@@ -215,7 +254,7 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
             project_code=f"EX{token[:10]}",
             project_name="自由推品导出测试",
             buyer_name="测试客户",
-            status=BidProjectStatus.READY.value,
+            status=BidProjectStatus.SELECTING.value,
             import_status=BidImportStatus.NOT_REQUIRED.value,
             project_type=BidProjectType.FREE_RECOMMENDATION.value,
             remark="导出已确认自由推品候选。",
@@ -321,8 +360,8 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
         assert first.file_type == BidFileType.RECOMMENDATION_EXPORT
         assert first.version_no == 1
         assert second.version_no == 2
-        assert run.status == RecommendationRunStatus.EXPORTED.value
-        assert project.status == BidProjectStatus.EXPORTED.value
+        assert run.status == RecommendationRunStatus.CONFIRMED.value
+        assert project.status == BidProjectStatus.SELECTING.value
         downloaded_file, exported = await service.download_export(run.id, first.id)
         assert downloaded_file.id == first.id
         workbook = load_workbook(BytesIO(exported), data_only=False)
@@ -372,14 +411,6 @@ async def test_export_confirmed_candidates_preserves_template_and_versions() -> 
             "RECOMMENDATION_EXPORTED",
         ]
         recommendation_service = RecommendationService(session)
-        reopened = await recommendation_service.reopen_selection(project.id, run.id, actor_id)
-        assert reopened.status == BidProjectStatus.SELECTING
-        await recommendation_service.confirm_candidate(
-            candidate.id,
-            ConfirmationUpdateRequest(campaign_price=Decimal("66")),
-            actor_id,
-        )
-        assert run.status == RecommendationRunStatus.CONFIRMED.value
         completed = await recommendation_service.complete_selection(project.id, run.id, actor_id)
         assert completed.status == BidProjectStatus.READY
         third = await service.export(project.id, run.id, actor_id)

@@ -51,7 +51,7 @@ _DECIMAL_FIELDS = {
     "discount_rate",
     "price_inflation_rate",
 }
-_FACTORY_DIRECT_LABELS = {"PENDING": "待确认", "YES": "是", "NO": "否"}
+_FACTORY_DIRECT_LABELS = {"YES": "是", "NO": "否"}
 
 
 class RecommendationExportService:
@@ -86,12 +86,13 @@ class RecommendationExportService:
                         409,
                     )
                 if project.status not in {
+                    BidProjectStatus.SELECTING.value,
                     BidProjectStatus.READY.value,
                     BidProjectStatus.EXPORTED.value,
                 }:
                     raise AppError(
                         "RECOMMENDATION_SELECTION_NOT_COMPLETED",
-                        "请先完成人工选品，再导出确认结果",
+                        "当前项目状态不能导出确认结果",
                         409,
                     )
                 template_row = await self.repository.latest_template_mapping_for_update(project.id)
@@ -175,7 +176,10 @@ class RecommendationExportService:
                         note=f"生成自由推品确认结果第{version}版（Run {run.id}）",
                     )
                 )
-                if run.status == RecommendationRunStatus.CONFIRMED.value:
+                if (
+                    project.status == BidProjectStatus.EXPORTED.value
+                    and run.status == RecommendationRunStatus.CONFIRMED.value
+                ):
                     ensure_transition(run.status, RecommendationRunStatus.EXPORTED)
                     run.status = RecommendationRunStatus.EXPORTED.value
                 await self.session.flush()
@@ -296,15 +300,9 @@ class RecommendationExportService:
         confirmation: RecommendationConfirmation,
     ) -> object | None:
         if field == "factory_direct":
-            return _FACTORY_DIRECT_LABELS.get(confirmation.factory_direct, "待确认")
+            return _FACTORY_DIRECT_LABELS.get(confirmation.factory_direct)
         if field == "supports_jd_or_sf":
-            courier = str(candidate.product_snapshot.get("shipping_courier") or "").casefold()
-            if any(value in courier for value in ("不支持", "不发", "除外", "禁止")):
-                return "待确认"
-            if any(value in courier for value in ("京东", "顺丰", "sf")):
-                return "是"
-            # An unknown or ordinary courier is not evidence that it is unsupported.
-            return "待确认"
+            return None
         if field in {
             "campaign_price",
             "delivery_status",

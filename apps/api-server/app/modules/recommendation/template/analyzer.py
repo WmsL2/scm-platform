@@ -29,8 +29,6 @@ _SAFE_ALIASES = {
     "毛利率": "gross_margin",
     "折扣率": "discount_rate",
     "采销": "purchasing_agent",
-    "是否厂直": "factory_direct",
-    "是否支持京东或者顺丰物流": "supports_jd_or_sf",
 }
 
 
