@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-15
 
+> 2026-10-15：类型 5 模板 4 `UNION_QUOTE_WHITE` v5 的审核后 CLEAN 运行资产已纳入仓库，取消该单一文件的精确忽略规则，使部署和 CI 环境无需依赖开发机私有目录即可解析模板。提交资产大小 373,111 bytes，SHA-256 为 `701F5FA13A7F533B26E56207CD49ED5995A8528CE1C3637D23017BBE757C8BEF`；客户原始 PPT/TXT 不入库。无 Migration、API、UI、权限或推荐规则变化。
+
 > 2026-10-15：分支 `codex/feat/type5-single-details-collapsible-ppt` 为类型 5 单品候选表新增冻结快照“查看详情”弹窗和默认展开的可折叠商品区。PPT 生成现允许项目仍在 `SELECTING` 时，只要当前 Run 已确认至少一件商品即可创建任务；生成不会将项目提前结束或锁定，人工确认与撤销确认可继续进行。未确认商品、非确认 Run 与其他状态仍受服务端拦截。模板卡现按“模板1”至“模板5”固定顺序展示（红白详情、节庆红、极简画册、工会报价、系统默认），仅改变展示名称及顺序，内部模板编码、版本和历史生成记录兼容不变。无 Migration、API 路径或权限变化；后端定向 MySQL 回归、Ruff、前端 Vitest、类型检查和生产构建通过，待浏览器真实点击验收。
 
 > 2026-10-15：类型 5 模板 4 `UNION_QUOTE_WHITE` v5 已按客户正式两页原件和 TXT 回填说明完成独立实现。单品与 2--4 件组合分别映射商品字段；组合图片数量与商品数一致，京东价/协议价只取冻结快照对应字段并按数量汇总，不以活动价兜底。模板 1、模板 2 专属模块未修改，生产默认 v3 不变。私有运行资产已剔除示例页/商品媒体并复制到当前本机资产目录，且由精确 Git 规则忽略；artifact-tool 两页视觉预览与 WPS 12.0 实际打开（2 页、16:9）通过。SKU `100269697775` 的 18 行规格和 257 字符跟踪链接已整理为完整分号文本及无跟踪参数链接，正文由 32 个视觉行降至 14 行并通过 artifact-tool/WPS 单页验收；模板4克隆页同时移除版式自动生成的标题、正文和页码三个占位符，WPS 验证页面仅保留4个业务对象；真实工作台生成/下载待用户复验。无 Migration、API、UI、权限或推荐规则变化。
