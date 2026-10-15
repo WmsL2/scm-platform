@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { Setting } from "@element-plus/icons-vue"
 import { useRoute, useRouter } from "vue-router"
@@ -12,7 +12,6 @@ import type { BidProjectDetail } from "../../types/bid"
 import {
   RUN_STATUS_LABELS,
   TEMPLATE_MAPPING_FIELDS,
-  type FactoryDirectStatus,
   type RecommendationCandidate,
   type RecommendationRun,
   type RecommendationTemplateFile,
@@ -56,18 +55,10 @@ const selectAllCandidates = ref(false)
 const selectedConfirmedCandidateIds = ref<Set<string>>(new Set())
 const excludedConfirmedCandidateIds = ref<Set<string>>(new Set())
 const selectAllConfirmed = ref(false)
-const confirmVisible = ref(false)
-const selectedCandidate = ref<RecommendationCandidate>()
 const supplementText = ref("")
-const confirmation = reactive({
-  campaign_price: "",
-  delivery_status: "",
-  inventory_status: "",
-  fulfillment_cycle: "",
-  evidence: "",
-  factory_direct: "PENDING" as FactoryDirectStatus,
-})
 let pollTimer: ReturnType<typeof setInterval> | undefined
+let pollRefreshInFlight = false
+let runRefreshGeneration = 0
 
 const mappingConfirmed = computed(() => Boolean(mapping.value?.confirmed_at))
 const isCategoryRecommendation = computed(() => project.value?.recommendation_type === "TYPE_3_CATEGORY")
@@ -83,7 +74,7 @@ const canReopenSelection = computed(() => Boolean(
 ))
 const canExport = computed(() => Boolean(
   run.value
-  && ["READY", "EXPORTED"].includes(project.value?.status ?? "")
+  && ["SELECTING", "READY", "EXPORTED"].includes(project.value?.status ?? "")
   && ["CONFIRMED", "EXPORTED"].includes(run.value.status)
   && (run.value.candidate_page?.confirmed_total ?? 0) > 0
   && auth.hasPermission("recommendation:export"),
@@ -170,7 +161,7 @@ function rebuildMappingSelections(): void {
       (field) => normalizedHeader(field.label) === normalizedHeader(column.header),
     )?.key
     const field = saved ?? exact
-    if (field) {
+    if (field && TEMPLATE_MAPPING_FIELDS.some((candidate) => candidate.key === field)) {
       next[column.column_index] = field
     }
   }
@@ -308,14 +299,25 @@ async function submitSupplement() {
 
 async function refreshRun(runId = run.value?.id) {
   if (!runId) return
+  const generation = ++runRefreshGeneration
   try {
-    run.value = await recommendationApi.run(runId, candidatePage.value, candidatePageSize.value)
+    const refreshed = await recommendationApi.run(
+      runId,
+      candidatePage.value,
+      candidatePageSize.value,
+    )
+    // Polls may overlap a slow network response.  Never allow an older snapshot
+    // (often captured before candidates were committed) to overwrite a newer one.
+    if (generation !== runRefreshGeneration || run.value?.id !== runId) return
+    run.value = refreshed
     runHistory.value = runHistory.value.map((item) =>
       item.id === run.value?.id ? { ...item, ...run.value, candidates: [] } : item,
     )
     syncPolling()
   } catch (error) {
-    if (!(error instanceof HttpError && error.status === 404)) ElMessage.error(messageFor(error, "刷新推荐进度失败"))
+    if (generation === runRefreshGeneration && !(error instanceof HttpError && error.status === 404)) {
+      ElMessage.error(messageFor(error, "刷新推荐进度失败"))
+    }
   }
 }
 
@@ -334,34 +336,15 @@ async function switchRun(runId: string) {
   }
 }
 
-function openConfirmation(candidate: RecommendationCandidate) {
-  selectedCandidate.value = candidate
-  confirmation.campaign_price = candidate.confirmation?.campaign_price ?? ""
-  confirmation.delivery_status = candidate.confirmation?.delivery_status ?? ""
-  confirmation.inventory_status = candidate.confirmation?.inventory_status ?? ""
-  confirmation.fulfillment_cycle = candidate.confirmation?.fulfillment_cycle ?? ""
-  confirmation.evidence = candidate.confirmation?.evidence ?? ""
-  confirmation.factory_direct = candidate.confirmation?.factory_direct ?? "PENDING"
-  confirmVisible.value = true
-}
-
-async function saveConfirmation() {
-  if (!selectedCandidate.value) return
+async function confirmCandidate(candidate: RecommendationCandidate) {
+  if (!selectionEditable.value || candidate.confirmation) return
   acting.value = true
   try {
-    await recommendationApi.confirm(selectedCandidate.value.id, {
-      campaign_price: confirmation.campaign_price || null,
-      delivery_status: confirmation.delivery_status || null,
-      inventory_status: confirmation.inventory_status || null,
-      factory_direct: confirmation.factory_direct,
-      fulfillment_cycle: confirmation.fulfillment_cycle || null,
-      evidence: confirmation.evidence || null,
-    })
+    await recommendationApi.confirm(candidate.id, {})
     await refreshRun(run.value?.id)
-    confirmVisible.value = false
-    ElMessage.success("人工确认已保存")
+    ElMessage.success("已确认商品")
   } catch (error) {
-    ElMessage.error(messageFor(error, "保存人工确认失败"))
+    ElMessage.error(messageFor(error, "确认商品失败"))
   } finally {
     acting.value = false
   }
@@ -403,7 +386,7 @@ async function exportConfirmedCandidates() {
     link.click()
     URL.revokeObjectURL(url)
     await refreshRun(run.value.id)
-    ElMessage.success(`${workspaceTitle.value}结果已导出`)
+    ElMessage.success(`${workspaceTitle.value} Excel 已生成`)
   } catch (error) {
     ElMessage.error(messageFor(error, "导出确认结果失败"))
   } finally {
@@ -425,7 +408,7 @@ async function completeSelection(): Promise<void> {
   try {
     await recommendationApi.completeSelection(projectId, run.value.id)
     await refreshProject()
-    ElMessage.success("选品已完成，可以导出确认结果")
+    ElMessage.success("已完成选品")
   } catch (error) {
     ElMessage.error(messageFor(error, "完成选品失败"))
   } finally {
@@ -659,7 +642,17 @@ function specifiedCategoryText(): string {
 
 function syncPolling() {
   if (pollTimer) clearInterval(pollTimer)
-  pollTimer = activeRun.value ? setInterval(() => void refreshRun(), 3000) : undefined
+  pollTimer = activeRun.value ? setInterval(() => void pollActiveRun(), 3000) : undefined
+}
+
+async function pollActiveRun(): Promise<void> {
+  if (pollRefreshInFlight) return
+  pollRefreshInFlight = true
+  try {
+    await refreshRun()
+  } finally {
+    pollRefreshInFlight = false
+  }
 }
 
 function messageFor(error: unknown, fallback: string): string {
@@ -667,14 +660,17 @@ function messageFor(error: unknown, fallback: string): string {
 }
 
 onMounted(() => void load())
-onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
+onBeforeUnmount(() => {
+  runRefreshGeneration += 1
+  if (pollTimer) clearInterval(pollTimer)
+})
 </script>
 
 <template>
   <div v-loading="loading" class="workspace">
     <header>
       <div><p>{{ workspaceCode }}</p><h1>{{ project?.project_name ?? workspaceTitle }}</h1><span>{{ project?.remark }}</span></div>
-      <div class="actions"><el-button @click="router.push('/bid-projects')">返回项目</el-button><el-button v-if="['IMPORTED', 'MATCHING', 'SELECTING'].includes(project?.status ?? '')" type="primary" :disabled="!canStart" :loading="acting" @click="startRun">{{ run ? "重新生成推荐" : "开始生成推荐" }}</el-button><el-button v-if="project?.status === 'SELECTING'" type="success" :disabled="!canCompleteSelection" :loading="acting" @click="completeSelection">完成选品</el-button><el-button v-if="['READY', 'EXPORTED'].includes(project?.status ?? '')" :disabled="!canReopenSelection" :loading="acting" @click="reopenSelection">返回调整选品</el-button><el-button v-if="['READY', 'EXPORTED'].includes(project?.status ?? '')" type="success" :disabled="!canExport" :loading="acting" @click="exportConfirmedCandidates">导出确认结果</el-button></div>
+      <div class="actions"><el-button @click="router.push('/bid-projects')">返回项目</el-button><el-button v-if="['IMPORTED', 'MATCHING', 'SELECTING'].includes(project?.status ?? '')" type="primary" :disabled="!canStart" :loading="acting" @click="startRun">{{ run ? "重新生成推荐" : "开始生成推荐" }}</el-button><el-button v-if="project?.status === 'SELECTING'" type="success" :disabled="!canCompleteSelection" :loading="acting" @click="completeSelection">完成选品</el-button><el-button v-if="['READY', 'EXPORTED'].includes(project?.status ?? '')" :disabled="!canReopenSelection" :loading="acting" @click="reopenSelection">返回调整选品</el-button></div>
     </header>
 
     <el-alert v-if="selectionEditable && (run?.candidate_page?.confirmed_total ?? 0) > 0" title="当前处于待选品状态：可继续确认候选，或撤销已确认商品；历史导出文件仍会保留。" type="info" :closable="false" />
@@ -725,7 +721,7 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
     </el-card>
 
     <el-card v-if="candidateTotal">
-      <template #header><div class="card-header"><div><strong>候选商品与人工确认</strong><span class="muted">仅按硬条件筛选，评分取商品主数据；最终结果由人工确认。</span></div><div class="selection-actions"><el-button :disabled="!selectionEditable" @click="setCurrentPageSelected(true)">全选本页待确认</el-button><el-button :disabled="!selectionEditable" @click="selectAllUnconfirmedCandidates">全选全部待确认商品</el-button><el-button :disabled="!selectionEditable" @click="setCurrentPageConfirmedSelected(true)">全选本页已确认</el-button><el-button :disabled="!selectionEditable" @click="selectAllConfirmedCandidates">全选全部已确认商品</el-button><el-button :disabled="!selectionEditable" @click="resetCandidateSelection">清空选择</el-button><el-popover placement="bottom-end" :width="340" trigger="click"><template #reference><el-button :icon="Setting">自定义显示列</el-button></template><p class="column-picker-hint">商品图片、SKU、商品名称固定为前 3 列；其余列按勾选先后依次显示。</p><div class="column-picker"><el-checkbox v-for="option in RECOMMENDATION_CANDIDATE_OPTIONAL_COLUMNS" :key="option.key" :model-value="isCandidateColumnSelected(option.key)" @change="(checked: unknown) => updateCandidateColumnSelection(option.key, checked)">{{ option.label }}</el-checkbox></div></el-popover><el-button v-if="auth.hasPermission('recommendation:review')" type="primary" :disabled="!selectionEditable || selectedCandidateCount === 0" :loading="acting" @click="confirmSelectedCandidates">批量确认选中（{{ selectedCandidateCount }}）</el-button><el-button v-if="auth.hasPermission('recommendation:review')" type="danger" plain :disabled="!selectionEditable || selectedConfirmedCandidateCount === 0" :loading="acting" @click="unconfirmSelectedCandidates">批量撤销确认（{{ selectedConfirmedCandidateCount }}）</el-button></div></div></template>
+      <template #header><div class="card-header"><div><strong>候选商品与人工确认</strong><span class="muted">仅按硬条件筛选，评分取商品主数据；最终结果由人工确认。</span></div><div class="selection-actions"><el-button :disabled="!selectionEditable" @click="setCurrentPageSelected(true)">全选本页待确认</el-button><el-button :disabled="!selectionEditable" @click="selectAllUnconfirmedCandidates">全选全部待确认商品</el-button><el-button :disabled="!selectionEditable" @click="setCurrentPageConfirmedSelected(true)">全选本页已确认</el-button><el-button :disabled="!selectionEditable" @click="selectAllConfirmedCandidates">全选全部已确认商品</el-button><el-button :disabled="!selectionEditable" @click="resetCandidateSelection">清空选择</el-button><el-popover placement="bottom-end" :width="340" trigger="click"><template #reference><el-button :icon="Setting">自定义显示列</el-button></template><p class="column-picker-hint">商品图片、SKU、商品名称固定为前 3 列；其余列按勾选先后依次显示。</p><div class="column-picker"><el-checkbox v-for="option in RECOMMENDATION_CANDIDATE_OPTIONAL_COLUMNS" :key="option.key" :model-value="isCandidateColumnSelected(option.key)" @change="(checked: unknown) => updateCandidateColumnSelection(option.key, checked)">{{ option.label }}</el-checkbox></div></el-popover><el-button v-if="auth.hasPermission('recommendation:export')" type="success" :disabled="!canExport" :loading="acting" @click="exportConfirmedCandidates">生成 Excel</el-button><el-button v-if="auth.hasPermission('recommendation:review')" type="primary" :disabled="!selectionEditable || selectedCandidateCount === 0" :loading="acting" @click="confirmSelectedCandidates">批量确认选中（{{ selectedCandidateCount }}）</el-button><el-button v-if="auth.hasPermission('recommendation:review')" type="danger" plain :disabled="!selectionEditable || selectedConfirmedCandidateCount === 0" :loading="acting" @click="unconfirmSelectedCandidates">批量撤销确认（{{ selectedConfirmedCandidateCount }}）</el-button></div></div></template>
       <el-table :data="run?.candidates ?? []">
         <el-table-column width="52"><template #header><el-checkbox :model-value="pageAllSelected" :indeterminate="pagePartiallySelected" :disabled="!selectionEditable || selectableOnPage.length === 0" @change="(value: string | number | boolean) => setCurrentPageSelected(Boolean(value))" /></template><template #default="{ row }"><el-checkbox :model-value="row.confirmation ? isConfirmedCandidateSelected(row) : isCandidateSelected(row)" :disabled="!selectionEditable" @change="(value: string | number | boolean) => row.confirmation ? setConfirmedCandidateSelected(row, Boolean(value)) : setCandidateSelected(row, Boolean(value))" /></template></el-table-column>
         <el-table-column prop="rank" label="序号" width="70" fixed="left" />
@@ -734,17 +730,13 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
         <el-table-column label="商品名称" min-width="220" show-overflow-tooltip fixed="left"><template #default="{ row }">{{ productValue(row, 'product_name') }}</template></el-table-column>
         <el-table-column v-for="column in visibleCandidateColumns" :key="column.key" :label="column.label" :min-width="column.minWidth" show-overflow-tooltip><template #default="{ row }">{{ candidateColumnValue(row, column) }}</template></el-table-column>
         <el-table-column label="确认状态" width="120" fixed="right"><template #default="{ row }"><el-tag :type="row.confirmation ? 'success' : 'info'">{{ row.confirmation ? '已确认' : '待确认' }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="160" fixed="right"><template #default="{ row }"><el-button v-if="auth.hasPermission('recommendation:review')" link type="primary" @click="openConfirmation(row)">{{ selectionEditable ? (row.confirmation ? '编辑确认' : '确认选品') : '查看选品' }}</el-button><el-button v-if="selectionEditable && row.confirmation" link type="danger" :loading="acting" @click="removeCandidateConfirmation(row)">撤销确认</el-button></template></el-table-column>
+        <el-table-column label="操作" width="160" fixed="right"><template #default="{ row }"><el-button v-if="selectionEditable && !row.confirmation && auth.hasPermission('recommendation:review')" link type="primary" :loading="acting" @click="confirmCandidate(row)">确认选品</el-button><el-button v-if="selectionEditable && row.confirmation" link type="danger" :loading="acting" @click="removeCandidateConfirmation(row)">撤销确认</el-button></template></el-table-column>
       </el-table>
       <el-pagination v-model:current-page="candidatePage" v-model:page-size="candidatePageSize" :page-sizes="[50, 100, 200]" :total="candidateTotal" layout="total, sizes, prev, pager, next" @current-change="changeCandidatePage" @size-change="changeCandidatePageSize" />
     </el-card>
 
     <el-empty v-if="mappingConfirmed && !run" :description="`模板已确认，可以开始生成${workspaceTitle}推荐`" />
 
-    <el-dialog v-model="confirmVisible" title="人工确认候选商品" width="min(640px, 92vw)">
-      <el-form label-position="top" :disabled="!selectionEditable"><el-form-item label="活动价"><el-input v-model="confirmation.campaign_price" inputmode="decimal" /></el-form-item><el-form-item label="发货状态"><el-input v-model="confirmation.delivery_status" /></el-form-item><el-form-item label="库存状态"><el-input v-model="confirmation.inventory_status" /></el-form-item><el-form-item label="是否厂直"><el-select v-model="confirmation.factory_direct"><el-option label="待确认" value="PENDING" /><el-option label="是" value="YES" /><el-option label="否" value="NO" /></el-select></el-form-item><el-form-item label="履约说明"><el-input v-model="confirmation.fulfillment_cycle" type="textarea" :rows="3" /></el-form-item><el-form-item label="依据与备注"><el-input v-model="confirmation.evidence" type="textarea" :rows="3" /></el-form-item></el-form>
-      <template #footer><el-button @click="confirmVisible = false">{{ selectionEditable ? '取消' : '关闭' }}</el-button><el-button v-if="selectionEditable" type="primary" :loading="acting" @click="saveConfirmation">确认保存</el-button></template>
-    </el-dialog>
   </div>
 </template>
 
