@@ -3,9 +3,11 @@
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
-日期：2026-10-14
+日期：2026-10-15
 
-> 2026-10-15 回退 PR 已准备：受保护的 `main` 不能强推，因此分支 `codex/revert-main-to-pr143` 以两个可审计 revert 恢复 PR #143（`8c33d09`）的业务代码状态，撤销 PR #144 / #145 的 MySQL 持久化队列、任务终止与项目永久删除改动。该 PR 尚未合入。已升级到 `20261014_0057`--`20261014_0061` 的环境不会自动降级；部署前必须单独核验 Alembic 当前版本并制定数据库回退方案，不得对用户数据库直接执行 downgrade。
+> 2026-10-15 回退 PR 已合入：受保护的 `main` 通过可审计 revert 恢复 PR #143（`8c33d09`）的业务代码状态，撤销 PR #144 / #145 的 MySQL 持久化队列、任务终止与项目永久删除改动。已升级到 `20261014_0057`--`20261014_0061` 的环境不会自动降级；部署前必须单独核验 Alembic 当前版本并制定数据库回退方案，不得对用户数据库直接执行 downgrade。
+
+> 2026-10-15：分支 `codex/feat/bid-project-permanent-delete` 已重新实现项目列表的受确认永久删除。删除将物理移除项目及项目专属的匹配、推荐、PPT、导出、附件和事件数据；不删除商品主数据、供应商或可复用投标模板。列表不再展示“需求总数”“匹配处理数”。无 Migration，API 仍复用既有 `bid:void` 权限；待提交 PR 及浏览器人工验收。
 
 
 
