@@ -227,6 +227,21 @@ async def reopen_selection(
 
 
 @router.post(
+    "/{project_id}/runs/{run_id}/commands/recover-selection",
+    response_model=ApiResponse[bool],
+)
+async def recover_selection(
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    current: Annotated[CurrentUser, Depends(require_permission("recommendation:review"))],
+    session: SessionDep,
+) -> ApiResponse[bool]:
+    """Recover historic runs whose candidates completed before the project-status fix."""
+    await Type3RecommendationService(session).recover_selection(project_id, run_id, current.user_id)
+    return success(True)
+
+
+@router.post(
     "/{project_id}/runs/{run_id}/exports", response_model=ApiResponse[BidProjectFileResponse]
 )
 async def export(
