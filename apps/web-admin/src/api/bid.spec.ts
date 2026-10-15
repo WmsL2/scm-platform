@@ -1,21 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-const http = vi.hoisted(() => ({ get: vi.fn(), getBlob: vi.fn(), patch: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() }))
+const http = vi.hoisted(() => ({ get: vi.fn(), getBlob: vi.fn(), patch: vi.fn(), post: vi.fn(), put: vi.fn() }))
 vi.mock("../shared/http/runtime", () => ({ http }))
 
 describe("bid api", () => {
   afterEach(() => Object.values(http).forEach((mock) => mock.mockReset()))
-
-  it("uses paginated task history, stop, and project-purge routes", async () => {
-    http.get.mockResolvedValue({ items: [] }); http.post.mockResolvedValue({}); http.delete.mockResolvedValue(true)
-    const { bidApi } = await import("./bid")
-    await bidApi.asyncTasks("p1", 2)
-    await bidApi.cancelAsyncTask("t1")
-    await bidApi.purgeProject("p1", "BID00000001")
-    expect(http.get).toHaveBeenCalledWith("/api/v1/bid-projects/p1/async-tasks?page=2&page_size=10")
-    expect(http.post).toHaveBeenCalledWith("/api/v1/bid-projects/async-tasks/t1/commands/cancel")
-    expect(http.delete).toHaveBeenCalledWith("/api/v1/bid-projects/p1", { confirm_project_code: "BID00000001" })
-  })
 
   it("uses all project read routes with only populated query values", async () => {
     http.get.mockResolvedValue({ items: [] }); http.getBlob.mockResolvedValue(new Blob(["file"]))
@@ -40,7 +29,7 @@ describe("bid api", () => {
     expect(http.post.mock.calls[0][0]).toBe("/api/v1/bid-projects")
     expect(form.get("file")).toBeInstanceOf(File); expect(form.get("project_type")).toBe("FILTER_RECOMMENDATION"); expect(form.get("recommendation_type")).toBe("TYPE_1_SPECIFICATION"); expect(form.get("project_name")).toBe("项目"); expect(form.get("buyer_name")).toBe("需求商")
     expect(http.post.mock.calls[0][2]).toEqual({ timeoutMs: 300_000 })
-    expect(http.post).toHaveBeenNthCalledWith(2, "/api/v1/bid-projects/p1/commands/start-matching")
+    expect(http.post).toHaveBeenNthCalledWith(2, "/api/v1/bid-projects/p1/commands/start-matching", undefined, { timeoutMs: 300_000 })
     expect(http.post).toHaveBeenNthCalledWith(3, "/api/v1/bid-projects/p1/exports", undefined, { timeoutMs: 300_000 })
   })
 

@@ -1,14 +1,18 @@
+import logging
 import uuid
 from io import BytesIO
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import ApiResponse, success
+from app.core.config import get_settings
 from app.core.database import SessionLocal, get_db_session
+from app.infrastructure.adapters import get_task_queue
+from app.integrations.deepseek.client import DeepSeekClient
 from app.modules.auth.dependencies import require_permission, require_permission_before_response
 from app.modules.auth.schemas import CurrentUser
 from app.modules.recommendation.application.ppt_service import PptSolutionService
@@ -23,11 +27,10 @@ from app.modules.recommendation.ppt_schemas import (
     PptSolutionPlanResponse,
     PptTemplateResponse,
 )
-from app.modules.system.task_schemas import AsyncTaskCreate, AsyncTaskKind, AsyncTaskResponse
-from app.modules.system.task_service import AsyncTaskService
 
 router = APIRouter(prefix="/ppt-solution-projects", tags=["ppt-solution"])
-SessionDep = Annotated[AsyncSession, Depends(get_db_session, scope="function")]
+SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
+logger = logging.getLogger(__name__)
 
 
 @router.get(
@@ -87,31 +90,16 @@ async def get_plan_availability(
 
 
 @router.post(
-    "/runs/{run_id}/commands/retry-plans",
-    response_model=ApiResponse[AsyncTaskResponse],
-    status_code=status.HTTP_202_ACCEPTED,
+    "/runs/{run_id}/commands/retry-plans", response_model=ApiResponse[list[PptSolutionPlanResponse]]
 )
 async def retry_incomplete_plans(
     run_id: uuid.UUID,
-    current: Annotated[CurrentUser, Depends(require_permission("recommendation:run"))],
+    _: Annotated[CurrentUser, Depends(require_permission("recommendation:run"))],
     session: SessionDep,
-) -> ApiResponse[AsyncTaskResponse]:
+) -> ApiResponse[list[PptSolutionPlanResponse]]:
     """Retry only missing slots from this Run's immutable candidate snapshot."""
-    run = await PptSolutionService(session).repository.run(run_id)
-    if run is None:
-        from app.common.contracts import AppError
-
-        raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
     return success(
-        await AsyncTaskService(session).enqueue(
-            AsyncTaskCreate(
-                project_id=run.project_id,
-                run_id=run_id,
-                task_kind=AsyncTaskKind.TYPE5_RECOMMENDATION_GENERATION,
-                created_by=current.user_id,
-                payload_json={"retry_plans": True},
-            )
-        )
+        await PptSolutionService(session).create_ai_generated_plans(run_id, DeepSeekClient())
     )
 
 
@@ -147,8 +135,7 @@ async def delete_package(
 
 @router.post(
     "/{project_id}/runs/{run_id}/generations",
-    response_model=ApiResponse[AsyncTaskResponse],
-    status_code=status.HTTP_202_ACCEPTED,
+    response_model=ApiResponse[PptGenerationTaskResponse],
 )
 async def create_generation(
     project_id: uuid.UUID,
@@ -157,11 +144,13 @@ async def create_generation(
     current: Annotated[
         CurrentUser, Depends(require_permission_before_response("recommendation:export"))
     ],
-) -> ApiResponse[AsyncTaskResponse]:
-    async with SessionLocal.begin() as task_session:
-        await AsyncTaskService(task_session).ensure_available(
-            project_id, AsyncTaskKind.TYPE5_PPT_GENERATION
-        )
+    background_tasks: BackgroundTasks,
+) -> ApiResponse[PptGenerationTaskResponse]:
+    # Create with an independent transaction.  In local inline mode, a FastAPI
+    # BackgroundTask can be cancelled after setting the task to RUNNING; that
+    # leaves a permanently stuck task and no PPT download.  Local rendering is
+    # deliberately synchronous here, while a real queue remains asynchronous.
+    async with SessionLocal() as task_session:
         task = await PptSolutionService(task_session).create_generation(
             project_id,
             run_id,
@@ -170,16 +159,11 @@ async def create_generation(
             template_code=payload.template_code,
             template_version=payload.template_version,
         )
-        async_task = await AsyncTaskService(task_session).enqueue(
-            AsyncTaskCreate(
-                project_id=project_id,
-                run_id=run_id,
-                task_kind=AsyncTaskKind.TYPE5_PPT_GENERATION,
-                created_by=current.user_id,
-                payload_json={"ppt_generation_task_id": str(task.id)},
-            )
-        )
-    return success(async_task)
+    if get_settings().task_mode == "inline":
+        await _dispatch_generation(task.id)
+    else:
+        background_tasks.add_task(_dispatch_generation, task.id)
+    return success(task)
 
 
 @router.get("/templates", response_model=ApiResponse[list[PptTemplateResponse]])
@@ -187,6 +171,21 @@ async def list_templates(
     _: Annotated[CurrentUser, Depends(require_permission("recommendation:detail"))],
 ) -> ApiResponse[list[PptTemplateResponse]]:
     return success(PptSolutionService.list_templates())
+
+
+async def _dispatch_generation(task_id: uuid.UUID) -> None:
+    async with SessionLocal() as task_session:
+        service = PptSolutionService(task_session)
+        try:
+            await get_task_queue().enqueue(service.execute_generation, task_id)
+        except Exception as exc:
+            # Do not leave a user-facing task queued forever when a background
+            # dispatcher has been configured incorrectly.
+            logger.exception("PPT generation dispatch failed: task_id=%s", task_id)
+            await service.mark_generation_failed(
+                task_id,
+                f"PPT 后台任务派发失败（{type(exc).__name__}），请检查服务端任务配置。",
+            )
 
 
 @router.get(

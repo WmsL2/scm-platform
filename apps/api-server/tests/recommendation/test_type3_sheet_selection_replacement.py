@@ -14,9 +14,7 @@ from app.modules.type3_recommendation.schemas import (
 
 
 @pytest.mark.asyncio
-async def test_type3_replacement_flushes_deleted_sheet_before_insert(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_type3_replacement_flushes_deleted_sheet_before_insert() -> None:
     events: list[str] = []
     session = MagicMock()
     session.in_transaction.return_value = True
@@ -36,21 +34,11 @@ async def test_type3_replacement_flushes_deleted_sheet_before_insert(
         code="6.1.1",
     )
     sheet = Type3SheetPreview(
-        sheet_name="家用电器",
-        header_row=1,
-        data_start_row=2,
-        max_row=20,
-        max_column=20,
-        mapping_json={"version": 2, "columns": []},
-        nodes=[node],
+        sheet_name="家用电器", header_row=1, data_start_row=2, max_row=20, max_column=20,
+        mapping_json={"version": 2, "columns": []}, nodes=[node],
     )
     service._project_and_template = AsyncMock(return_value=(project, template))  # type: ignore[method-assign]
-    monkeypatch.setattr(
-        "app.modules.system.mapping_analysis_service.MappingAnalysisService.require_cached",
-        AsyncMock(
-            return_value={"template_file_id": str(template.id), "sheets": [sheet.model_dump()]}
-        ),
-    )
+    service._inspect = MagicMock(return_value=[sheet])  # type: ignore[method-assign]
     service.storage.read = AsyncMock(return_value=b"workbook")  # type: ignore[method-assign]
 
     await service.save_sheet_selection(

@@ -3,8 +3,6 @@ import { computed, onMounted, reactive, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { useRoute, useRouter } from "vue-router"
 import { bidApi } from "../../api/bid"
-import { readMapping } from "../../api/mappingAnalysis"
-import ProjectTaskStatus from "../../components/ProjectTaskStatus.vue"
 import { HttpError } from "../../shared/http"
 import { useAuthStore } from "../../stores/auth"
 import { useWorkspaceStore } from "../../stores/workspace"
@@ -38,8 +36,6 @@ const outputMappingSelections = reactive<Record<string, string | null>>({})
 const outputMappingHeaders = ref<string[]>([])
 const additionalOutputHeader = ref<string>()
 const mappingSaving = ref(false)
-const mappingMessage = ref("")
-const heavyActive = ref(false)
 const inputMapping = ref<BidInputMapping>()
 const inputMappingSelections = reactive<Record<string, string | null>>({})
 const inputSheetName = ref("")
@@ -60,16 +56,12 @@ const canStartMatching = computed(() => {
   return project.value?.import_status === "PARSED"
     && outputMapping.value?.confirmed === true
     && auth.hasPermission("bid:match")
-    && !heavyActive.value
     && (status === "IMPORTED" || ((isType1.value || isType2.value) && ["SELECTING", "READY"].includes(status)))
 })
 const canExport = computed(() => outputMapping.value?.confirmed === true && auth.hasPermission("bid:export") && ["READY", "EXPORTED"].includes(project.value?.status ?? ""))
 
 function messageFor(error: unknown, fallback: string): string {
   return error instanceof HttpError ? error.response.message : fallback
-}
-async function waitForOutputMapping(): Promise<BidOutputMapping> {
-  return readMapping(() => bidApi.outputMapping(id), (value) => { mappingMessage.value = value })
 }
 
 function canSelect(row: BidProjectItem): boolean {
@@ -112,7 +104,7 @@ async function load(): Promise<void> {
       inputMapping.value = undefined
     }
     if (detail.import_status === "PARSED" && supportsMapping) {
-      outputMapping.value = await waitForOutputMapping()
+      outputMapping.value = await bidApi.outputMapping(id)
       Object.keys(outputMappingSelections).forEach((key) => delete outputMappingSelections[key])
       outputMappingHeaders.value = [...outputMapping.value.suggested_headers]
       Object.values(outputMapping.value.mapping).forEach((header) => {
@@ -225,8 +217,7 @@ async function startMatching(): Promise<void> {
     )
     acting.value = true
     await bidApi.startMatching(id)
-    heavyActive.value = true
-    ElMessage.success(isType2.value ? "指定商品比价已加入任务队列" : "规格匹配已加入任务队列")
+    ElMessage.success(isType2.value ? "指定商品比价完成" : "规格参数匹配完成")
     await load()
   } catch (error) {
     if (error !== "cancel" && error !== "close") ElMessage.error(messageFor(error, "自动匹配失败"))
@@ -329,8 +320,6 @@ onMounted(() => void load())
 
 <template>
   <div class="workbench" v-loading="loading">
-    <ProjectTaskStatus :project-id="id" mapping-permission="bid:update" @active="heavyActive = $event" @settled="load" />
-    <el-alert v-if="mappingMessage" :title="mappingMessage" type="info" :closable="false" />
     <header class="workbench-header">
       <div><p>{{ workspaceCode }}</p><h1>{{ project?.project_name ?? workspaceTitle }}</h1><span v-if="project">{{ project.project_code }} · {{ workspaceTitle }} · {{ PROJECT_STATUS_LABELS[project.status] }}</span></div>
       <div class="header-actions">

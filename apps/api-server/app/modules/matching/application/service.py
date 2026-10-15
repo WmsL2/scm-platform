@@ -116,10 +116,7 @@ class MatchingService:
         return result
 
     async def _run_matching(
-        self,
-        project_id: uuid.UUID,
-        actor_id: uuid.UUID,
-        match_task_id: uuid.UUID | None = None,
+        self, project_id: uuid.UUID, actor_id: uuid.UUID
     ) -> StartMatchingResponse:
         project = await self.session.get(BidProject, project_id)
         if project is not None and project.import_status != BidImportStatus.PARSED.value:
@@ -140,17 +137,19 @@ class MatchingService:
             )
         if (
             project is not None
-            and project.recommendation_type == BidRecommendationType.TYPE_1_SPECIFICATION.value
+            and project.recommendation_type
+            == BidRecommendationType.TYPE_1_SPECIFICATION.value
             and self.type1_agent is not None
         ):
             async with SessionLocal() as orchestration_session:
                 return await MatchingService(
                     orchestration_session,
                     type1_agent=self.type1_agent,
-                )._run_type1_ai_matching(project_id, actor_id, match_task_id)
+                )._run_type1_ai_matching(project_id, actor_id)
         if (
             project is not None
-            and project.recommendation_type == BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value
+            and project.recommendation_type
+            == BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value
             and self.type2_agent is not None
         ):
             # The request dependency owns an outer transaction. Type 2 needs three
@@ -160,7 +159,7 @@ class MatchingService:
                 return await MatchingService(
                     orchestration_session,
                     type2_agent=self.type2_agent,
-                )._run_type2_ai_matching(project_id, actor_id, match_task_id)
+                )._run_type2_ai_matching(project_id, actor_id)
         async with transaction_scope(self.session):
             project = await self._project_or_404(project_id)
             if project.import_status != BidImportStatus.PARSED.value:
@@ -179,10 +178,12 @@ class MatchingService:
                     409,
                 )
             is_type2 = (
-                project.recommendation_type == BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value
+                project.recommendation_type
+                == BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value
             )
             is_type1 = (
-                project.recommendation_type == BidRecommendationType.TYPE_1_SPECIFICATION.value
+                project.recommendation_type
+                == BidRecommendationType.TYPE_1_SPECIFICATION.value
             )
             allowed_statuses = {BidProjectStatus.IMPORTED.value}
             if is_type1 or is_type2:
@@ -198,7 +199,6 @@ class MatchingService:
                 raise AppError("BID_MATCHING_NOT_ALLOWED", "当前项目状态不能开始匹配", 409)
             previous_status = project.status
             task = MatchTask(
-                id=match_task_id or uuid.uuid4(),
                 project_id=project_id,
                 status="RUNNING",
                 total_item_count=project.total_item_count,
@@ -223,7 +223,8 @@ class MatchingService:
             candidates = [self._matchable(product, supplier) for product, supplier in product_rows]
             brand_catalog = build_brand_catalog(candidates)
             allow_brand_substitution = (
-                project.recommendation_type == BidRecommendationType.TYPE_1_SPECIFICATION.value
+                project.recommendation_type
+                == BidRecommendationType.TYPE_1_SPECIFICATION.value
             )
             product_rows_by_id = {
                 product.id: (product, supplier) for product, supplier in product_rows
@@ -354,14 +355,11 @@ class MatchingService:
         )
 
     async def _run_type1_ai_matching(
-        self,
-        project_id: uuid.UUID,
-        actor_id: uuid.UUID,
-        match_task_id: uuid.UUID | None = None,
+        self, project_id: uuid.UUID, actor_id: uuid.UUID
     ) -> StartMatchingResponse:
         assert self.type1_agent is not None
         type1_agent = self.type1_agent
-        task_id = match_task_id or uuid.uuid4()
+        task_id = uuid.uuid4()
         async with transaction_scope(self.session):
             project = await self._project_or_404(project_id)
             if project.import_status != BidImportStatus.PARSED.value:
@@ -412,7 +410,8 @@ class MatchingService:
                 for key, decision in deterministic_decisions.items()
             }
             no_match_reasons: dict[str, str | None] = {
-                key: decision.no_match_reason for key, decision in deterministic_decisions.items()
+                key: decision.no_match_reason
+                for key, decision in deterministic_decisions.items()
             }
             batches = [
                 context_round[start : start + TYPE1_AI_BATCH_SIZE]
@@ -425,7 +424,9 @@ class MatchingService:
                 batch: list[Type1RequirementContext],
             ) -> list[Type1RequirementDecision]:
                 async with semaphore:
-                    result = await type1_agent.match_batch(batch, project_remark=project_remark)
+                    result = await type1_agent.match_batch(
+                        batch, project_remark=project_remark
+                    )
                     return result.items
 
             tasks = [asyncio.create_task(match_batch(batch)) for batch in batches]
@@ -443,7 +444,9 @@ class MatchingService:
                         result_item.candidate_keys
                     )
                     if result_item.no_match_reason:
-                        no_match_reasons[result_item.requirement_key] = result_item.no_match_reason
+                        no_match_reasons[result_item.requirement_key] = (
+                            result_item.no_match_reason
+                        )
         except DeepSeekConfigurationError as exc:
             await self._fail_type1_ai_matching(
                 task_id, project_id, actor_id, str(exc), previous_status
@@ -451,7 +454,9 @@ class MatchingService:
             raise AppError("TYPE1_AI_NOT_CONFIGURED", str(exc), 409) from exc
         except DeepSeekStructuredOutputError as exc:
             message = "类型1 AI 规格复核结果不符合业务约束，请重新执行"
-            diagnostic = f"{message}；{exc.error_kind}；{exc.safe_validation_summary}"
+            diagnostic = (
+                f"{message}；{exc.error_kind}；{exc.safe_validation_summary}"
+            )
             await self._fail_type1_ai_matching(
                 task_id, project_id, actor_id, diagnostic, previous_status
             )
@@ -476,7 +481,7 @@ class MatchingService:
             project = await self._project_or_404(project_id)
             if project.status != BidProjectStatus.MATCHING.value:
                 raise AppError("TYPE1_AI_TASK_STALE", "类型1 AI 任务状态已变化", 409)
-            loaded_task = await self.session.get(MatchTask, task_id, populate_existing=True)
+            loaded_task = await self.session.get(MatchTask, task_id)
             if loaded_task is None or loaded_task.status != "RUNNING":
                 raise AppError("TYPE1_AI_TASK_STALE", "类型1 AI 任务不存在或已结束", 409)
             task = loaded_task
@@ -495,13 +500,15 @@ class MatchingService:
                 requirement_key = self._type1_requirement_key(item.id)
                 pool = candidate_pools.get(item.id, [])
                 candidate_ids_by_key = {
-                    f"P{index:05d}": product_id for index, product_id in enumerate(pool, start=1)
+                    f"P{index:05d}": product_id
+                    for index, product_id in enumerate(pool, start=1)
                 }
                 unique_keys = list(dict.fromkeys(approved_keys.get(requirement_key, [])))
                 selected_ids = [
                     candidate_ids_by_key[key]
                     for key in unique_keys
-                    if key in candidate_ids_by_key and candidate_ids_by_key[key] in products_by_id
+                    if key in candidate_ids_by_key
+                    and candidate_ids_by_key[key] in products_by_id
                 ]
                 item.current_selection_id = None
                 item.no_quote_reason = None
@@ -623,10 +630,8 @@ class MatchingService:
         restore_status: str,
     ) -> None:
         async with transaction_scope(self.session):
-            project = await self.repository.project_for_update(project_id)
-            task = await self.session.get(MatchTask, task_id, populate_existing=True)
-            if task is None or task.status != "RUNNING":
-                return
+            task = await self.session.get(MatchTask, task_id)
+            project = await self.session.get(BidProject, project_id)
             if task is not None and task.status == "RUNNING":
                 task.status = "FAILED"
                 task.error_message = message[:2000]
@@ -643,14 +648,11 @@ class MatchingService:
                 )
 
     async def _run_type2_ai_matching(
-        self,
-        project_id: uuid.UUID,
-        actor_id: uuid.UUID,
-        match_task_id: uuid.UUID | None = None,
+        self, project_id: uuid.UUID, actor_id: uuid.UUID
     ) -> StartMatchingResponse:
         assert self.type2_agent is not None
         type2_agent = self.type2_agent
-        task_id = match_task_id or uuid.uuid4()
+        task_id = uuid.uuid4()
         async with transaction_scope(self.session):
             project = await self._project_or_404(project_id)
             if project.import_status != BidImportStatus.PARSED.value:
@@ -696,7 +698,9 @@ class MatchingService:
             )
 
         try:
-            decisions: dict[str, Type2RequirementDecision] = dict(deterministic_decisions)
+            decisions: dict[str, Type2RequirementDecision] = dict(
+                deterministic_decisions
+            )
             batches = [contexts[start : start + 10] for start in range(0, len(contexts), 10)]
             semaphore = asyncio.Semaphore(TYPE2_AI_MAX_CONCURRENCY)
 
@@ -704,7 +708,9 @@ class MatchingService:
                 batch: list[Type2RequirementContext],
             ) -> list[Type2RequirementDecision]:
                 async with semaphore:
-                    result = await type2_agent.match_batch(batch, project_remark=project_remark)
+                    result = await type2_agent.match_batch(
+                        batch, project_remark=project_remark
+                    )
                     return result.items
 
             tasks = [asyncio.create_task(match_batch(batch)) for batch in batches]
@@ -738,7 +744,7 @@ class MatchingService:
             project = await self._project_or_404(project_id)
             if project.status != BidProjectStatus.MATCHING.value:
                 raise AppError("TYPE2_AI_TASK_STALE", "类型2 AI 任务状态已变化", 409)
-            loaded_task = await self.session.get(MatchTask, task_id, populate_existing=True)
+            loaded_task = await self.session.get(MatchTask, task_id)
             if loaded_task is None or loaded_task.status != "RUNNING":
                 raise AppError("TYPE2_AI_TASK_STALE", "类型2 AI 任务不存在或已结束", 409)
             task = loaded_task
@@ -746,7 +752,8 @@ class MatchingService:
             current_items = {item.id: item for item in await self.repository.items(project_id)}
             current_product_rows = await self.repository.eligible_products()
             products_by_id = {
-                product.id: (product, supplier) for product, supplier in current_product_rows
+                product.id: (product, supplier)
+                for product, supplier in current_product_rows
             }
             selection_plans: list[
                 tuple[BidProjectItem, MatchCandidate, Product, Supplier, str, str]
@@ -757,7 +764,8 @@ class MatchingService:
                 decision = decisions.get(requirement_key)
                 pool = candidate_pools.get(item.id, [])
                 candidate_ids_by_key = {
-                    f"P{index:02d}": product_id for index, product_id in enumerate(pool, start=1)
+                    f"P{index:02d}": product_id
+                    for index, product_id in enumerate(pool, start=1)
                 }
                 item.current_selection_id = None
                 item.no_quote_reason = None
@@ -782,7 +790,9 @@ class MatchingService:
                     if key in substitute_decisions and product_id in products_by_id
                 }
                 substitute_products = list(substitute_rows_by_key.values())
-                ranked_candidates: list[tuple[str, Product, Supplier, str | None, list[str]]] = []
+                ranked_candidates: list[
+                    tuple[str, Product, Supplier, str | None, list[str]]
+                ] = []
                 for product, supplier in exact_products:
                     ranked_candidates.append(("TYPE2_AI_EXACT", product, supplier, None, []))
                 for key, (product, supplier) in substitute_rows_by_key.items():
@@ -823,7 +833,9 @@ class MatchingService:
 
                 chosen_method = "TYPE2_AI_EXACT"
                 chosen_note = "类型2 AI 判定完全同品，按协议价自动选择最低合规报价"
-                required_discount_rate = self._type2_required_discount_rate(item, project_remark)
+                required_discount_rate = self._type2_required_discount_rate(
+                    item, project_remark
+                )
                 chosen_rows = [
                     row
                     for row in exact_products
@@ -942,10 +954,8 @@ class MatchingService:
         message: str,
     ) -> None:
         async with transaction_scope(self.session):
-            project = await self.repository.project_for_update(project_id)
-            task = await self.session.get(MatchTask, task_id, populate_existing=True)
-            if task is None or task.status != "RUNNING":
-                return
+            task = await self.session.get(MatchTask, task_id)
+            project = await self.session.get(BidProject, project_id)
             if task is not None and task.status == "RUNNING":
                 task.status = "FAILED"
                 task.error_message = message[:2000]
@@ -997,7 +1007,9 @@ class MatchingService:
                 allow_brand_substitution=True,
                 brand_catalog=brand_catalog,
             )
-            deterministic_ids = [candidate.product_id for candidate in rule_decision.candidates]
+            deterministic_ids = [
+                candidate.product_id for candidate in rule_decision.candidates
+            ]
             requirement_text = " ".join(important_fields.values())
             requirement_tokens = normalized_search_tokens(requirement_text)
             normalized_requirement = normalize_match_text(requirement_text)
@@ -1019,7 +1031,8 @@ class MatchingService:
                     )
                     + (
                         30
-                        if normalized_category and normalized_category in document.normalized_text
+                        if normalized_category
+                        and normalized_category in document.normalized_text
                         else 0
                     )
                     + (
@@ -1036,7 +1049,9 @@ class MatchingService:
                 )
                 if score >= TYPE1_FALLBACK_MIN_SCORE:
                     fallback_scores.append((score, product.id))
-            ranked_fallback = sorted(fallback_scores, key=lambda row: (-row[0], str(row[1])))
+            ranked_fallback = sorted(
+                fallback_scores, key=lambda row: (-row[0], str(row[1]))
+            )
             fallback_ids = [product_id for _score, product_id in ranked_fallback]
             pool = list(dict.fromkeys(deterministic_ids + fallback_ids))
             pools[item.id] = pool
@@ -1050,7 +1065,9 @@ class MatchingService:
                 round_index = chunk_start // TYPE1_AI_CANDIDATE_CHUNK_SIZE
                 while len(context_rounds) <= round_index:
                     context_rounds.append([])
-                chunk = pool[chunk_start : chunk_start + TYPE1_AI_CANDIDATE_CHUNK_SIZE]
+                chunk = pool[
+                    chunk_start : chunk_start + TYPE1_AI_CANDIDATE_CHUNK_SIZE
+                ]
                 context_rounds[round_index].append(
                     Type1RequirementContext(
                         requirement_key=requirement_key,
@@ -1064,8 +1081,12 @@ class MatchingService:
                         },
                         important_fields=important_fields,
                         candidates=[
-                            self._type1_candidate_context(index, rows_by_id[product_id])
-                            for index, product_id in enumerate(chunk, start=chunk_start + 1)
+                            self._type1_candidate_context(
+                                index, rows_by_id[product_id]
+                            )
+                            for index, product_id in enumerate(
+                                chunk, start=chunk_start + 1
+                            )
                         ],
                     )
                 )
@@ -1165,7 +1186,9 @@ class MatchingService:
                 )
                 continue
 
-            required_discount_rate = self._type2_required_discount_rate(item, project_remark)
+            required_discount_rate = self._type2_required_discount_rate(
+                item, project_remark
+            )
             quotable_rows = [
                 (product, supplier)
                 for product, supplier in product_rows
@@ -1176,7 +1199,9 @@ class MatchingService:
                 )
             ]
             quotable_ids = {product.id for product, _supplier in quotable_rows}
-            quotable_matchables = [product for product in matchables if product.id in quotable_ids]
+            quotable_matchables = [
+                product for product in matchables if product.id in quotable_ids
+            ]
             requirement = CanonicalRequirement(
                 product_name=item.product_name,
                 brand=resolved_brand,
@@ -1200,13 +1225,16 @@ class MatchingService:
                     quotable_matchables,
                     brand_catalog=brand_catalog,
                 )
-                identity_ids = {candidate.product_id for candidate in identity_only.candidates}
+                identity_ids = {
+                    candidate.product_id for candidate in identity_only.candidates
+                }
                 exact_ids = [product_id for product_id in exact_ids if product_id in identity_ids]
             important_fields = self._type2_important_fields(
                 item, brand=resolved_brand, model=resolved_model
             )
             has_secondary_conditions = any(
-                key not in {"buyer_item_code", "brand", "model"} for key in important_fields
+                key not in {"buyer_item_code", "brand", "model"}
+                for key in important_fields
             )
             allow_substitution = self._type2_allows_substitution(item, project_remark)
 
@@ -1215,7 +1243,9 @@ class MatchingService:
                 pools[item.id] = pool
                 decisions[requirement_key] = Type2RequirementDecision(
                     requirement_key=requirement_key,
-                    exact_candidate_keys=[f"P{index:02d}" for index in range(1, len(pool) + 1)],
+                    exact_candidate_keys=[
+                        f"P{index:02d}" for index in range(1, len(pool) + 1)
+                    ],
                 )
                 continue
 
@@ -1318,7 +1348,9 @@ class MatchingService:
         return fields
 
     @staticmethod
-    def _type2_allows_substitution(item: BidProjectItem, project_remark: str | None) -> bool:
+    def _type2_allows_substitution(
+        item: BidProjectItem, project_remark: str | None
+    ) -> bool:
         requirement_text = " ".join(
             str(value)
             for value in (project_remark, *item.source_data.values())
@@ -1498,9 +1530,18 @@ class MatchingService:
         item = await self._item_or_404(project_id, item_id)
         rows = await self.repository.latest_candidates(project_id, item_id)
         if project.recommendation_type == BidRecommendationType.TYPE_1_SPECIFICATION.value:
-            rows = [row for row in rows if self._is_quotable_type1_product(row[1], item.max_price)]
-        elif project.recommendation_type == BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value:
-            required_discount_rate = self._type2_required_discount_rate(item, project.remark)
+            rows = [
+                row
+                for row in rows
+                if self._is_quotable_type1_product(row[1], item.max_price)
+            ]
+        elif (
+            project.recommendation_type
+            == BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT.value
+        ):
+            required_discount_rate = self._type2_required_discount_rate(
+                item, project.remark
+            )
             rows = [
                 row
                 for row in rows
@@ -1693,19 +1734,24 @@ class MatchingService:
         required_discount_rate: Decimal | None = None,
     ) -> bool:
         price = product.agreement_price
-        price_is_valid = (
-            price is not None and price > 0 and (max_price is None or price <= max_price)
+        price_is_valid = price is not None and price > 0 and (
+            max_price is None or price <= max_price
         )
         if not price_is_valid:
             return False
         return required_discount_rate is None or (
-            product.discount_rate is not None and product.discount_rate <= required_discount_rate
+            product.discount_rate is not None
+            and product.discount_rate <= required_discount_rate
         )
 
     @staticmethod
-    def _is_quotable_type1_product(product: Product, max_price: Decimal | None) -> bool:
+    def _is_quotable_type1_product(
+        product: Product, max_price: Decimal | None
+    ) -> bool:
         price = product.agreement_price
-        return price is not None and price > 0 and (max_price is None or price <= max_price)
+        return price is not None and price > 0 and (
+            max_price is None or price <= max_price
+        )
 
     def _event(
         self,
@@ -1770,7 +1816,9 @@ class MatchingService:
             "status": product.status,
         }
         for column in PRODUCT_EXPORT_COLUMNS:
-            snapshot[column.key] = MatchingService._snapshot_value(column.value(product, supplier))
+            snapshot[column.key] = MatchingService._snapshot_value(
+                column.value(product, supplier)
+            )
         return snapshot
 
     @staticmethod

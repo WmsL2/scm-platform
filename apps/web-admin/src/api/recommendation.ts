@@ -1,5 +1,4 @@
 import { http } from "../shared/http/runtime"
-import type { AsyncTask } from "../types/asyncTask"
 import type {
   FactoryDirectStatus,
   ParsedRequirement,
@@ -106,9 +105,9 @@ export const recommendationApi = {
     return loadRun(latest.id)
   },
   async start(projectId: string): Promise<RecommendationRun> {
-    const task = await http.post<AsyncTask>(`${base}/${projectId}/runs`)
-    if (!task.run_id) throw new Error("任务创建成功但缺少推品运行标识")
-    return loadRun(task.run_id)
+    return adaptRun(
+      await http.post<CoreRun>(`${base}/${projectId}/runs`, undefined, { timeoutMs: 300_000 }),
+    )
   },
   confirm(candidateId: string, body: RecommendationConfirmationUpdate): Promise<CoreConfirmation> {
     return http.patch(`${base}/candidates/${candidateId}/confirmation`, body)

@@ -4,7 +4,7 @@ from io import BytesIO
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,8 +30,6 @@ from app.modules.bid.schemas import (
     BidProjectFileResponse,
     BidProjectItemResponse,
     BidProjectListItem,
-    BidProjectPurgeRequest,
-    BidProjectPurgeResponse,
     BidProjectStatusResponse,
     BidProjectUpdateRequest,
     BidResultRequest,
@@ -46,8 +44,6 @@ from app.modules.recommendation.template.schemas import (
     RecommendationTemplateMappingUpdateRequest,
     RecommendationTemplateStructureResponse,
 )
-from app.modules.system.mapping_analysis_service import MappingAnalysisService
-from app.modules.system.task_schemas import AsyncTaskResponse
 
 router = APIRouter(prefix="/bid-projects", tags=["bid-projects"])
 SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
@@ -164,33 +160,24 @@ async def get_recommendation_template_mapping(
 
 @router.get(
     "/{project_id}/recommendation-templates/{file_id}/structure",
-    response_model=ApiResponse[RecommendationTemplateStructureResponse | AsyncTaskResponse],
+    response_model=ApiResponse[RecommendationTemplateStructureResponse],
 )
 async def get_recommendation_template_structure(
     project_id: uuid.UUID,
     file_id: uuid.UUID,
-    current: Annotated[CurrentUser, Depends(require_permission("recommendation:create"))],
+    _: Annotated[CurrentUser, Depends(require_permission("recommendation:create"))],
     session: SessionDep,
-    response: Response,
     sheet_name: Annotated[str | None, Query()] = None,
     header_row: Annotated[int, Query(ge=1)] = 1,
-) -> ApiResponse[RecommendationTemplateStructureResponse | AsyncTaskResponse]:
-    await BidProjectService(session).recommendation_template_mapping(project_id, file_id)
-    result = await MappingAnalysisService(session).cached_or_enqueue(
-        project_id=project_id,
-        file_id=file_id,
-        analysis_key=f"RECOMMENDATION_TEMPLATE_STRUCTURE:{sheet_name or ''}:{header_row}",
-        payload_json={
-            "analysis_type": "RECOMMENDATION_TEMPLATE_STRUCTURE",
-            "sheet_name": sheet_name,
-            "header_row": header_row,
-        },
-        actor_id=current.user_id,
+) -> ApiResponse[RecommendationTemplateStructureResponse]:
+    return success(
+        await BidProjectService(session).recommendation_template_structure(
+            project_id,
+            file_id,
+            sheet_name=sheet_name,
+            header_row=header_row,
+        )
     )
-    if isinstance(result, dict):
-        return success(RecommendationTemplateStructureResponse.model_validate(result))
-    response.status_code = status.HTTP_202_ACCEPTED
-    return success(result)
 
 
 @router.patch(
@@ -257,37 +244,14 @@ async def put_bid_input_mapping(
 
 @router.get(
     "/{project_id}/output-mapping",
-    response_model=ApiResponse[BidOutputMappingResponse | AsyncTaskResponse],
-    status_code=status.HTTP_202_ACCEPTED,
+    response_model=ApiResponse[BidOutputMappingResponse],
 )
 async def get_bid_output_mapping(
     project_id: uuid.UUID,
-    current: Annotated[CurrentUser, Depends(require_permission("bid:detail"))],
+    _: Annotated[CurrentUser, Depends(require_permission("bid:detail"))],
     session: SessionDep,
-    response: Response,
-) -> ApiResponse[BidOutputMappingResponse | AsyncTaskResponse]:
-    service = BidProjectService(session)
-    file_id, sheet_name, header_row = await service.output_mapping_analysis_context(project_id)
-    analysis = await MappingAnalysisService(session).cached_or_enqueue(
-        project_id=project_id,
-        file_id=file_id,
-        analysis_key=f"BID_OUTPUT_HEADERS:{sheet_name}:{header_row}",
-        payload_json={
-            "analysis_type": "BID_OUTPUT_HEADERS",
-            "sheet_name": sheet_name,
-            "header_row": header_row,
-        },
-        actor_id=current.user_id,
-    )
-    if not isinstance(analysis, dict):
-        return success(analysis)
-    raw_headers = analysis.get("headers")
-    if not isinstance(raw_headers, list) or not all(
-        isinstance(value, str) or value is None for value in raw_headers
-    ):
-        raise AppError("MAPPING_ANALYSIS_INVALID", "回填表头缓存格式无效，请重试", 409)
-    response.status_code = status.HTTP_200_OK
-    return success(await service.output_mapping(project_id, headers=raw_headers))
+) -> ApiResponse[BidOutputMappingResponse]:
+    return success(await BidProjectService(session).output_mapping(project_id))
 
 
 @router.put(
@@ -300,29 +264,9 @@ async def put_bid_output_mapping(
     current: Annotated[CurrentUser, Depends(require_permission("bid:update"))],
     session: SessionDep,
 ) -> ApiResponse[BidOutputMappingResponse]:
-    service = BidProjectService(session)
-    file_id, sheet_name, header_row = await service.output_mapping_analysis_context(project_id)
-    analysis = await MappingAnalysisService(session).cached_or_enqueue(
-        project_id=project_id,
-        file_id=file_id,
-        analysis_key=f"BID_OUTPUT_HEADERS:{sheet_name}:{header_row}",
-        payload_json={
-            "analysis_type": "BID_OUTPUT_HEADERS",
-            "sheet_name": sheet_name,
-            "header_row": header_row,
-        },
-        actor_id=current.user_id,
-    )
-    if not isinstance(analysis, dict):
-        raise AppError("MAPPING_ANALYSIS_PENDING", "客户原表结构正在解析，请稍后重新保存", 409)
-    raw_headers = analysis.get("headers")
-    if not isinstance(raw_headers, list) or not all(
-        isinstance(value, str) or value is None for value in raw_headers
-    ):
-        raise AppError("MAPPING_ANALYSIS_INVALID", "回填表头缓存格式无效，请重试", 409)
     return success(
-        await service.update_output_mapping(
-            project_id, payload, current.user_id, headers=raw_headers
+        await BidProjectService(session).update_output_mapping(
+            project_id, payload, current.user_id
         )
     )
 
@@ -375,7 +319,8 @@ async def download_bid_project_file(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
             "Content-Disposition": (
-                f"attachment; filename*=UTF-8''{quote(file.original_filename, safe='')}"
+                "attachment; "
+                f"filename*=UTF-8''{quote(file.original_filename, safe='')}"
             )
         },
     )
@@ -384,7 +329,9 @@ async def download_bid_project_file(
 @router.post("/{project_id}/exports", response_model=ApiResponse[BidProjectFileResponse])
 async def export_bid_project(
     project_id: uuid.UUID,
-    current: Annotated[CurrentUser, Depends(require_permission_before_response("bid:export"))],
+    current: Annotated[
+        CurrentUser, Depends(require_permission_before_response("bid:export"))
+    ],
     session: FunctionSessionDep,
 ) -> ApiResponse[BidProjectFileResponse]:
     return success(await BidProjectService(session).export(project_id, current.user_id))
@@ -441,18 +388,4 @@ async def void_bid_project(
 ) -> ApiResponse[BidProjectStatusResponse]:
     return success(
         await BidProjectService(session).void(project_id, payload.reason, current.user_id)
-    )
-
-
-@router.delete("/{project_id}", response_model=ApiResponse[BidProjectPurgeResponse])
-async def purge_bid_project(
-    project_id: uuid.UUID,
-    payload: BidProjectPurgeRequest,
-    current: Annotated[CurrentUser, Depends(require_permission("bid:void"))],
-    session: SessionDep,
-) -> ApiResponse[BidProjectPurgeResponse]:
-    return success(
-        await BidProjectService(session).purge(
-            project_id, payload.confirm_project_code, current.user_id
-        )
     )

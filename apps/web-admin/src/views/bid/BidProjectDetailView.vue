@@ -3,7 +3,6 @@ import { computed, onMounted, reactive, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { useRoute, useRouter } from "vue-router"
 import { bidApi } from "../../api/bid"
-import ProjectTaskStatus from "../../components/ProjectTaskStatus.vue"
 import { HttpError } from "../../shared/http"
 import OperationDuration from "../../shared/operation/OperationDuration.vue"
 import { useOperationTimer } from "../../shared/operation/useOperationTimer"
@@ -26,7 +25,6 @@ const id = String(route.params.id)
 const project = ref<BidProjectDetail>()
 const loading = ref(false)
 const saving = ref(false)
-const heavyActive = ref(false)
 const operationTimer = useOperationTimer()
 const editVisible = ref(false)
 const statusTagType = (status: string) => PROJECT_STATUS_TAG_TYPES[status as BidProjectStatus]
@@ -52,7 +50,6 @@ const canStartMatching = computed(() => {
   const status = project.value?.status ?? ""
   return project.value?.import_status === "PARSED"
     && auth.hasPermission("bid:match")
-    && !heavyActive.value
     && (status === "IMPORTED" || ((isType1.value || isType2.value) && ["SELECTING", "READY"].includes(status)))
 })
 const canExport = computed(() => ["READY", "EXPORTED"].includes(project.value?.status ?? "") && auth.hasPermission("bid:export"))
@@ -147,7 +144,7 @@ async function startMatching() {
     )
     saving.value = true
     await bidApi.startMatching(id)
-    ElMessage.success(isType2.value ? "类型 2 AI 同品比价已加入任务队列" : "商品匹配已加入任务队列")
+    ElMessage.success(isType2.value ? "类型 2 AI 同品比价完成" : "商品匹配完成")
     await load()
     if (isType2.value) await router.push(`/bid-projects/${id}/workbench`)
   } catch (error) {
@@ -215,7 +212,6 @@ onMounted(() => void load())
 
 <template>
   <div v-if="project" v-loading="loading" class="detail">
-    <ProjectTaskStatus :project-id="id" :mapping-permission="project.project_type === 'FILTER_RECOMMENDATION' ? 'bid:update' : 'recommendation:create'" @active="heavyActive = $event" @settled="load" />
     <div class="actions">
       <el-button @click="router.push('/bid-projects')">返回列表</el-button>
       <el-button type="primary" @click="router.push(`/bid-projects/${id}/workbench`)">进入匹配工作台</el-button>
