@@ -75,6 +75,14 @@ PPT_V5_TEMPLATES: tuple[PptTemplateDefinition, ...] = (
         "/ppt-template-previews/jd-festive-red.svg",
         single_product_only=True,
     ),
+    PptTemplateDefinition(
+        "UNION_QUOTE_WHITE",
+        "工会简洁报价版",
+        "正式客户版，支持单品与 2 至 4 件组合方案",
+        "5",
+        "/ppt-template-previews/union-quote-white.svg",
+        single_product_only=False,
+    ),
 )
 
 

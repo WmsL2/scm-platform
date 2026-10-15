@@ -159,6 +159,17 @@ class PptRenderer:
                 manifest=manifest,
                 layout_preview=self._layout_preview,
             )
+        if template.version == "5" and template.code == "UNION_QUOTE_WHITE":
+            from app.modules.recommendation.application.ppt_official_template4_v5 import (
+                render_union_quote_white_v5,
+            )
+
+            return render_union_quote_white_v5(
+                source,
+                images=images,
+                template=template,
+                manifest=manifest,
+            )
         presentation = Presentation(str(resolve_ppt_template_asset(template)))
         prototype = presentation.slides[manifest.product_slide_index]
         cover = (

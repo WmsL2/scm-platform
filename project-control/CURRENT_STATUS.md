@@ -3,7 +3,9 @@
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
-日期：2026-10-14
+日期：2026-10-15
+
+> 2026-10-15：类型 5 模板 4 `UNION_QUOTE_WHITE` v5 已按客户正式两页原件和 TXT 回填说明完成独立实现。单品与 2--4 件组合分别映射商品字段；组合图片数量与商品数一致，京东价/协议价只取冻结快照对应字段并按数量汇总，不以活动价兜底。模板 1、模板 2 专属模块未修改，生产默认 v3 不变。私有运行资产已剔除示例页/商品媒体并复制到当前本机资产目录，且由精确 Git 规则忽略；artifact-tool 两页视觉预览与 WPS 12.0 实际打开（2 页、16:9）通过。SKU `100269697775` 的 18 行规格和 257 字符跟踪链接已整理为完整分号文本及无跟踪参数链接，正文由 32 个视觉行降至 14 行并通过 artifact-tool/WPS 单页验收；模板4克隆页同时移除版式自动生成的标题、正文和页码三个占位符，WPS 验证页面仅保留4个业务对象；真实工作台生成/下载待用户复验。无 Migration、API、UI、权限或推荐规则变化。
 
 > 2026-10-15 回退 PR 已准备：受保护的 `main` 不能强推，因此分支 `codex/revert-main-to-pr143` 以两个可审计 revert 恢复 PR #143（`8c33d09`）的业务代码状态，撤销 PR #144 / #145 的 MySQL 持久化队列、任务终止与项目永久删除改动。该 PR 尚未合入。已升级到 `20261014_0057`--`20261014_0061` 的环境不会自动降级；部署前必须单独核验 Alembic 当前版本并制定数据库回退方案，不得对用户数据库直接执行 downgrade。
 
