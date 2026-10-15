@@ -37,6 +37,7 @@
 - `npm run test -- --run src/views/bid/RecommendationWorkspaceView.spec.ts`：覆盖旧空快照晚到不能覆盖新完成候选，以及完成选品前且确认数超过 5,000 条时仍可导出。
 - `npm run typecheck`：通过。
 - `npm run build`：通过。
+- `tests/recommendation/test_template_contracts.py`：同步验证非商品主数据列不会被模板分析自动映射。
 
 ## 待验收
 
