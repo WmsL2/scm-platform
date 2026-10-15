@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import uuid
 from collections.abc import Mapping
@@ -14,7 +15,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 from openpyxl.formula.translate import Translator
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts import AppError, PageParams, PageResult
@@ -36,11 +37,14 @@ from app.modules.bid.domain.lifecycle import (
     project_type_for_recommendation_type,
 )
 from app.modules.bid.infrastructure.models import (
+    BidItemSelection,
     BidProject,
     BidProjectEvent,
     BidProjectFile,
     BidProjectItem,
     BidTemplate,
+    MatchCandidate,
+    MatchTask,
 )
 from app.modules.bid.infrastructure.repository import BidProjectRepository
 from app.modules.bid.schemas import (
@@ -57,6 +61,7 @@ from app.modules.bid.schemas import (
     BidProjectFileResponse,
     BidProjectItemResponse,
     BidProjectListItem,
+    BidProjectPurgeResponse,
     BidProjectStatusResponse,
 )
 from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMNS
@@ -72,6 +77,19 @@ from app.modules.matching.application.type2_agent import (
     Type2InputColumnMapping,
     Type2TemplateMappingSuggestion,
 )
+from app.modules.recommendation.infrastructure.models import (
+    PptGenerationTask,
+    PptPlanGenerationStatus,
+    PptRecommendationConfig,
+    PptSolutionPackage,
+    PptSolutionPackageItem,
+    PptSolutionPlan,
+    RecommendationCandidate,
+    RecommendationCategoryChoice,
+    RecommendationConfirmation,
+    RecommendationExport,
+    RecommendationRun,
+)
 from app.modules.recommendation.template.models import RecommendationTemplateMapping
 from app.modules.recommendation.template.schemas import (
     RecommendationTemplateFileResponse,
@@ -80,9 +98,16 @@ from app.modules.recommendation.template.schemas import (
     RecommendationTemplateStructureResponse,
 )
 from app.modules.system.service import BusinessSequenceService
+from app.modules.type3_recommendation.infrastructure.models import (
+    Type3Candidate,
+    Type3Export,
+    Type3Run,
+    Type3SheetConfig,
+)
 
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_PROJECT_ITEMS = 100_000
+logger = logging.getLogger(__name__)
 _PRODUCT_MASTER_TEMPLATE_PATH = (
     Path(__file__).resolve().parents[2] / "catalog" / "resources" / "product-master-template.xlsx"
 )
@@ -1263,6 +1288,140 @@ class BidProjectService:
             status=BidProjectStatus(project.status),
             submitted_file_id=project.submitted_file_id,
         )
+
+    async def purge(
+        self, project_id: uuid.UUID, confirm_project_code: str, actor_id: uuid.UUID
+    ) -> BidProjectPurgeResponse:
+        """Physically remove a project and only data owned by that project.
+
+        Project files are database-owned rows but their storage objects live outside
+        the database transaction. Storage cleanup is best effort: a cleanup failure
+        is logged for later handling and never resurrects the deleted project record.
+        """
+        del actor_id  # The project event history is intentionally purged with the project.
+        storage_keys: list[str] = []
+        async with transaction_scope(self.session):
+            project = await self._project_or_404(project_id, lock=True)
+            if project.project_code != confirm_project_code:
+                raise AppError("BID_PROJECT_PURGE_CONFIRM_MISMATCH", "项目编号确认不匹配", 422)
+
+            storage_keys = list(
+                await self.session.scalars(
+                    select(BidProjectFile.storage_key).where(
+                        BidProjectFile.project_id == project_id
+                    )
+                )
+            )
+            run_ids = select(RecommendationRun.id).where(RecommendationRun.project_id == project_id)
+            candidate_ids = select(RecommendationCandidate.id).where(
+                RecommendationCandidate.run_id.in_(run_ids)
+            )
+            package_ids = select(PptSolutionPackage.id).where(
+                PptSolutionPackage.run_id.in_(run_ids)
+            )
+            type3_run_ids = select(Type3Run.id).where(Type3Run.project_id == project_id)
+            project_item_ids = select(BidProjectItem.id).where(
+                BidProjectItem.project_id == project_id
+            )
+            match_task_ids = select(MatchTask.id).where(MatchTask.project_id == project_id)
+
+            # Break the two local bid-selection references before deleting either side.
+            project.submitted_file_id = None
+            await self.session.execute(
+                update(BidProjectItem)
+                .where(BidProjectItem.project_id == project_id)
+                .values(current_selection_id=None)
+            )
+            await self.session.flush()
+
+            # Exports and generation rows reference both runs and project files.
+            await self.session.execute(
+                delete(PptGenerationTask).where(PptGenerationTask.project_id == project_id)
+            )
+            await self.session.execute(
+                delete(RecommendationExport).where(RecommendationExport.project_id == project_id)
+            )
+            await self.session.execute(
+                delete(Type3Export).where(Type3Export.project_id == project_id)
+            )
+
+            # Delete recommendation descendants from leaves to runs.
+            await self.session.execute(
+                delete(PptSolutionPackageItem).where(
+                    PptSolutionPackageItem.package_id.in_(package_ids)
+                )
+            )
+            await self.session.execute(
+                delete(PptSolutionPackage).where(PptSolutionPackage.run_id.in_(run_ids))
+            )
+            await self.session.execute(
+                delete(PptSolutionPlan).where(PptSolutionPlan.run_id.in_(run_ids))
+            )
+            await self.session.execute(
+                delete(PptPlanGenerationStatus).where(PptPlanGenerationStatus.run_id.in_(run_ids))
+            )
+            await self.session.execute(
+                delete(RecommendationConfirmation).where(
+                    RecommendationConfirmation.candidate_id.in_(candidate_ids)
+                )
+            )
+            await self.session.execute(
+                delete(RecommendationCategoryChoice).where(
+                    RecommendationCategoryChoice.run_id.in_(run_ids)
+                )
+            )
+            await self.session.execute(
+                delete(RecommendationCandidate).where(RecommendationCandidate.run_id.in_(run_ids))
+            )
+            await self.session.execute(
+                delete(RecommendationRun).where(RecommendationRun.project_id == project_id)
+            )
+            await self.session.execute(
+                delete(PptRecommendationConfig).where(
+                    PptRecommendationConfig.project_id == project_id
+                )
+            )
+
+            # Delete the independent Type-3 hierarchy.
+            await self.session.execute(
+                delete(Type3Candidate).where(Type3Candidate.run_id.in_(type3_run_ids))
+            )
+            await self.session.execute(delete(Type3Run).where(Type3Run.project_id == project_id))
+            await self.session.execute(
+                delete(Type3SheetConfig).where(Type3SheetConfig.project_id == project_id)
+            )
+
+            # Delete deterministic matching descendants and project-owned mappings/files.
+            await self.session.execute(
+                delete(BidItemSelection).where(BidItemSelection.project_item_id.in_(project_item_ids))
+            )
+            await self.session.execute(
+                delete(MatchCandidate).where(MatchCandidate.match_task_id.in_(match_task_ids))
+            )
+            await self.session.execute(delete(MatchTask).where(MatchTask.project_id == project_id))
+            await self.session.execute(
+                delete(RecommendationTemplateMapping).where(
+                    RecommendationTemplateMapping.project_id == project_id
+                )
+            )
+            await self.session.execute(
+                delete(BidProjectFile).where(BidProjectFile.project_id == project_id)
+            )
+            await self.session.execute(
+                delete(BidProjectItem).where(BidProjectItem.project_id == project_id)
+            )
+            await self.session.execute(
+                delete(BidProjectEvent).where(BidProjectEvent.project_id == project_id)
+            )
+            await self.session.delete(project)
+            await self.session.flush()
+
+        for storage_key in set(storage_keys):
+            try:
+                await self.storage.delete(storage_key)
+            except Exception:
+                logger.warning("project database purge left storage cleanup pending", exc_info=True)
+        return BidProjectPurgeResponse(id=project_id)
 
     async def advance_lifecycle(
         self,

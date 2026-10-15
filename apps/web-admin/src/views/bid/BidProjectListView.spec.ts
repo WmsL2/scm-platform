@@ -10,7 +10,9 @@ describe("BidProjectListView", () => {
     expect(source).toContain("page_size: pageSize.value")
     expect(source).toContain("keyword: filters.keyword.trim() || undefined")
     expect(source).toContain("status: filters.status")
-    expect(source).toContain('label="匹配处理数"')
+    expect(source).not.toContain('label="需求总数"')
+    expect(source).not.toContain('label="匹配处理数"')
+    expect(source).toContain("bidApi.purgeProject(project.id, value)")
   })
   it("validates supported Excel files and presents every import result", () => {
     expect(source).toContain('endsWith(".xlsx")'); expect(source).toContain("25 * 1024 * 1024")

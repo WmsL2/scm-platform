@@ -28,4 +28,5 @@ export const bidApi = {
   win(id: string, note?: string): Promise<BidProjectStatusResult> { return http.post(`${base}/${id}/commands/win`, note?.trim() ? { note: note.trim() } : undefined) },
   lose(id: string, note?: string): Promise<BidProjectStatusResult> { return http.post(`${base}/${id}/commands/lose`, note?.trim() ? { note: note.trim() } : undefined) },
   voidProject(id: string, body: { reason: string }): Promise<BidProjectStatusResult> { return http.post(`${base}/${id}/commands/void`, body) },
+  purgeProject(id: string, confirmProjectCode: string): Promise<{ id: string; status: "PURGED" }> { return http.delete(`${base}/${id}`, { confirm_project_code: confirmProjectCode }) },
 }
