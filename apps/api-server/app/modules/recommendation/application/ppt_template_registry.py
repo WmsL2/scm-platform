@@ -18,8 +18,8 @@ class PptTemplateDefinition:
     single_product_only: bool = False
 
 
-# The four business assets are reviewed, public distribution assets. They cannot be
-# selected through a user-provided path; deployments may only override their root.
+# The historical built-in business assets cannot be selected through a
+# user-provided path; deployments may only override their controlled asset root.
 PPT_TEMPLATES: tuple[PptTemplateDefinition, ...] = (
     PptTemplateDefinition(
         "SYSTEM_DEFAULT",
@@ -73,6 +73,14 @@ PPT_V5_TEMPLATES: tuple[PptTemplateDefinition, ...] = (
         "正式两页客户版，当前仅支持单品生成",
         "5",
         "/ppt-template-previews/jd-festive-red.svg",
+        single_product_only=True,
+    ),
+    PptTemplateDefinition(
+        "CATALOG_MINIMAL",
+        "极简商品画册版",
+        "正式极简画册客户版，当前仅支持单品生成",
+        "5",
+        "/ppt-template-previews/catalog-minimal.svg",
         single_product_only=True,
     ),
 )
@@ -135,7 +143,8 @@ def resolve_ppt_template_asset(template: PptTemplateDefinition) -> Path:
     settings = get_settings()
     # Explicit deployment configuration is strict, so a mount/configuration error
     # continues to fail safely rather than falling back to another source or version.
-    # Approved versioned assets, including v5, ship in the repository by default.
+    # Public assets ship in the repository. An explicitly configured deployment
+    # root remains the only source when set, and missing files never fall back.
     asset_root = settings.ppt_template_asset_dir
     if asset_root is None:
         asset_root = PROJECT_ROOT / "assets" / "ppt-templates"
