@@ -125,17 +125,11 @@ Sprint 0 已稳定完成。开始新任务前请先阅读 `AGENTS.md`、
 .\scripts\start-backend.ps1
 # 另一个终端
 .\scripts\start-frontend.ps1
-# 多用户模式：API 使用两个 Uvicorn Worker；另开两个终端启动持久队列 Worker
-.\scripts\start-backend.ps1 -MultiUser
-.\scripts\start-task-worker.ps1
-.\scripts\start-mapping-worker.ps1
 ```
 
 后端健康检查：`http://localhost:8000/health/live`；就绪检查会验证 MySQL：
 `http://localhost:8000/health/ready`。默认 `TASK_MODE=inline`、
-`STORAGE_MODE=local`，不要求 Redis、MinIO 或 Docker。多用户模式的逻辑角色为
-两个 API Worker、一个 HEAVY Worker 和一个映射结构 Worker；它们共用 MySQL 的
-`scm_async_task` 租约队列。开发时的 `-MultiUser` 不使用 `--reload`。
+`STORAGE_MODE=local`，不要求 Redis、MinIO 或 Docker。
 
 ## 9. 商品导入异常任务人工清理
 

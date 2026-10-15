@@ -1,5 +1,4 @@
 import { http } from "../shared/http/runtime"
-import type { AsyncTask } from "../types/asyncTask"
 
 const base = "/api/v1/type3-recommendation-projects"
 export type Type3Level = "LEVEL1" | "LEVEL2" | "LEVEL3"
@@ -19,16 +18,12 @@ export interface Type3CandidateConfirmation { candidate_ids?: string[]; select_a
 export interface Type3CandidateUnconfirmation { candidate_ids?: string[]; select_all_confirmed?: boolean; excluded_candidate_ids?: string[]; sheet_name?: string }
 
 export const type3RecommendationApi = {
-  preview: (projectId: string) => http.get<Type3Preview | AsyncTask>(`${base}/${projectId}/template-preview`),
-  sheetOutputStructure: (projectId: string, params: { sheetName: string; headerRow: number }) => http.get<Type3SheetOutputStructure | AsyncTask>(`${base}/${projectId}/sheet-output-structure?sheet_name=${encodeURIComponent(params.sheetName)}&header_row=${params.headerRow}`),
+  preview: (projectId: string) => http.get<Type3Preview>(`${base}/${projectId}/template-preview`),
+  sheetOutputStructure: (projectId: string, params: { sheetName: string; headerRow: number }) => http.get<Type3SheetOutputStructure>(`${base}/${projectId}/sheet-output-structure?sheet_name=${encodeURIComponent(params.sheetName)}&header_row=${params.headerRow}`),
   exportFields: (projectId: string) => http.get<Type3ExportField[]>(`${base}/${projectId}/export-fields`),
   savedSelections: (projectId: string) => http.get<Type3Sheet[]>(`${base}/${projectId}/sheet-selections`),
   saveSelections: (projectId: string, sheets: Type3Sheet[]) => http.put<Type3Sheet[]>(`${base}/${projectId}/sheet-selections`, { sheets }),
-  async start(projectId: string, sheets: Type3Sheet[]): Promise<Type3Run> {
-    const task = await http.post<AsyncTask>(`${base}/${projectId}/runs`, { sheets })
-    if (!task.run_id) throw new Error("任务创建成功但缺少类型 3 运行标识")
-    return http.get<Type3Run>(`${base}/runs/${task.run_id}`)
-  },
+  start: (projectId: string, sheets: Type3Sheet[]) => http.post<Type3Run>(`${base}/${projectId}/runs`, { sheets }, { timeoutMs: 300_000 }),
   runs: (projectId: string) => http.get<Type3Run[]>(`${base}/${projectId}/runs`),
   run: (runId: string) => http.get<Type3Run>(`${base}/runs/${runId}`),
   candidates: (runId: string, query: Type3CandidateQuery) => http.get<Type3CandidatePage>(`${base}/runs/${runId}/candidates?page=${query.page}&page_size=${query.pageSize}${query.sheetName ? `&sheet_name=${encodeURIComponent(query.sheetName)}` : ""}`),

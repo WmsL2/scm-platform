@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref } from "vue"
-import type { AsyncTask } from "../../types/asyncTask"
+import { onMounted, reactive, ref } from "vue"
 import { ElMessage } from "element-plus"
 import type { UploadInstance } from "element-plus"
 import { useRoute, useRouter } from "vue-router"
@@ -31,9 +30,6 @@ const statusTagType = (status: string) => PROJECT_STATUS_TAG_TYPES[status as Bid
 const operationTimer = useOperationTimer()
 const importNavigationLock = useExcelImportNavigationLock(operationTimer)
 const projects = ref<BidProjectListItem[]>([])
-const taskFor = (row: BidProjectListItem): AsyncTask | undefined => (row as BidProjectListItem & { async_task?: AsyncTask }).async_task
-const taskLabels: Record<string, string> = { PENDING: "排队中", RUNNING: "执行中", SUCCEEDED: "已完成", FAILED: "失败", CANCELLED: "已取消" }
-let taskRefreshTimer: ReturnType<typeof setInterval> | undefined
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(50)
@@ -203,15 +199,11 @@ function recommendationTypeLabel(project: BidProjectListItem): string {
 
 onMounted(() => {
   void load()
-  taskRefreshTimer = setInterval(() => {
-    if (!loading.value && !submitting.value && projects.value.some((row) => ["PENDING", "RUNNING"].includes(taskFor(row)?.status ?? ""))) void load()
-  }, 3000)
   if (route.query.action === "create" && auth.hasPermission("bid:create")) {
     createVisible.value = true
     void router.replace("/bid-projects")
   }
 })
-onBeforeUnmount(() => { if (taskRefreshTimer) clearInterval(taskRefreshTimer) })
 </script>
 
 <template>
@@ -238,7 +230,6 @@ onBeforeUnmount(() => { if (taskRefreshTimer) clearInterval(taskRefreshTimer) })
         <el-table-column prop="buyer_name" label="需求方" min-width="150" />
         <el-table-column label="项目状态"><template #default="{ row }"><el-tag :type="statusTagType(row.status)" effect="plain">{{ PROJECT_STATUS_LABELS[row.status] }}</el-tag></template></el-table-column>
         <el-table-column label="导入状态"><template #default="{ row }">{{ IMPORT_STATUS_LABELS[row.import_status] }}</template></el-table-column>
-        <el-table-column label="后台任务" min-width="220"><template #default="{ row }"><template v-if="taskFor(row)"><el-tag>{{ taskLabels[taskFor(row)!.status] }}</el-tag><span> {{ taskFor(row)!.progress_percent }}%</span><small style="display:block">心跳：{{ taskFor(row)!.heartbeat_at ?? '尚未领取' }}</small><small v-if="taskFor(row)!.error_message">{{ taskFor(row)!.error_message }}</small></template><span v-else>—</span></template></el-table-column>
         <el-table-column prop="total_item_count" label="需求总数" />
         <el-table-column prop="processed_item_count" label="匹配处理数" />
         <el-table-column prop="start_at" label="开始时间" min-width="170" />

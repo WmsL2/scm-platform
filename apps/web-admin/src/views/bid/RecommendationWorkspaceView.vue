@@ -4,8 +4,6 @@ import { ElMessage, ElMessageBox } from "element-plus"
 import { Setting } from "@element-plus/icons-vue"
 import { useRoute, useRouter } from "vue-router"
 import { bidApi } from "../../api/bid"
-import ProjectTaskStatus from "../../components/ProjectTaskStatus.vue"
-import { readMapping } from "../../api/mappingAnalysis"
 import { recommendationApi } from "../../api/recommendation"
 import { HttpError } from "../../shared/http"
 import { useAuthStore } from "../../stores/auth"
@@ -38,8 +36,6 @@ const workspace = useWorkspaceStore()
 const projectId = String(route.params.id)
 const loading = ref(false)
 const acting = ref(false)
-const heavyActive = ref(false)
-const mappingMessage = ref("")
 const project = ref<BidProjectDetail>()
 const templates = ref<RecommendationTemplateFile[]>([])
 const mapping = ref<RecommendationTemplateMapping>()
@@ -79,7 +75,7 @@ const workspaceTitle = computed(() => isCategoryRecommendation.value ? "指定�
 const workspaceCode = computed(() => isCategoryRecommendation.value ? "CATEGORY RECOMMENDATION" : "FREE RECOMMENDATION")
 const activeRun = computed(() => run.value && ["QUEUED", "ANALYZING", "RETRIEVING", "RANKING"].includes(run.value.status))
 const selectionEditable = computed(() => project.value?.status === "SELECTING" && auth.hasPermission("recommendation:review"))
-const canStart = computed(() => mappingConfirmed.value && !heavyActive.value && !activeRun.value && ["IMPORTED", "MATCHING", "SELECTING"].includes(project.value?.status ?? "") && auth.hasPermission("recommendation:run"))
+const canStart = computed(() => mappingConfirmed.value && !activeRun.value && ["IMPORTED", "MATCHING", "SELECTING"].includes(project.value?.status ?? "") && auth.hasPermission("recommendation:run"))
 const canCompleteSelection = computed(() => selectionEditable.value && (run.value?.candidate_page?.confirmed_total ?? 0) > 0)
 const canReopenSelection = computed(() => Boolean(
   run.value && ["READY", "EXPORTED"].includes(project.value?.status ?? "")
@@ -185,11 +181,11 @@ async function loadTemplateStructure(): Promise<void> {
   if (!mapping.value) return
   structureLoading.value = true
   try {
-    templateStructure.value = await readMapping(() => bidApi.recommendationTemplateStructure(
+    templateStructure.value = await bidApi.recommendationTemplateStructure(
       projectId,
-      mapping.value!.template_file.id,
-      { sheet_name: mapping.value!.sheet_name, header_row: mapping.value!.header_row },
-    ), (value) => { mappingMessage.value = value })
+      mapping.value.template_file.id,
+      { sheet_name: mapping.value.sheet_name, header_row: mapping.value.header_row },
+    )
     mapping.value.sheet_name = templateStructure.value.sheet_name
     mapping.value.data_start_row = Math.max(mapping.value.data_start_row, mapping.value.header_row + 1)
     rebuildMappingSelections()
@@ -676,8 +672,6 @@ onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
 
 <template>
   <div v-loading="loading" class="workspace">
-    <ProjectTaskStatus :project-id="projectId" @active="heavyActive = $event" @settled="load" />
-    <el-alert v-if="mappingMessage" :title="mappingMessage" type="info" :closable="false" />
     <header>
       <div><p>{{ workspaceCode }}</p><h1>{{ project?.project_name ?? workspaceTitle }}</h1><span>{{ project?.remark }}</span></div>
       <div class="actions"><el-button @click="router.push('/bid-projects')">返回项目</el-button><el-button v-if="['IMPORTED', 'MATCHING', 'SELECTING'].includes(project?.status ?? '')" type="primary" :disabled="!canStart" :loading="acting" @click="startRun">{{ run ? "重新生成推荐" : "开始生成推荐" }}</el-button><el-button v-if="project?.status === 'SELECTING'" type="success" :disabled="!canCompleteSelection" :loading="acting" @click="completeSelection">完成选品</el-button><el-button v-if="['READY', 'EXPORTED'].includes(project?.status ?? '')" :disabled="!canReopenSelection" :loading="acting" @click="reopenSelection">返回调整选品</el-button><el-button v-if="['READY', 'EXPORTED'].includes(project?.status ?? '')" type="success" :disabled="!canExport" :loading="acting" @click="exportConfirmedCandidates">导出确认结果</el-button></div>

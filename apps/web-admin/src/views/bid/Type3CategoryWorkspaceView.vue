@@ -14,12 +14,9 @@ import {
   type Type3Run,
   type Type3RunSheetSummary,
   type Type3Sheet,
-  type Type3SheetOutputStructure,
 } from "../../api/type3Recommendation"
 import { HttpError } from "../../shared/http"
 import { useAuthStore } from "../../stores/auth"
-import ProjectTaskStatus from "../../components/ProjectTaskStatus.vue"
-import { readMapping } from "../../api/mappingAnalysis"
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -52,8 +49,6 @@ const selectAllConfirmed = ref(false)
 const detailCandidate = ref<Type3Candidate>()
 const detailVisible = ref(false)
 const busy = ref(false)
-const heavyActive = ref(false)
-const mappingMessage = ref("")
 const savedSelectionSignature = ref("")
 
 const activeSheet = computed(() => preview.value?.sheets.find((sheet) => sheet.sheet_name === activeSheetName.value))
@@ -67,7 +62,7 @@ const currentSheetSelected = computed(() => selected.value[activeSheetName.value
 const allVisibleSelected = computed(() => visibleNodes.value.length > 0 && visibleNodes.value.every((node) => currentSheetSelected.value.includes(node.node_id)))
 const manualNodes = computed(() => (activeSheet.value?.nodes ?? []).filter(isManualNode))
 const selectedSheetsMissingMapping = computed(() => selectedSheets().filter((sheet) => mappedColumnCount(sheet) === 0))
-const canStart = computed(() => !heavyActive.value && !["QUEUED", "ANALYZING", "RETRIEVING"].includes(active.value?.status ?? "") && Object.values(selected.value).some((nodes) => nodes.length > 0) && selectedSheetsMissingMapping.value.length === 0)
+const canStart = computed(() => Object.values(selected.value).some((nodes) => nodes.length > 0) && selectedSheetsMissingMapping.value.length === 0)
 const currentSelectionSignature = computed(() => sheetSignature(selectedSheets()))
 const selectionDirty = computed(() => currentSelectionSignature.value !== savedSelectionSignature.value)
 const currentSelectionSummary = computed(() => selectionSummary(selectedSheets()))
@@ -90,12 +85,6 @@ const projectStatus = computed(() => active.value?.project_status ?? "")
 watch([activeSheetName, keyword, selectionPageSize], () => { selectionPage.value = 1 })
 
 function message(error: unknown, fallback: string): string { return error instanceof HttpError ? error.response.message : fallback }
-async function waitForPreview(): Promise<Type3Preview> {
-  return readMapping(() => type3RecommendationApi.preview(projectId), (value) => { mappingMessage.value = value })
-}
-async function waitForOutputStructure(sheetName: string, headerRow: number): Promise<Type3SheetOutputStructure> {
-  return readMapping(() => type3RecommendationApi.sheetOutputStructure(projectId, { sheetName, headerRow }), (value) => { mappingMessage.value = value })
-}
 function isManualNode(node: Type3Node): boolean { return node.node_id.startsWith("manual:") }
 function countSelected(sheetName: string): number { return selected.value[sheetName]?.length ?? 0 }
 function selectionSummary(sheets: Type3Sheet[]): Type3RunSheetSummary[] { return sheets.map((sheet) => ({ sheet_name: sheet.sheet_name, selected_node_count: sheet.nodes.length })).sort((left, right) => left.sheet_name.localeCompare(right.sheet_name)) }
@@ -131,7 +120,7 @@ async function loadOutputStructure(): Promise<void> {
   const sheetName = sheet.sheet_name
   outputStructureLoading.value = true
   try {
-    const structure = await waitForOutputStructure(sheetName, sheet.header_row)
+    const structure = await type3RecommendationApi.sheetOutputStructure(projectId, { sheetName, headerRow: sheet.header_row })
     if (activeSheetName.value !== sheetName) return
     outputColumns.value = structure.columns
     rebuildMappingSelections(sheet)
@@ -227,16 +216,11 @@ async function refreshResults(): Promise<void> {
   candidatePage.value = page
   candidateSheetSummaries.value = sheetSummaries
 }
-async function refreshAfterTask(): Promise<void> {
-  runs.value = await type3RecommendationApi.runs(projectId)
-  active.value = runs.value[0]
-  await refreshResults()
-}
 async function changeResultSheet(sheetName?: string): Promise<void> { resultSheetName.value = sheetName; resultPage.value = 1; resetCandidateSelection(); await loadCandidates() }
 async function changeResultPage(page: number): Promise<void> { resultPage.value = page; await loadCandidates() }
 async function changeResultPageSize(pageSize: number): Promise<void> { resultPageSize.value = pageSize; resultPage.value = 1; await loadCandidates() }
 async function load(): Promise<void> {
-  const [workbookPreview, savedSheets, fields] = await Promise.all([waitForPreview(), type3RecommendationApi.savedSelections(projectId), type3RecommendationApi.exportFields(projectId)])
+  const [workbookPreview, savedSheets, fields] = await Promise.all([type3RecommendationApi.preview(projectId), type3RecommendationApi.savedSelections(projectId), type3RecommendationApi.exportFields(projectId)])
   preview.value = workbookPreview; restoreSavedSelections(savedSheets); savedSelectionSignature.value = sheetSignature(savedSheets); activeSheetName.value ||= workbookPreview.sheets[0]?.sheet_name ?? ""
   exportFields.value = fields; await loadOutputStructure(); runs.value = await type3RecommendationApi.runs(projectId); active.value = runs.value[0]; resultSheetName.value = undefined; resultPage.value = 1; resetCandidateSelection(); await refreshResults()
 }
@@ -296,8 +280,6 @@ onMounted(() => { void load().catch((error) => ElMessage.error(message(error, "�
 
 <template>
   <div class="workspace">
-    <ProjectTaskStatus :project-id="projectId" @active="heavyActive = $event" @settled="refreshAfterTask" />
-    <el-alert v-if="mappingMessage" :title="mappingMessage" type="info" :closable="false" />
     <header><p>TYPE 3 · SHEET CATEGORY SELECTION</p><h1>指定类目推品</h1><span>先选择 Sheet，再勾选一级、二级或三级类目。备注独立由 AI 分析；泛类目可映射多个用途相关的真实三级类目，但不会扩展为无关类目。</span></header>
     <el-card class="selector-card">
       <template #header><div class="selector-title"><strong>1. 选择 Sheet 与类目</strong><span>当前选择 {{ selectedSheets().length }} 个 Sheet、{{ Object.values(selected).flat().length }} 个类目 <el-tag :type="selectionDirty ? 'warning' : 'success'" size="small">{{ selectionDirty ? '未保存' : '已确认保存' }}</el-tag></span></div></template>

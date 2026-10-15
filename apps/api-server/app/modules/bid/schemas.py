@@ -12,7 +12,6 @@ from app.modules.bid.domain.lifecycle import (
     BidProjectType,
     BidRecommendationType,
 )
-from app.modules.system.task_schemas import AsyncTaskResponse
 
 
 class BidProjectFileResponse(BaseModel):
@@ -51,7 +50,6 @@ class BidProjectListItem(BaseModel):
     total_item_count: int
     processed_item_count: int
     created_at: datetime
-    async_task: AsyncTaskResponse | None = None
 
 
 class BidProjectDetailResponse(BidProjectListItem):

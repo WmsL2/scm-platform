@@ -6,7 +6,7 @@ from io import BytesIO
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,9 +15,7 @@ from app.core.database import FunctionSessionDep, SessionLocal, get_db_session
 from app.modules.auth.dependencies import require_permission, require_permission_before_response
 from app.modules.auth.schemas import CurrentUser
 from app.modules.bid.schemas import BidProjectFileResponse
-from app.modules.system.mapping_analysis_service import MappingAnalysisService
-from app.modules.system.task_schemas import AsyncTaskCreate, AsyncTaskKind, AsyncTaskResponse
-from app.modules.system.task_service import AsyncTaskService
+from app.modules.type3_recommendation.application.agent import execute_type3_agent_inline
 from app.modules.type3_recommendation.application.service import Type3RecommendationService
 from app.modules.type3_recommendation.schemas import (
     Type3CandidateConfirmationRequest,
@@ -33,65 +31,34 @@ from app.modules.type3_recommendation.schemas import (
 )
 
 router = APIRouter(prefix="/type3-recommendation-projects", tags=["type3-recommendation"])
-SessionDep = Annotated[AsyncSession, Depends(get_db_session, scope="function")]
+SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
-@router.get(
-    "/{project_id}/template-preview",
-    response_model=ApiResponse[Type3TemplatePreview | AsyncTaskResponse],
-    status_code=status.HTTP_202_ACCEPTED,
-)
+@router.get("/{project_id}/template-preview", response_model=ApiResponse[Type3TemplatePreview])
 async def template_preview(
     project_id: uuid.UUID,
-    current: Annotated[CurrentUser, Depends(require_permission("recommendation:detail"))],
+    _: Annotated[CurrentUser, Depends(require_permission("recommendation:detail"))],
     session: SessionDep,
-    response: Response,
-) -> ApiResponse[Type3TemplatePreview | AsyncTaskResponse]:
-    service = Type3RecommendationService(session)
-    file_id = await service.template_file_id(project_id)
-    result = await MappingAnalysisService(session).cached_or_enqueue(
-        project_id=project_id,
-        file_id=file_id,
-        analysis_key="TYPE3_TEMPLATE_PREVIEW",
-        payload_json={"analysis_type": "TYPE3_TEMPLATE_PREVIEW"},
-        actor_id=current.user_id,
-    )
-    if isinstance(result, dict):
-        response.status_code = status.HTTP_200_OK
-        return success(Type3TemplatePreview.model_validate(result))
-    return success(result)
+) -> ApiResponse[Type3TemplatePreview]:
+    return success(await Type3RecommendationService(session).preview(project_id))
 
 
 @router.get(
     "/{project_id}/sheet-output-structure",
-    response_model=ApiResponse[Type3SheetOutputStructure | AsyncTaskResponse],
-    status_code=status.HTTP_202_ACCEPTED,
+    response_model=ApiResponse[Type3SheetOutputStructure],
 )
 async def sheet_output_structure(
     project_id: uuid.UUID,
     sheet_name: str,
     header_row: Annotated[int, Query(ge=1)],
-    current: Annotated[CurrentUser, Depends(require_permission("recommendation:detail"))],
+    _: Annotated[CurrentUser, Depends(require_permission("recommendation:detail"))],
     session: SessionDep,
-    response: Response,
-) -> ApiResponse[Type3SheetOutputStructure | AsyncTaskResponse]:
-    service = Type3RecommendationService(session)
-    file_id = await service.template_file_id(project_id)
-    result = await MappingAnalysisService(session).cached_or_enqueue(
-        project_id=project_id,
-        file_id=file_id,
-        analysis_key=f"TYPE3_SHEET_OUTPUT:{sheet_name}:{header_row}",
-        payload_json={
-            "analysis_type": "TYPE3_SHEET_OUTPUT",
-            "sheet_name": sheet_name,
-            "header_row": header_row,
-        },
-        actor_id=current.user_id,
+) -> ApiResponse[Type3SheetOutputStructure]:
+    return success(
+        await Type3RecommendationService(session).sheet_output_structure(
+            project_id, sheet_name, header_row
+        )
     )
-    if isinstance(result, dict):
-        response.status_code = status.HTTP_200_OK
-        return success(Type3SheetOutputStructure.model_validate(result))
-    return success(result)
 
 
 @router.get(
@@ -132,34 +99,24 @@ async def save_sheet_selections(
     )
 
 
-@router.post(
-    "/{project_id}/runs",
-    response_model=ApiResponse[AsyncTaskResponse],
-    status_code=status.HTTP_202_ACCEPTED,
-)
+@router.post("/{project_id}/runs", response_model=ApiResponse[Type3RunResponse])
 async def start(
     project_id: uuid.UUID,
     payload: Type3SheetSelectionRequest,
     current: Annotated[CurrentUser, Depends(require_permission("recommendation:run"))],
-) -> ApiResponse[AsyncTaskResponse]:
+) -> ApiResponse[Type3RunResponse]:
     # Persist the posted selection and create its Run in the same committed transaction.
     # The inline executor therefore can never observe a previous Sheet configuration.
     async with SessionLocal.begin() as create_session:
-        await AsyncTaskService(create_session).ensure_available(
-            project_id, AsyncTaskKind.TYPE3_CANDIDATE_GENERATION
-        )
         run = await Type3RecommendationService(create_session).save_and_start(
             project_id, payload, current.user_id
         )
-        task = await AsyncTaskService(create_session).enqueue(
-            AsyncTaskCreate(
-                project_id=project_id,
-                run_id=run.id,
-                task_kind=AsyncTaskKind.TYPE3_CANDIDATE_GENERATION,
-                created_by=current.user_id,
-            )
+    async with SessionLocal() as execution_session:
+        await execute_type3_agent_inline(
+            run.id, Type3RecommendationService(execution_session)
         )
-    return success(task)
+    async with SessionLocal() as result_session:
+        return success(await Type3RecommendationService(result_session).get_run(run.id))
 
 
 @router.get("/{project_id}/runs", response_model=ApiResponse[list[Type3RunResponse]])

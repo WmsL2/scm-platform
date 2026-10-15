@@ -245,17 +245,24 @@ class BidProjectService:
             assert file_bytes is not None
             try:
                 template = await self._recognize_template(file_bytes, recommendation_type)
-                if template is None and (
-                    (
-                        recommendation_type is BidRecommendationType.TYPE_1_SPECIFICATION
-                        and self.type1_agent is not None
-                    )
-                    or (
-                        recommendation_type is BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT
-                        and self.type2_agent is not None
+                if (
+                    template is None
+                    and (
+                        (
+                            recommendation_type
+                            is BidRecommendationType.TYPE_1_SPECIFICATION
+                            and self.type1_agent is not None
+                        )
+                        or (
+                            recommendation_type
+                            is BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT
+                            and self.type2_agent is not None
+                        )
                     )
                 ):
-                    suggestion: Type1TemplateMappingSuggestion | Type2TemplateMappingSuggestion
+                    suggestion: (
+                        Type1TemplateMappingSuggestion | Type2TemplateMappingSuggestion
+                    )
                     if (
                         recommendation_type is BidRecommendationType.TYPE_1_SPECIFICATION
                         and self.type1_agent is not None
@@ -266,7 +273,8 @@ class BidProjectService:
                         template_prefix = "TYPE1_AI"
                         template_name = "类型1·AI识别客户规格报价表"
                     elif (
-                        recommendation_type is BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT
+                        recommendation_type
+                        is BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT
                         and self.type2_agent is not None
                     ):
                         suggestion = await self.type2_agent.suggest_template_mapping(
@@ -530,15 +538,8 @@ class BidProjectService:
             keyword=keyword.strip() if keyword else None,
             status=status.value if status else None,
         )
-        from app.modules.system.task_service import AsyncTaskService
-
-        latest = await AsyncTaskService(self.session).latest_for_projects([row.id for row in rows])
-        items = [
-            self._list_item(row).model_copy(update={"async_task": latest.get(row.id)})
-            for row in rows
-        ]
         return PageResult(
-            items=items,
+            items=[self._list_item(row) for row in rows],
             total=total,
             page=page_params.page,
             page_size=page_params.page_size,
@@ -666,26 +667,21 @@ class BidProjectService:
             mapping.header_row = payload.header_row
             mapping.data_start_row = payload.data_start_row
             mapping.mapping_json = payload.mapping_json
-            if file.sha256 != mapping.template_sha256:
+            content = await self.storage.read(file.storage_key)
+            if (
+                hashlib.sha256(content).hexdigest() != file.sha256
+                or file.sha256 != mapping.template_sha256
+            ):
                 raise AppError("RECOMMENDATION_TEMPLATE_MAPPING_INVALID", "模板摘要校验失败", 422)
-            from app.modules.recommendation.template.analyzer import resolve_mapping_columns
-            from app.modules.system.mapping_analysis_service import MappingAnalysisService
+            from app.modules.recommendation.template.analyzer import validate_mapping_contract
 
-            cached = await MappingAnalysisService(self.session).require_cached(
-                project_id,
-                file_id,
-                f"RECOMMENDATION_TEMPLATE_STRUCTURE:{mapping.sheet_name}:{mapping.header_row}",
+            validate_mapping_contract(
+                content,
+                sheet_name=mapping.sheet_name,
+                header_row=mapping.header_row,
+                data_start_row=mapping.data_start_row,
+                mapping_json=mapping.mapping_json,
             )
-            structure = RecommendationTemplateStructureResponse.model_validate(cached)
-            if mapping.data_start_row <= mapping.header_row:
-                raise AppError(
-                    "RECOMMENDATION_TEMPLATE_MAPPING_INVALID", "数据起始行必须位于表头行之后", 422
-                )
-            max_column = max((column.column_index for column in structure.columns), default=0)
-            headers = [""] * max_column
-            for column in structure.columns:
-                headers[column.column_index - 1] = column.header
-            resolve_mapping_columns(headers, mapping.mapping_json)
             mapping.confirmed_by = actor_id
             mapping.confirmed_at = datetime.now()
         return self._mapping_response(file, mapping)
@@ -762,39 +758,6 @@ class BidProjectService:
         await self._project_or_404(project_id)
         return [self._file_response(item) for item in await self.repository.files(project_id)]
 
-    async def output_mapping_file_id(self, project_id: uuid.UUID) -> uuid.UUID:
-        await self._project_or_404(project_id)
-        original = await self.repository.original_file(project_id)
-        if original is None:
-            raise AppError("BID_PROJECT_ORIGINAL_NOT_FOUND", "项目原始文件不存在", 404)
-        return original.id
-
-    async def output_mapping_analysis_context(
-        self, project_id: uuid.UUID
-    ) -> tuple[uuid.UUID, str, int]:
-        project = await self._project_or_404(project_id)
-        _, template = await self._output_mapping_context(project)
-        return (
-            await self.output_mapping_file_id(project_id),
-            template.sheet_name,
-            template.header_row,
-        )
-
-    async def output_mapping_headers(
-        self, project_id: uuid.UUID, file_id: uuid.UUID
-    ) -> list[str | None]:
-        """Mapping-worker handler: the only caller that reads this workbook."""
-        await self._project_or_404(project_id)
-        original = await self.repository.original_file(project_id)
-        if original is None or original.id != file_id:
-            raise AppError("BID_PROJECT_ORIGINAL_NOT_FOUND", "项目原始文件不存在", 404)
-        _recommendation_type, template = await self._output_mapping_context(
-            await self._project_or_404(project_id)
-        )
-        return self._workbook_headers(
-            await self.storage.read(original.storage_key), template.sheet_name, template.header_row
-        )
-
     async def input_mapping(
         self,
         project_id: uuid.UUID,
@@ -844,15 +807,6 @@ class BidProjectService:
         async with transaction_scope(self.session):
             project = await self._project_or_404(project_id, lock=True)
             recommendation_type, template = await self._input_mapping_context(project)
-            from app.modules.system.task_schemas import AsyncTaskKind
-            from app.modules.system.task_service import AsyncTaskService
-
-            kind = (
-                AsyncTaskKind.TYPE1_MATCH
-                if recommendation_type is BidRecommendationType.TYPE_1_SPECIFICATION
-                else AsyncTaskKind.TYPE2_MATCH
-            )
-            await AsyncTaskService(self.session).ensure_available(project_id, kind)
             if project.status != BidProjectStatus.IMPORTED.value or project.processed_item_count:
                 raise AppError(
                     "BID_INPUT_MAPPING_LOCKED",
@@ -991,31 +945,35 @@ class BidProjectService:
                 mapping=mapping,
             )
 
-    async def output_mapping(
-        self, project_id: uuid.UUID, *, headers: list[str | None] | None = None
-    ) -> BidOutputMappingResponse:
+    async def output_mapping(self, project_id: uuid.UUID) -> BidOutputMappingResponse:
         project = await self._project_or_404(project_id)
         recommendation_type, template = await self._output_mapping_context(project)
         original = await self.repository.original_file(project_id)
         if original is None:
             raise AppError("BID_PROJECT_ORIGINAL_NOT_FOUND", "项目原始文件不存在", 404)
-        if headers is None:
-            headers = self._workbook_headers(
-                await self.storage.read(original.storage_key),
-                template.sheet_name,
-                template.header_row,
-            )
+        headers = self._workbook_headers(
+            await self.storage.read(original.storage_key), template.sheet_name, template.header_row
+        )
         configured_mapping = self._normalize_output_mapping(
             dict(project.output_mapping)
             if project.output_mapping is not None
             else dict(template.export_mapping)
         )
-        if project.output_mapping is not None and project.output_mapping_confirmed_at is None:
-            configured_mapping = self._with_obvious_price_mapping(headers, configured_mapping)
+        if (
+            project.output_mapping is not None
+            and project.output_mapping_confirmed_at is None
+        ):
+            configured_mapping = self._with_obvious_price_mapping(
+                headers, configured_mapping
+            )
         mapping = {
             field: resolved_header
             for field, configured_header in configured_mapping.items()
-            if (resolved_header := self._resolve_export_header(field, configured_header, headers))
+            if (
+                resolved_header := self._resolve_export_header(
+                    field, configured_header, headers
+                )
+            )
             is not None
         }
         legacy_confirmed = project.output_mapping is None
@@ -1033,8 +991,6 @@ class BidProjectService:
         project_id: uuid.UUID,
         payload: BidOutputMappingUpdateRequest,
         actor_id: uuid.UUID,
-        *,
-        headers: list[str | None] | None = None,
     ) -> BidOutputMappingResponse:
         async with transaction_scope(self.session):
             project = await self._project_or_404(project_id, lock=True)
@@ -1050,12 +1006,11 @@ class BidProjectService:
             original = await self.repository.original_file(project_id)
             if original is None:
                 raise AppError("BID_PROJECT_ORIGINAL_NOT_FOUND", "项目原始文件不存在", 404)
-            if headers is None:
-                headers = self._workbook_headers(
-                    await self.storage.read(original.storage_key),
-                    template.sheet_name,
-                    template.header_row,
-                )
+            headers = self._workbook_headers(
+                await self.storage.read(original.storage_key),
+                template.sheet_name,
+                template.header_row,
+            )
             available = set(self._header_columns(headers))
             field_definitions = _OUTPUT_MAPPING_FIELDS[recommendation_type]
             allowed = {key for key, _, _ in field_definitions}
@@ -1126,7 +1081,10 @@ class BidProjectService:
             template = await self.session.get(BidTemplate, project.template_id)
             if template is None:
                 raise AppError("BID_TEMPLATE_NOT_FOUND", "项目模板不存在", 409)
-            if project.output_mapping is not None and project.output_mapping_confirmed_at is None:
+            if (
+                project.output_mapping is not None
+                and project.output_mapping_confirmed_at is None
+            ):
                 raise AppError(
                     "BID_OUTPUT_MAPPING_NOT_CONFIRMED",
                     "请先确认客户原表的回填字段映射",
@@ -1154,7 +1112,8 @@ class BidProjectService:
             if original is None:
                 raise AppError("BID_PROJECT_ORIGINAL_NOT_FOUND", "项目原始文件不存在", 409)
             is_type1 = (
-                project.recommendation_type == BidRecommendationType.TYPE_1_SPECIFICATION.value
+                project.recommendation_type
+                == BidRecommendationType.TYPE_1_SPECIFICATION.value
             )
             selections = (
                 await self.repository.type1_export_rows(project_id)
@@ -1456,9 +1415,15 @@ class BidProjectService:
                     for header, index in header_columns.items()
                     if index < len(values)
                 }
-                if template.template_code.startswith(
-                    ("TYPE1_AI_", "TYPE1_ZHONGXIN_SPECIFICATION")
-                ) and ("调整后需报价物料" in source_data or "需报价物料" in source_data):
+                if (
+                    template.template_code.startswith(
+                        ("TYPE1_AI_", "TYPE1_ZHONGXIN_SPECIFICATION")
+                    )
+                    and (
+                        "调整后需报价物料" in source_data
+                        or "需报价物料" in source_data
+                    )
+                ):
                     quote_marker = self._text(source_data.get("调整后需报价物料")) or self._text(
                         source_data.get("需报价物料")
                     )
@@ -1638,7 +1603,9 @@ class BidProjectService:
             workbook.close()
 
     @staticmethod
-    def _workbook_headers(file_bytes: bytes, sheet_name: str, header_row: int) -> list[str | None]:
+    def _workbook_headers(
+        file_bytes: bytes, sheet_name: str, header_row: int
+    ) -> list[str | None]:
         try:
             workbook = load_workbook(BytesIO(file_bytes), read_only=True, data_only=False)
         except Exception as exc:
@@ -1814,7 +1781,9 @@ class BidProjectService:
                     "discount_compliance": (selection.price_snapshot or {}).get(
                         "discount_compliance"
                     ),
-                    "price_valid_until": (selection.price_snapshot or {}).get("price_valid_until"),
+                    "price_valid_until": (selection.price_snapshot or {}).get(
+                        "price_valid_until"
+                    ),
                 }
                 for field, resolved_header in resolved_export_mapping.items():
                     assert resolved_header is not None
@@ -2039,12 +2008,14 @@ class BidProjectService:
             "price_valid_until": ("价格有效期",),
         }
         prefixes = tuple(
-            cls._layout_insensitive_header(prefix) for prefix in semantic_prefixes.get(field, ())
+            cls._layout_insensitive_header(prefix)
+            for prefix in semantic_prefixes.get(field, ())
         )
         semantic_matches = [
             header
             for header in available_headers
-            if prefixes and cls._layout_insensitive_header(header).startswith(prefixes)
+            if prefixes
+            and cls._layout_insensitive_header(header).startswith(prefixes)
         ]
         return semantic_matches[0] if len(semantic_matches) == 1 else None
 

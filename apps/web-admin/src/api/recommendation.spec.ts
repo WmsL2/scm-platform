@@ -12,7 +12,7 @@ describe("recommendation api", () => {
       .mockResolvedValueOnce([run])
       .mockResolvedValueOnce(run)
       .mockResolvedValueOnce({ items: [], total: 0, page: 1, page_size: 50, unconfirmed_total: 0, confirmed_total: 0 })
-    http.post.mockResolvedValue({ id: "task1", run_id: "r1", status: "PENDING" })
+    http.post.mockResolvedValue(run)
     http.patch.mockResolvedValue({ id: "confirmation-1" })
     const { recommendationApi } = await import("./recommendation")
 
@@ -24,7 +24,7 @@ describe("recommendation api", () => {
     expect(http.get).toHaveBeenNthCalledWith(1, "/api/v1/recommendation-projects/p1/runs")
     expect(http.get).toHaveBeenNthCalledWith(2, "/api/v1/recommendation-projects/runs/r1")
     expect(http.get).toHaveBeenNthCalledWith(3, "/api/v1/recommendation-projects/runs/r1/candidates?page=1&page_size=50")
-    expect(http.post).toHaveBeenCalledWith("/api/v1/recommendation-projects/p1/runs")
+    expect(http.post).toHaveBeenCalledWith("/api/v1/recommendation-projects/p1/runs", undefined, { timeoutMs: 300_000 })
     expect(http.patch).toHaveBeenCalledWith("/api/v1/recommendation-projects/candidates/c1/confirmation", { campaign_price: "100.00", fulfillment_cycle: "三天" })
     expect(http.post).toHaveBeenCalledWith("/api/v1/recommendation-projects/runs/r1/confirmations", { candidate_ids: ["c1", "c2"], select_all: false, excluded_candidate_ids: [] })
   })
