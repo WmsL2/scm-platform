@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-14
 
+> 2026-10-15 回退 PR 已准备：受保护的 `main` 不能强推，因此分支 `codex/revert-main-to-pr143` 以两个可审计 revert 恢复 PR #143（`8c33d09`）的业务代码状态，撤销 PR #144 / #145 的 MySQL 持久化队列、任务终止与项目永久删除改动。该 PR 尚未合入。已升级到 `20261014_0057`--`20261014_0061` 的环境不会自动降级；部署前必须单独核验 Alembic 当前版本并制定数据库回退方案，不得对用户数据库直接执行 downgrade。
+
 
 
 > 2026-10-13：Type-5 正式 PPT 模板 1 `JD_DETAIL_RED` 私有 v5 单品试点完成开发及代码复审。基于客户正式空白模板实现字段映射、固定内容保留、缺失字段留空、图片填充及安全文本容量校验；长 SKU、品牌、物流和卖点超限均受控拒绝，折扣率格式已修复。Recommendation 回归测试 152 passed。v5 仅通过受控私有资产显式使用，不改变线上默认 v3；历史 v3/v4 和其他模板不变。组合模式尚未开放，正式 Office 视觉验收及私有资产部署仍待完成。无数据库、API、UI、权限、推荐或报价规则变更。
