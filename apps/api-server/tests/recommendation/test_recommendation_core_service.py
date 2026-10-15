@@ -28,6 +28,7 @@ from app.modules.recommendation.infrastructure.models import (
     RecommendationConfirmation,
     RecommendationRun,
 )
+from app.modules.recommendation.ppt_schemas import PptFrozenRecommendationConfig
 from app.modules.recommendation.schemas import (
     BatchConfirmationRequest,
     BatchUnconfirmationRequest,
@@ -576,6 +577,79 @@ async def test_ppt_v8_selected_plan_persists_confirmation_and_selection() -> Non
         )
         assert confirmation is not None
         assert confirmation.confirmed_by == actor_id
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_ppt_generation_allows_confirmed_products_while_selection_remains_open() -> None:
+    actor_id = uuid.uuid4()
+    token = uuid.uuid4().hex
+    supplier = Supplier(
+        supplier_code=f"PG{token[:12]}",
+        supplier_name=f"PPT 未完成选品供应商-{token}",
+        main_brands="测试品牌",
+        advantage="测试",
+        archive_status=ArchiveStatus.ARCHIVED.value,
+        cooperation_status=CooperationStatus.NORMAL.value,
+    )
+    project = BidProject(
+        project_code=f"PG{token[:12]}",
+        project_name="PPT 未完成选品生成测试",
+        buyer_name="测试客户",
+        status=BidProjectStatus.SELECTING.value,
+        import_status=BidImportStatus.NOT_REQUIRED.value,
+        project_type=BidProjectType.PPT_SOLUTION.value,
+        remark="已确认商品后生成 PPT 仍可继续选品。",
+        created_by=actor_id,
+    )
+    config = PptFrozenRecommendationConfig(
+        recommendation_mode="SINGLE",
+        price_bands=[{"min_price": "100", "max_price": "200", "item_count": 1}],
+        fulfillment_deadline=None,
+    )
+    async with SessionLocal() as session:
+        session.add_all([supplier, project])
+        await session.flush()
+        product = Product(
+            source_supplier_id=supplier.id,
+            sku=f"PG-{token[:8]}",
+            product_name="未完成选品 PPT 测试商品",
+            agreement_price=Decimal("120"),
+            status=ProductStatus.ACTIVE.value,
+        )
+        session.add(product)
+        await session.flush()
+        run = RecommendationRun(
+            project_id=project.id,
+            status=RecommendationRunStatus.CONFIRMED.value,
+            raw_requirement_snapshot=project.remark or "",
+            ppt_config_snapshot=config.model_dump(mode="json"),
+            created_by=actor_id,
+        )
+        session.add(run)
+        await session.flush()
+        candidate = RecommendationCandidate(
+            run_id=run.id,
+            product_id=product.id,
+            rank=1,
+            product_snapshot={"product_name": product.product_name, "sku": product.sku},
+            supplier_snapshot={"supplier_code": supplier.supplier_code},
+            price_snapshot={"agreement_price": "120"},
+        )
+        session.add(candidate)
+        await session.flush()
+        session.add(RecommendationConfirmation(candidate_id=candidate.id, confirmed_by=actor_id))
+        await session.flush()
+
+        task = await PptSolutionService(session).create_generation(
+            project.id,
+            run.id,
+            actor_id,
+            use_default_template=True,
+        )
+
+        assert task.status == "QUEUED"
+        assert project.status == BidProjectStatus.SELECTING.value
         await session.rollback()
 
 

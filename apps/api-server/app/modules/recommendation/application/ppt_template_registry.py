@@ -22,46 +22,46 @@ class PptTemplateDefinition:
 # selected through a user-provided path; deployments may only override their root.
 PPT_TEMPLATES: tuple[PptTemplateDefinition, ...] = (
     PptTemplateDefinition(
-        "SYSTEM_DEFAULT",
-        "系统默认版",
-        "白底商品参数与主图版式",
-        "1",
-        "/ppt-template-previews/system-default.svg",
-    ),
-    PptTemplateDefinition(
         "JD_DETAIL_RED",
-        "京东红白商品详版",
+        "模板1",
         "红白封面与商品图文分栏",
         "3",
         "/ppt-template-previews/jd-detail-red.svg",
     ),
     PptTemplateDefinition(
         "JD_FESTIVE_RED",
-        "京东节庆红色版",
+        "模板2",
         "节庆红色封面和商品信息页",
         "3",
         "/ppt-template-previews/jd-festive-red.svg",
     ),
     PptTemplateDefinition(
         "CATALOG_MINIMAL",
-        "极简商品画册版",
+        "模板3",
         "大幅商品图与右侧参数",
         "3",
         "/ppt-template-previews/catalog-minimal.svg",
     ),
     PptTemplateDefinition(
         "UNION_QUOTE_WHITE",
-        "工会简洁报价版",
+        "模板4",
         "左侧报价参数、中央分隔线与右侧主图",
         "3",
         "/ppt-template-previews/union-quote-white.svg",
+    ),
+    PptTemplateDefinition(
+        "SYSTEM_DEFAULT",
+        "模板5",
+        "白底商品参数与主图版式",
+        "1",
+        "/ppt-template-previews/system-default.svg",
     ),
 )
 
 PPT_V5_TEMPLATES: tuple[PptTemplateDefinition, ...] = (
     PptTemplateDefinition(
         "JD_DETAIL_RED",
-        "京东红白商品详版",
+        "模板1",
         "正式客户版，当前仅支持单品生成",
         "5",
         "/ppt-template-previews/jd-detail-red.svg",
@@ -69,7 +69,7 @@ PPT_V5_TEMPLATES: tuple[PptTemplateDefinition, ...] = (
     ),
     PptTemplateDefinition(
         "JD_FESTIVE_RED",
-        "京东节庆红色版",
+        "模板2",
         "正式两页客户版，当前仅支持单品生成",
         "5",
         "/ppt-template-previews/jd-festive-red.svg",
@@ -77,7 +77,7 @@ PPT_V5_TEMPLATES: tuple[PptTemplateDefinition, ...] = (
     ),
     PptTemplateDefinition(
         "UNION_QUOTE_WHITE",
-        "工会简洁报价版",
+        "模板4",
         "正式客户版，支持单品与 2 至 4 件组合方案",
         "5",
         "/ppt-template-previews/union-quote-white.svg",
@@ -85,7 +85,7 @@ PPT_V5_TEMPLATES: tuple[PptTemplateDefinition, ...] = (
     ),
     PptTemplateDefinition(
         "CATALOG_MINIMAL",
-        "极简商品画册版",
+        "模板3",
         "正式极简画册客户版，当前仅支持单品生成",
         "5",
         "/ppt-template-previews/catalog-minimal.svg",
