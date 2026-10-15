@@ -81,7 +81,7 @@ async def cancel_task(
 ) -> ApiResponse[AsyncTaskResponse]:
     service = AsyncTaskService(session)
     await _can_operate(current, await service.get(task_id), session)
-    return success(await service.cancel(task_id, current.user_id))
+    return success(await service.cancel(task_id))
 
 
 @router.post("/async-tasks/{task_id}/commands/retry", response_model=ApiResponse[AsyncTaskResponse])

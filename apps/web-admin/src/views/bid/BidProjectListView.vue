@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive, ref } from "vue"
 import type { AsyncTask } from "../../types/asyncTask"
-import { ASYNC_TASK_KIND_LABELS } from "../../types/asyncTask"
-import { ElMessage, ElMessageBox } from "element-plus"
+import { ElMessage } from "element-plus"
 import type { UploadInstance } from "element-plus"
 import { useRoute, useRouter } from "vue-router"
 import { bidApi } from "../../api/bid"
@@ -11,7 +10,6 @@ import { useExcelImportNavigationLock } from "../../shared/import/excelImportNav
 import OperationDuration from "../../shared/operation/OperationDuration.vue"
 import { useOperationTimer } from "../../shared/operation/useOperationTimer"
 import { useAuthStore } from "../../stores/auth"
-import AsyncTaskActions from "../../components/AsyncTaskActions.vue"
 import {
   IMPORT_STATUS_LABELS,
   PROJECT_STATUS_LABELS,
@@ -28,7 +26,6 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
-let loadSequence = 0
 const submitting = ref(false)
 const statusTagType = (status: string) => PROJECT_STATUS_TAG_TYPES[status as BidProjectStatus]
 const operationTimer = useOperationTimer()
@@ -71,7 +68,6 @@ function selectRecommendationType(option: typeof projectTypeOptions[number]) {
 }
 
 async function load(target = page.value) {
-  const sequence = ++loadSequence
   loading.value = true
   try {
     const result = await bidApi.list({
@@ -80,44 +76,13 @@ async function load(target = page.value) {
       keyword: filters.keyword.trim() || undefined,
       status: filters.status,
     })
-    if (sequence !== loadSequence) return
     projects.value = result.items
     total.value = result.total
     page.value = result.page
   } catch (error) {
-    if (sequence === loadSequence) ElMessage.error(messageFor(error, "加载项目列表失败"))
+    ElMessage.error(messageFor(error, "加载项目列表失败"))
   } finally {
-    if (sequence === loadSequence) loading.value = false
-  }
-}
-
-async function purgeProject(project: BidProjectListItem): Promise<void> {
-  const task = taskFor(project)
-  if (task && ["PENDING", "RUNNING"].includes(task.status)) {
-    ElMessage.error("请先在后台任务栏终止任务，并等待其变为已取消或已结束后再删除项目")
-    return
-  }
-  try {
-    const { value } = await ElMessageBox.prompt(
-      `这会永久删除项目“${project.project_name}”及其需求、选品、任务、PPT 记录和关联文件，无法恢复。请输入项目编号“${project.project_code}”确认。`,
-      "永久删除项目",
-      {
-        confirmButtonText: "永久删除",
-        cancelButtonText: "取消",
-        inputPlaceholder: project.project_code,
-        type: "error",
-      },
-    )
-    if (value !== project.project_code) {
-      ElMessage.error("项目编号不匹配，未执行删除")
-      return
-    }
-    await bidApi.purgeProject(project.id, value)
-    ElMessage.success("项目及关联数据已永久删除")
-    await load(projects.value.length === 1 && page.value > 1 ? page.value - 1 : page.value)
-  } catch (error) {
-    if (error === "cancel" || error === "close") return
-    ElMessage.error(messageFor(error, "永久删除项目失败"))
+    loading.value = false
   }
 }
 
@@ -273,10 +238,12 @@ onBeforeUnmount(() => { if (taskRefreshTimer) clearInterval(taskRefreshTimer) })
         <el-table-column prop="buyer_name" label="需求方" min-width="150" />
         <el-table-column label="项目状态"><template #default="{ row }"><el-tag :type="statusTagType(row.status)" effect="plain">{{ PROJECT_STATUS_LABELS[row.status] }}</el-tag></template></el-table-column>
         <el-table-column label="导入状态"><template #default="{ row }">{{ IMPORT_STATUS_LABELS[row.import_status] }}</template></el-table-column>
-        <el-table-column label="后台任务" min-width="260"><template #default="{ row }"><template v-if="taskFor(row)"><el-tag>{{ taskFor(row)!.status === 'RUNNING' && taskFor(row)!.cancel_requested_at ? '正在终止' : taskLabels[taskFor(row)!.status] }}</el-tag><span> {{ taskFor(row)!.progress_percent }}%</span><small style="display:block">{{ ASYNC_TASK_KIND_LABELS[taskFor(row)!.task_kind] ?? taskFor(row)!.task_kind }}</small><small style="display:block">心跳：{{ taskFor(row)!.heartbeat_at ?? '尚未领取' }}</small><small v-if="taskFor(row)!.error_message">{{ taskFor(row)!.error_message }}</small><AsyncTaskActions :task="taskFor(row)!" :mapping-permission="row.project_type === 'FILTER_RECOMMENDATION' ? 'bid:update' : 'recommendation:create'" @changed="load()" /></template><span v-else>—</span></template></el-table-column>
+        <el-table-column label="后台任务" min-width="220"><template #default="{ row }"><template v-if="taskFor(row)"><el-tag>{{ taskLabels[taskFor(row)!.status] }}</el-tag><span> {{ taskFor(row)!.progress_percent }}%</span><small style="display:block">心跳：{{ taskFor(row)!.heartbeat_at ?? '尚未领取' }}</small><small v-if="taskFor(row)!.error_message">{{ taskFor(row)!.error_message }}</small></template><span v-else>—</span></template></el-table-column>
+        <el-table-column prop="total_item_count" label="需求总数" />
+        <el-table-column prop="processed_item_count" label="匹配处理数" />
         <el-table-column prop="start_at" label="开始时间" min-width="170" />
         <el-table-column prop="deadline_at" label="截止时间" min-width="170" />
-        <el-table-column label="操作" min-width="150"><template #default="{ row }"><RouterLink :to="row.recommendation_type === 'TYPE_3_CATEGORY' ? `/bid-projects/${row.id}/type3-recommendation` : row.project_type === 'FREE_RECOMMENDATION' ? `/bid-projects/${row.id}/recommendation` : row.project_type === 'PPT_SOLUTION' ? `/bid-projects/${row.id}/ppt-solution` : `/bid-projects/${row.id}/workbench`"><el-button link type="primary">{{ row.project_type === 'FILTER_RECOMMENDATION' ? '进入工作台' : '详情' }}</el-button></RouterLink><el-button v-if="auth.hasPermission('bid:void')" link type="danger" @click="purgeProject(row)">删除项目</el-button></template></el-table-column>
+        <el-table-column label="操作"><template #default="{ row }"><RouterLink :to="row.recommendation_type === 'TYPE_3_CATEGORY' ? `/bid-projects/${row.id}/type3-recommendation` : row.project_type === 'FREE_RECOMMENDATION' ? `/bid-projects/${row.id}/recommendation` : row.project_type === 'PPT_SOLUTION' ? `/bid-projects/${row.id}/ppt-solution` : `/bid-projects/${row.id}/workbench`"><el-button link type="primary">{{ row.project_type === 'FILTER_RECOMMENDATION' ? '进入工作台' : '详情' }}</el-button></RouterLink></template></el-table-column>
       </el-table>
       <el-pagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next" :total="total" @current-change="load" @size-change="() => load(1)" />
     </el-card>

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 import tempfile
@@ -10,10 +9,8 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.async_work import run_blocking
 from app.common.contracts import AppError
 from app.core.config import get_settings
 from app.core.database import SessionLocal
@@ -167,7 +164,9 @@ class PptSolutionService:
             await self.repository.plan_generation_statuses(run_id),
         )
 
-    async def select_plan(self, plan_id: uuid.UUID, actor_id: uuid.UUID) -> PptSolutionPlanResponse:
+    async def select_plan(
+        self, plan_id: uuid.UUID, actor_id: uuid.UUID
+    ) -> PptSolutionPlanResponse:
         """Persist a chosen Type-5 plan and confirm exactly its frozen candidates.
 
         This remains a short, local transaction.  It is deliberately separate from
@@ -188,7 +187,9 @@ class PptSolutionService:
             plan.selected_by = actor_id
             plan.selected_at = datetime.now(UTC).replace(tzinfo=None)
             await self.session.flush()
-            candidates = {item.id: item for item in await self.repository.candidates(plan.run_id)}
+            candidates = {
+                item.id: item for item in await self.repository.candidates(plan.run_id)
+            }
             return self._plan_response(plan, candidates)
 
     async def create_generated_plans(self, run_id: uuid.UUID) -> list[PptSolutionPlanResponse]:
@@ -236,9 +237,9 @@ class PptSolutionService:
             run = await context_service.repository.run(run_id)
             if run is None:
                 raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
-            config = await RecommendationService(context_session).ppt_recommendation_config_for_run(
-                run_id
-            )
+            config = await RecommendationService(
+                context_session
+            ).ppt_recommendation_config_for_run(run_id)
             candidates = await context_service.repository.candidates(run_id)
             existing_slots = {
                 (item.price_band_index, item.plan_no)
@@ -301,9 +302,9 @@ class PptSolutionService:
             run = await context_service.repository.run(run_id)
             if run is None:
                 raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
-            config = await RecommendationService(context_session).ppt_recommendation_config_for_run(
-                run_id
-            )
+            config = await RecommendationService(
+                context_session
+            ).ppt_recommendation_config_for_run(run_id)
             candidates = await context_service.repository.candidates(run_id)
             scene_context = self._direct_selection_scene_context(run)
 
@@ -350,7 +351,8 @@ class PptSolutionService:
                         422,
                     )
                 selected_order = {
-                    candidate_id: index for index, candidate_id in enumerate(selected_ids, 1)
+                    candidate_id: index
+                    for index, candidate_id in enumerate(selected_ids, 1)
                 }
                 for candidate in persisted:
                     if candidate.id in selected_order:
@@ -363,7 +365,8 @@ class PptSolutionService:
                 if run_for_update.status != RecommendationRunStatus.RANKING.value:
                     raise AppError(
                         "PPT_DIRECT_SELECTION_STATE_INVALID",
-                        f"当前类型 5 任务不处于 AI 匹配阶段（当前状态：{run_for_update.status}）",
+                        "当前类型 5 任务不处于 AI 匹配阶段"
+                        f"（当前状态：{run_for_update.status}）",
                         409,
                     )
                 ensure_recommendation_transition(
@@ -391,9 +394,9 @@ class PptSolutionService:
             run = await context_service.repository.run(run_id)
             if run is None:
                 raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
-            config = await RecommendationService(context_session).ppt_recommendation_config_for_run(
-                run_id
-            )
+            config = await RecommendationService(
+                context_session
+            ).ppt_recommendation_config_for_run(run_id)
             if config.recommendation_mode not in {"COMBINATION", "MIXED"}:
                 raise AppError("PPT_COMBINATION_MODE_REQUIRED", "当前任务不是组合推品模式", 409)
             candidates = await context_service.repository.candidates(run_id)
@@ -949,8 +952,7 @@ class PptSolutionService:
                 if template is not None:
                     template_path = workdir / "customer-template.pptx"
                     await self.storage.copy_to(template.storage_key, template_path)
-                content = await run_blocking(
-                    self.renderer.render,
+                content = self.renderer.render(
                     source,
                     template_path=template_path,
                     product_images=product_images,
@@ -1010,18 +1012,6 @@ class PptSolutionService:
             # an explicit commit the output record is rolled back on session close
             # while the PPTX file has already been written to local storage.
             await self.session.commit()
-        except asyncio.CancelledError:
-            await self.session.rollback()
-            if saved_key:
-                # If the commit won the cancellation race, its published file
-                # must remain downloadable. Only discard an unpublished artifact.
-                async with SessionLocal() as check_session:
-                    published = await check_session.scalar(
-                        select(BidProjectFile.id).where(BidProjectFile.storage_key == saved_key)
-                    )
-                if published is None:
-                    await self.storage.delete(saved_key)
-            raise
         except AppError as exc:
             if saved_key:
                 await self.storage.delete(saved_key)

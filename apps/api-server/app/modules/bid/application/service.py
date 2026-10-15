@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import re
 import uuid
 from collections.abc import Mapping
@@ -37,14 +36,11 @@ from app.modules.bid.domain.lifecycle import (
     project_type_for_recommendation_type,
 )
 from app.modules.bid.infrastructure.models import (
-    BidItemSelection,
     BidProject,
     BidProjectEvent,
     BidProjectFile,
     BidProjectItem,
     BidTemplate,
-    MatchCandidate,
-    MatchTask,
 )
 from app.modules.bid.infrastructure.repository import BidProjectRepository
 from app.modules.bid.schemas import (
@@ -61,7 +57,6 @@ from app.modules.bid.schemas import (
     BidProjectFileResponse,
     BidProjectItemResponse,
     BidProjectListItem,
-    BidProjectPurgeResponse,
     BidProjectStatusResponse,
 )
 from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMNS
@@ -77,19 +72,6 @@ from app.modules.matching.application.type2_agent import (
     Type2InputColumnMapping,
     Type2TemplateMappingSuggestion,
 )
-from app.modules.recommendation.infrastructure.models import (
-    PptGenerationTask,
-    PptPlanGenerationStatus,
-    PptRecommendationConfig,
-    PptSolutionPackage,
-    PptSolutionPackageItem,
-    PptSolutionPlan,
-    RecommendationCandidate,
-    RecommendationCategoryChoice,
-    RecommendationConfirmation,
-    RecommendationExport,
-    RecommendationRun,
-)
 from app.modules.recommendation.template.models import RecommendationTemplateMapping
 from app.modules.recommendation.template.schemas import (
     RecommendationTemplateFileResponse,
@@ -97,18 +79,10 @@ from app.modules.recommendation.template.schemas import (
     RecommendationTemplateMappingUpdateRequest,
     RecommendationTemplateStructureResponse,
 )
-from app.modules.system.models import AsyncTask, MappingAnalysisCache
 from app.modules.system.service import BusinessSequenceService
-from app.modules.type3_recommendation.infrastructure.models import (
-    Type3Candidate,
-    Type3Export,
-    Type3Run,
-    Type3SheetConfig,
-)
 
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_PROJECT_ITEMS = 100_000
-logger = logging.getLogger(__name__)
 _PRODUCT_MASTER_TEMPLATE_PATH = (
     Path(__file__).resolve().parents[2] / "catalog" / "resources" / "product-master-template.xlsx"
 )
@@ -341,10 +315,14 @@ class BidProjectService:
                         created_by=actor_id,
                     )
                     project_output_mapping = dict(template.export_mapping)
-                if template is not None and recommendation_type not in {
-                    BidRecommendationType.TYPE_1_SPECIFICATION,
-                    BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT,
-                }:
+                if (
+                    template is not None
+                    and recommendation_type
+                    not in {
+                        BidRecommendationType.TYPE_1_SPECIFICATION,
+                        BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT,
+                    }
+                ):
                     parsed_rows = self._parse_rows(file_bytes, template)
                     import_status = BidImportStatus.PARSED.value
                     import_error = None
@@ -380,10 +358,14 @@ class BidProjectService:
                     else "类型2"
                 )
                 import_error = f"{business_label} AI 模板识别失败：{exc}"
-            if template is None and recommendation_type in {
-                BidRecommendationType.TYPE_1_SPECIFICATION,
-                BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT,
-            }:
+            if (
+                template is None
+                and recommendation_type
+                in {
+                    BidRecommendationType.TYPE_1_SPECIFICATION,
+                    BidRecommendationType.TYPE_2_IDENTIFIED_PRODUCT,
+                }
+            ):
                 template = self._manual_input_mapping_template(
                     file_bytes,
                     project_id=project_id,
@@ -392,7 +374,9 @@ class BidProjectService:
                 )
                 project_output_mapping = {}
                 import_status = BidImportStatus.MAPPING_REQUIRED.value
-                import_error = f"{import_error or 'AI 未生成字段建议'}；请人工选择客户需求字段"
+                import_error = (
+                    f"{import_error or 'AI 未生成字段建议'}；请人工选择客户需求字段"
+                )
         else:
             import_status = BidImportStatus.NOT_REQUIRED.value
             import_error = None
@@ -831,7 +815,9 @@ class BidProjectService:
         )
         available = set(self._header_columns(headers))
         mapping = {
-            key: value for key, value in template.import_mapping.items() if value in available
+            key: value
+            for key, value in template.import_mapping.items()
+            if value in available
         }
         return self._input_mapping_response(
             project,
@@ -874,7 +860,9 @@ class BidProjectService:
                     409,
                 )
             if payload.data_start_row <= payload.header_row:
-                raise AppError("BID_INPUT_MAPPING_ROW_INVALID", "数据起始行必须位于表头行之后", 422)
+                raise AppError(
+                    "BID_INPUT_MAPPING_ROW_INVALID", "数据起始行必须位于表头行之后", 422
+                )
             template_reference_count = await self.session.scalar(
                 select(func.count())
                 .select_from(BidProject)
@@ -884,7 +872,8 @@ class BidProjectService:
                 template = BidTemplate(
                     template_code=(
                         f"TYPE1_MANUAL_{project_id.hex.upper()}"
-                        if recommendation_type is BidRecommendationType.TYPE_1_SPECIFICATION
+                        if recommendation_type
+                        is BidRecommendationType.TYPE_1_SPECIFICATION
                         else f"TYPE2_MANUAL_{project_id.hex.upper()}"
                     ),
                     template_name=f"{template.template_name}·项目专属副本"[:255],
@@ -957,7 +946,9 @@ class BidProjectService:
             template.updated_by = actor_id
             parsed_rows = self._parse_rows(content, template)
             if not parsed_rows:
-                raise AppError("BID_EXCEL_NO_REQUIREMENT_ROWS", "确认映射后未解析到有效需求行", 422)
+                raise AppError(
+                    "BID_EXCEL_NO_REQUIREMENT_ROWS", "确认映射后未解析到有效需求行", 422
+                )
 
             await self.session.execute(
                 delete(BidProjectItem).where(BidProjectItem.project_id == project_id)
@@ -969,7 +960,10 @@ class BidProjectService:
             project.total_item_count = len(parsed_rows)
             project.processed_item_count = 0
             project.updated_by = actor_id
-            if previous_sheet != template.sheet_name or previous_header_row != template.header_row:
+            if (
+                previous_sheet != template.sheet_name
+                or previous_header_row != template.header_row
+            ):
                 project.output_mapping = {
                     key: value
                     for key, value in (project.output_mapping or {}).items()
@@ -1311,145 +1305,6 @@ class BidProjectService:
             submitted_file_id=project.submitted_file_id,
         )
 
-    async def purge(
-        self, project_id: uuid.UUID, confirm_project_code: str, actor_id: uuid.UUID
-    ) -> BidProjectPurgeResponse:
-        """Physically remove one project and every project-owned database row.
-
-        Active work is not removed underneath a Worker. Terminate it first and wait
-        for ``CANCELLED`` so its final domain transaction cannot race the purge.
-        """
-        del actor_id  # Project events are removed together with the project.
-        storage_keys: list[str] = []
-        async with transaction_scope(self.session):
-            project = await self._project_or_404(project_id, lock=True)
-            if project.project_code != confirm_project_code:
-                raise AppError("BID_PROJECT_PURGE_CONFIRM_MISMATCH", "项目编号确认不匹配", 422)
-            active_task = await self.session.scalar(
-                select(AsyncTask.id)
-                .where(
-                    AsyncTask.project_id == project_id,
-                    AsyncTask.status.in_(("PENDING", "RUNNING")),
-                )
-                .limit(1)
-                .with_for_update()
-            )
-            if active_task is not None:
-                raise AppError(
-                    "BID_PROJECT_PURGE_ACTIVE_TASK",
-                    "项目仍有运行或排队任务，请先终止并等待任务结束",
-                    409,
-                )
-            storage_keys = list(
-                await self.session.scalars(
-                    select(BidProjectFile.storage_key).where(
-                        BidProjectFile.project_id == project_id
-                    )
-                )
-            )
-            run_ids = select(RecommendationRun.id).where(RecommendationRun.project_id == project_id)
-            candidate_ids = select(RecommendationCandidate.id).where(
-                RecommendationCandidate.run_id.in_(run_ids)
-            )
-            package_ids = select(PptSolutionPackage.id).where(
-                PptSolutionPackage.run_id.in_(run_ids)
-            )
-            type3_run_ids = select(Type3Run.id).where(Type3Run.project_id == project_id)
-            project_item_ids = select(BidProjectItem.id).where(
-                BidProjectItem.project_id == project_id
-            )
-            match_task_ids = select(MatchTask.id).where(MatchTask.project_id == project_id)
-
-            await self.session.execute(
-                delete(PptSolutionPackageItem).where(
-                    PptSolutionPackageItem.package_id.in_(package_ids)
-                )
-            )
-            await self.session.execute(
-                delete(PptGenerationTask).where(PptGenerationTask.project_id == project_id)
-            )
-            await self.session.execute(
-                delete(RecommendationExport).where(RecommendationExport.project_id == project_id)
-            )
-            await self.session.execute(
-                delete(PptSolutionPackage).where(PptSolutionPackage.run_id.in_(run_ids))
-            )
-            await self.session.execute(
-                delete(PptSolutionPlan).where(PptSolutionPlan.run_id.in_(run_ids))
-            )
-            await self.session.execute(
-                delete(PptPlanGenerationStatus).where(PptPlanGenerationStatus.run_id.in_(run_ids))
-            )
-            await self.session.execute(
-                delete(RecommendationConfirmation).where(
-                    RecommendationConfirmation.candidate_id.in_(candidate_ids)
-                )
-            )
-            await self.session.execute(
-                delete(RecommendationCategoryChoice).where(
-                    RecommendationCategoryChoice.run_id.in_(run_ids)
-                )
-            )
-            await self.session.execute(
-                delete(RecommendationCandidate).where(RecommendationCandidate.run_id.in_(run_ids))
-            )
-            await self.session.execute(
-                delete(RecommendationRun).where(RecommendationRun.project_id == project_id)
-            )
-            await self.session.execute(
-                delete(PptRecommendationConfig).where(
-                    PptRecommendationConfig.project_id == project_id
-                )
-            )
-
-            await self.session.execute(
-                delete(Type3Export).where(Type3Export.run_id.in_(type3_run_ids))
-            )
-            await self.session.execute(
-                delete(Type3Candidate).where(Type3Candidate.run_id.in_(type3_run_ids))
-            )
-            await self.session.execute(delete(Type3Run).where(Type3Run.project_id == project_id))
-            await self.session.execute(
-                delete(Type3SheetConfig).where(Type3SheetConfig.project_id == project_id)
-            )
-
-            await self.session.execute(
-                delete(BidItemSelection).where(
-                    BidItemSelection.project_item_id.in_(project_item_ids)
-                )
-            )
-            await self.session.execute(
-                delete(MatchCandidate).where(MatchCandidate.match_task_id.in_(match_task_ids))
-            )
-            await self.session.execute(delete(MatchTask).where(MatchTask.project_id == project_id))
-            await self.session.execute(
-                delete(MappingAnalysisCache).where(MappingAnalysisCache.project_id == project_id)
-            )
-            await self.session.execute(delete(AsyncTask).where(AsyncTask.project_id == project_id))
-            await self.session.execute(
-                delete(RecommendationTemplateMapping).where(
-                    RecommendationTemplateMapping.project_id == project_id
-                )
-            )
-            await self.session.execute(
-                delete(BidProjectFile).where(BidProjectFile.project_id == project_id)
-            )
-            await self.session.execute(
-                delete(BidProjectItem).where(BidProjectItem.project_id == project_id)
-            )
-            await self.session.execute(
-                delete(BidProjectEvent).where(BidProjectEvent.project_id == project_id)
-            )
-            await self.session.delete(project)
-            await self.session.flush()
-
-        for storage_key in set(storage_keys):
-            try:
-                await self.storage.delete(storage_key)
-            except Exception:
-                logger.warning("project database purge left storage cleanup pending", exc_info=True)
-        return BidProjectPurgeResponse(id=project_id)
-
     async def advance_lifecycle(
         self,
         project_id: uuid.UUID,
@@ -1717,7 +1572,9 @@ class BidProjectService:
                 "BID_INPUT_MAPPING_NOT_SUPPORTED", "只有类型 1、2 支持需求字段映射", 409
             ) from exc
         if recommendation_type not in _INPUT_MAPPING_FIELDS:
-            raise AppError("BID_INPUT_MAPPING_NOT_SUPPORTED", "只有类型 1、2 支持需求字段映射", 409)
+            raise AppError(
+                "BID_INPUT_MAPPING_NOT_SUPPORTED", "只有类型 1、2 支持需求字段映射", 409
+            )
         if project.template_id is None:
             raise AppError("BID_TEMPLATE_REQUIRED", "AI 尚未生成客户表字段建议", 409)
         template = await self.session.get(BidTemplate, project.template_id)

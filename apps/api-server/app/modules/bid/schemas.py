@@ -200,22 +200,6 @@ class BidVoidRequest(BaseModel):
         return value
 
 
-class BidProjectPurgeRequest(BaseModel):
-    """Require the visible project code before irreversible deletion."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    confirm_project_code: str = Field(min_length=1, max_length=32)
-
-    @field_validator("confirm_project_code")
-    @classmethod
-    def strip_project_code(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("confirm_project_code must not be blank")
-        return value
-
-
 class BidResultRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -231,8 +215,3 @@ class BidProjectStatusResponse(BaseModel):
     id: UUID
     status: BidProjectStatus
     submitted_file_id: UUID | None
-
-
-class BidProjectPurgeResponse(BaseModel):
-    id: UUID
-    status: str = "PURGED"

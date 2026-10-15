@@ -157,48 +157,17 @@ class AsyncTaskService:
         ).all()
         return {task.project_id: self._response(task) for task in tasks}
 
-    async def cancel(self, task_id: UUID, actor_id: UUID | None = None) -> AsyncTaskResponse:
+    async def cancel(self, task_id: UUID) -> AsyncTaskResponse:
         async with transaction_scope(self.session):
             await self._lock_project_for_task(task_id)
             task = await self._task_for_update(task_id)
-            if task.status not in _ACTIVE_STATUSES:
-                raise AppError("ASYNC_TASK_CANCEL_NOT_ALLOWED", "任务已结束，不能再终止", 409)
-            if task.cancel_requested_at is None:
-                task.cancel_requested_at = self._now()
-                task.cancel_requested_by = actor_id or task.created_by
-                self.session.add(
-                    BidProjectEvent(
-                        project_id=task.project_id,
-                        actor_id=task.cancel_requested_by,
-                        event_type="ASYNC_TASK_CANCEL_REQUESTED",
-                        note=f"请求终止任务 {task.id}",
-                    )
-                )
-            if task.status == AsyncTaskStatus.PENDING.value:
-                await self._finish_cancelled(task)
-            else:
-                task.progress_message = "正在终止，等待 Worker 安全停止"
+            if task.status != AsyncTaskStatus.PENDING.value:
+                raise AppError("ASYNC_TASK_CANCEL_NOT_ALLOWED", "只能取消尚未执行的任务", 409)
+            task.status = AsyncTaskStatus.CANCELLED.value
+            task.completed_at = self._now()
+            task.progress_message = "任务已取消"
+            await finish_domain(self.session, task, "任务已取消", cancelled=True)
         return self._response(task)
-
-    async def acknowledge_cancel(self, task_id: UUID, *, attempt: int) -> None:
-        async with transaction_scope(self.session):
-            await self._lock_project_for_task(task_id)
-            task = await self._task_for_update(task_id)
-            if (
-                task.status == AsyncTaskStatus.RUNNING.value
-                and task.attempt_count == attempt
-                and task.cancel_requested_at is not None
-            ):
-                await self._finish_cancelled(task)
-
-    async def _finish_cancelled(self, task: AsyncTask) -> None:
-        task.status = AsyncTaskStatus.CANCELLED.value
-        task.completed_at = self._now()
-        task.lease_expires_at = None
-        task.progress_message = "任务已取消"
-        task.error_code = None
-        task.error_message = None
-        await finish_domain(self.session, task, "任务已取消", cancelled=True)
 
     async def retry(self, task_id: UUID) -> AsyncTaskResponse:
         async with transaction_scope(self.session):
@@ -242,8 +211,6 @@ class AsyncTaskService:
             task.heartbeat_at = None
             task.started_at = None
             task.completed_at = None
-            task.cancel_requested_at = None
-            task.cancel_requested_by = None
         return self._response(task)
 
     async def claim_next(
@@ -291,8 +258,7 @@ class AsyncTaskService:
             task.heartbeat_at = now
             task.lease_expires_at = now + timedelta(seconds=get_settings().task_lease_seconds)
             task.progress_percent = min(99, max(task.progress_percent, percent))
-            if task.cancel_requested_at is None:
-                task.progress_message = message[:500]
+            task.progress_message = message[:500]
 
     async def succeed(
         self, task_id: UUID, message: str = "任务完成", *, attempt: int | None = None
@@ -327,9 +293,6 @@ class AsyncTaskService:
             if task.status not in _ACTIVE_STATUSES or (
                 attempt is not None and task.attempt_count != attempt
             ):
-                return
-            if task.cancel_requested_at is not None:
-                await self._finish_cancelled(task)
                 return
             task.status = AsyncTaskStatus.FAILED.value
             task.error_code = code[:64]
@@ -434,8 +397,6 @@ class AsyncTaskService:
             heartbeat_at=task.heartbeat_at,
             started_at=task.started_at,
             completed_at=task.completed_at,
-            cancel_requested_at=task.cancel_requested_at,
-            cancel_requested_by=task.cancel_requested_by,
             created_by=task.created_by,
             created_at=task.created_at,
             updated_at=task.updated_at,
