@@ -95,7 +95,7 @@ class PptRenderer:
             if (
                 self._layout_preview
                 and template.version == "5"
-                and template.code in {"JD_DETAIL_RED", "CATALOG_MINIMAL"}
+                and template.code == "JD_DETAIL_RED"
             ):
                 self._layout_diagnostics_added = _contains_layout_preview_page(content)
             elif (
@@ -158,6 +158,17 @@ class PptRenderer:
                 template=template,
                 manifest=manifest,
                 layout_preview=self._layout_preview,
+            )
+        if template.version == "5" and template.code == "UNION_QUOTE_WHITE":
+            from app.modules.recommendation.application.ppt_official_template4_v5 import (
+                render_union_quote_white_v5,
+            )
+
+            return render_union_quote_white_v5(
+                source,
+                images=images,
+                template=template,
+                manifest=manifest,
             )
         if template.version == "5" and template.code == "CATALOG_MINIMAL":
             from app.modules.recommendation.application.ppt_official_template_catalog_v5 import (

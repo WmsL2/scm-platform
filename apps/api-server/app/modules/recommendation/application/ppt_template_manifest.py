@@ -77,6 +77,16 @@ PPTX_SLOT_MANIFESTS: dict[str, PptxSlotManifest] = {
 # keyed by both code and version so a historical task can never silently pick up
 # a later template asset.
 PPTX_VERSIONED_MANIFESTS: dict[tuple[str, str], PptxSlotManifest] = {
+    ("UNION_QUOTE_WHITE", "5"): PptxSlotManifest(
+        "模板4.pptx",
+        "UNION_QUOTE_WHITE_OFFICIAL_CLEAN_v5.pptx",
+        "5",
+        None,
+        0,
+        {"SCM_FIELD_UNION_BODY": 1, "SCM_FIELD_TITLE": 2},
+        (3,),
+        image_fit_modes=("contain",),
+    ),
     ("JD_DETAIL_RED", "5"): PptxSlotManifest(
         "模版1.pptx",
         "JD_DETAIL_RED_OFFICIAL_CLEAN_v5.pptx",

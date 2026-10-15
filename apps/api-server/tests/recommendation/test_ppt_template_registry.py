@@ -56,7 +56,7 @@ def test_local_v5_replacements_keep_the_same_template_labels(monkeypatch) -> Non
         "模板4",
         "模板5",
     ]
-    assert [item.version for item in templates] == ["5", "5", "5", "3", "1"]
+    assert [item.version for item in templates] == ["5", "5", "5", "5", "1"]
 
 
 def test_explicit_template_asset_directory_is_unavailable_when_it_lacks_an_asset(
