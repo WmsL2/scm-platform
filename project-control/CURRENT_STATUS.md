@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-15
 
+> 2026-10-15：分支 `codex/feat/type5-single-details-collapsible-ppt` 为类型 5 单品候选表新增冻结快照“查看详情”弹窗和默认展开的可折叠商品区。PPT 生成现允许项目仍在 `SELECTING` 时，只要当前 Run 已确认至少一件商品即可创建任务；生成不会将项目提前结束或锁定，人工确认与撤销确认可继续进行。未确认商品、非确认 Run 与其他状态仍受服务端拦截。模板卡现按“模板1”至“模板5”固定顺序展示（红白详情、节庆红、极简画册、工会报价、系统默认），仅改变展示名称及顺序，内部模板编码、版本和历史生成记录兼容不变。无 Migration、API 路径或权限变化；后端定向 MySQL 回归、Ruff、前端 Vitest、类型检查和生产构建通过，待浏览器真实点击验收。
+
 > 2026-10-15：分支 `fix/type4-run-result-refresh` 修复类型 4 推品完成后候选偶发不刷新的前端竞态，并调整确认后导出节奏。工作台用递增刷新代次拒绝迟到旧 Run 快照、轮询单飞，避免空候选页覆盖完成结果；在 `SELECTING` 中只要有已确认商品即可从候选工具栏生成版本化 Excel，项目/Run 保持可继续确认，只有完成选品后的导出才进入最终导出状态。确认商品数量不设 5,000 条上限。大批量导出 POST 专用超时提高至 15 分钟，避免浏览器 10 秒默认超时将后台已生成文件误报为失败。人工确认不再弹出补充字段表单，单件确认直接保存；所有不属于商品主数据的模板列不提供映射或推导，导出统一留空（包括“是否支持京东或者顺丰物流”）。无 Migration、DeepSeek 或权限变化；后端导出回归、Ruff、Mypy、前端 Vitest、类型检查和生产构建通过，待浏览器完成一次真实推品验收。
 
 > 2026-10-15：分支 `fix/type3-selection-status-sync` 修复类型 3 候选已生成却仍停在 `MATCHING` 的状态不同步。候选写入并计数成功后，项目现在在同一事务内转换到 `SELECTING` 并记录审计事件，人工确认控件随即解锁。对历史 `WAITING_CONFIRMATION` Run，新增加受 `recommendation:review` 保护的“恢复待选品”命令；它只在项目仍为 `MATCHING` 且确有候选时转换状态，不重新请求 AI。无 Migration；后端定向测试、Ruff 与前端类型检查通过，待浏览器点击验证。

@@ -807,15 +807,16 @@ class PptSolutionService:
             if project is None or run is None or run.project_id != project.id:
                 raise AppError("PPT_SOLUTION_PROJECT_NOT_FOUND", "PPT 方案项目不存在", 404)
             if project.status not in {
+                BidProjectStatus.SELECTING.value,
                 BidProjectStatus.READY.value,
                 BidProjectStatus.EXPORTED.value,
             }:
-                raise AppError("PPT_SOLUTION_NOT_READY", "请先完成商品选择", 409)
+                raise AppError("PPT_SOLUTION_NOT_READY", "请先确认至少一件商品", 409)
             if run.status not in {
                 RecommendationRunStatus.CONFIRMED.value,
                 RecommendationRunStatus.EXPORTED.value,
             }:
-                raise AppError("PPT_SOLUTION_RUN_NOT_CONFIRMED", "请先确认本次选品", 409)
+                raise AppError("PPT_SOLUTION_RUN_NOT_CONFIRMED", "请先确认至少一件商品", 409)
             if not await self.repository.confirmed_candidates(run_id):
                 raise AppError("PPT_SOLUTION_SELECTION_REQUIRED", "至少选择一个商品", 409)
             # The legacy flag remains accepted. A caller that omits the new field

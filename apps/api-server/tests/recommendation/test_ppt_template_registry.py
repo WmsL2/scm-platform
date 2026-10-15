@@ -10,15 +10,27 @@ from app.modules.recommendation.application.ppt_template_registry import (
 )
 
 
-def test_builtin_template_catalog_is_fixed_and_complete() -> None:
+def test_builtin_template_catalog_is_fixed_and_complete(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ppt_template_registry,
+        "is_local_v5_default_enabled",
+        lambda: False,
+    )
     templates = list_ppt_templates()
 
     assert [item.code for item in templates] == [
-        "SYSTEM_DEFAULT",
         "JD_DETAIL_RED",
         "JD_FESTIVE_RED",
         "CATALOG_MINIMAL",
         "UNION_QUOTE_WHITE",
+        "SYSTEM_DEFAULT",
+    ]
+    assert [item.name for item in templates] == [
+        "模板1",
+        "模板2",
+        "模板3",
+        "模板4",
+        "模板5",
     ]
     versions = {item.code: item.version for item in templates}
     assert versions["SYSTEM_DEFAULT"] == "1"
@@ -26,6 +38,25 @@ def test_builtin_template_catalog_is_fixed_and_complete() -> None:
     assert [item.template_code for item in PptSolutionService.list_templates()] == [
         item.code for item in templates
     ]
+
+
+def test_local_v5_replacements_keep_the_same_template_labels(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ppt_template_registry,
+        "is_local_v5_default_enabled",
+        lambda: True,
+    )
+
+    templates = list_ppt_templates()
+
+    assert [item.name for item in templates] == [
+        "模板1",
+        "模板2",
+        "模板3",
+        "模板4",
+        "模板5",
+    ]
+    assert [item.version for item in templates] == ["5", "5", "5", "3", "1"]
 
 
 def test_explicit_template_asset_directory_is_unavailable_when_it_lacks_an_asset(
