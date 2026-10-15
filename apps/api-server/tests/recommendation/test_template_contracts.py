@@ -21,7 +21,7 @@ def _workbook_bytes(headers: list[str]) -> bytes:
     return output.getvalue()
 
 
-def test_template_analysis_only_maps_frozen_headers() -> None:
+def test_template_analysis_only_maps_product_master_headers() -> None:
     analysis = analyze_template(_workbook_bytes(["一级类目", "品牌", "毛利", "是否厂直"]))
 
     assert analysis.sheet_name == "Sheet"
@@ -33,12 +33,11 @@ def test_template_analysis_only_maps_frozen_headers() -> None:
             {"column_index": 1, "field_key": "category_level1_name"},
             {"column_index": 2, "field_key": "brand"},
             {"column_index": 3, "field_key": "profit"},
-            {"column_index": 4, "field_key": "factory_direct"},
         ],
     }
 
 
-def test_template_aliases_keep_profit_distinct_from_gross_margin() -> None:
+def test_template_aliases_keep_profit_distinct_and_skip_non_product_fields() -> None:
     analysis = analyze_template(
         _workbook_bytes(
             ["名称", "大客户协议价", "毛利", "毛利率", "采销", "是否支持京东或者顺丰物流"]
@@ -52,7 +51,6 @@ def test_template_aliases_keep_profit_distinct_from_gross_margin() -> None:
             {"column_index": 3, "field_key": "profit"},
             {"column_index": 4, "field_key": "gross_margin"},
             {"column_index": 5, "field_key": "purchasing_agent"},
-            {"column_index": 6, "field_key": "supports_jd_or_sf"},
         ],
     }
 

@@ -30,6 +30,8 @@ from app.modules.bid.schemas import (
     BidProjectFileResponse,
     BidProjectItemResponse,
     BidProjectListItem,
+    BidProjectPurgeRequest,
+    BidProjectPurgeResponse,
     BidProjectStatusResponse,
     BidProjectUpdateRequest,
     BidResultRequest,
@@ -388,4 +390,20 @@ async def void_bid_project(
 ) -> ApiResponse[BidProjectStatusResponse]:
     return success(
         await BidProjectService(session).void(project_id, payload.reason, current.user_id)
+    )
+
+
+@router.delete("/{project_id}", response_model=ApiResponse[BidProjectPurgeResponse])
+async def purge_bid_project(
+    project_id: uuid.UUID,
+    payload: BidProjectPurgeRequest,
+    current: Annotated[
+        CurrentUser, Depends(require_permission_before_response("bid:void"))
+    ],
+    session: FunctionSessionDep,
+) -> ApiResponse[BidProjectPurgeResponse]:
+    return success(
+        await BidProjectService(session).purge(
+            project_id, payload.confirm_project_code, current.user_id
+        )
     )

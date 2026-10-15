@@ -144,7 +144,11 @@ export const recommendationApi = {
     return http.post(`${base}/${projectId}/runs/${runId}/commands/reopen-selection`)
   },
   export(projectId: string, runId: string): Promise<{ id: string; original_filename: string }> {
-    return http.post(`${base}/${projectId}/runs/${runId}/exports`)
+    // Workbook generation is synchronous today. Large confirmed result sets can
+    // legitimately take longer than the interactive client's 10-second default.
+    return http.post(`${base}/${projectId}/runs/${runId}/exports`, undefined, {
+      timeoutMs: 900_000,
+    })
   },
   downloadExport(runId: string, fileId: string): Promise<Blob> {
     return http.getBlob(`${base}/runs/${runId}/exports/${fileId}/download`)

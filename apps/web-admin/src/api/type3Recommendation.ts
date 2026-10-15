@@ -33,6 +33,7 @@ export const type3RecommendationApi = {
   unconfirmCandidates: (runId: string, payload: Type3CandidateUnconfirmation) => http.post<number>(`${base}/runs/${runId}/candidate-unconfirmations`, payload),
   completeSelection: (projectId: string, runId: string) => http.post<boolean>(`${base}/${projectId}/runs/${runId}/commands/complete-selection`),
   reopenSelection: (projectId: string, runId: string) => http.post<boolean>(`${base}/${projectId}/runs/${runId}/commands/reopen-selection`),
+  recoverSelection: (projectId: string, runId: string) => http.post<boolean>(`${base}/${projectId}/runs/${runId}/commands/recover-selection`),
   export: (projectId: string, runId: string) => http.post<{ id: string; original_filename: string }>(`${base}/${projectId}/runs/${runId}/exports`),
   download: (runId: string, fileId: string) => http.getBlob(`${base}/runs/${runId}/exports/${fileId}/download`),
 }

@@ -3,9 +3,15 @@
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
-日期：2026-10-14
+日期：2026-10-15
 
-> 2026-10-15 回退 PR 已准备：受保护的 `main` 不能强推，因此分支 `codex/revert-main-to-pr143` 以两个可审计 revert 恢复 PR #143（`8c33d09`）的业务代码状态，撤销 PR #144 / #145 的 MySQL 持久化队列、任务终止与项目永久删除改动。该 PR 尚未合入。已升级到 `20261014_0057`--`20261014_0061` 的环境不会自动降级；部署前必须单独核验 Alembic 当前版本并制定数据库回退方案，不得对用户数据库直接执行 downgrade。
+> 2026-10-15：分支 `fix/type4-run-result-refresh` 修复类型 4 推品完成后候选偶发不刷新的前端竞态，并调整确认后导出节奏。工作台用递增刷新代次拒绝迟到旧 Run 快照、轮询单飞，避免空候选页覆盖完成结果；在 `SELECTING` 中只要有已确认商品即可从候选工具栏生成版本化 Excel，项目/Run 保持可继续确认，只有完成选品后的导出才进入最终导出状态。确认商品数量不设 5,000 条上限。大批量导出 POST 专用超时提高至 15 分钟，避免浏览器 10 秒默认超时将后台已生成文件误报为失败。人工确认不再弹出补充字段表单，单件确认直接保存；所有不属于商品主数据的模板列不提供映射或推导，导出统一留空（包括“是否支持京东或者顺丰物流”）。无 Migration、DeepSeek 或权限变化；后端导出回归、Ruff、Mypy、前端 Vitest、类型检查和生产构建通过，待浏览器完成一次真实推品验收。
+
+> 2026-10-15：分支 `fix/type3-selection-status-sync` 修复类型 3 候选已生成却仍停在 `MATCHING` 的状态不同步。候选写入并计数成功后，项目现在在同一事务内转换到 `SELECTING` 并记录审计事件，人工确认控件随即解锁。对历史 `WAITING_CONFIRMATION` Run，新增加受 `recommendation:review` 保护的“恢复待选品”命令；它只在项目仍为 `MATCHING` 且确有候选时转换状态，不重新请求 AI。无 Migration；后端定向测试、Ruff 与前端类型检查通过，待浏览器点击验证。
+
+> 2026-10-15 回退 PR 已合入：受保护的 `main` 通过可审计 revert 恢复 PR #143（`8c33d09`）的业务代码状态，撤销 PR #144 / #145 的 MySQL 持久化队列、任务终止与项目永久删除改动。已升级到 `20261014_0057`--`20261014_0061` 的环境不会自动降级；部署前必须单独核验 Alembic 当前版本并制定数据库回退方案，不得对用户数据库直接执行 downgrade。
+
+> 2026-10-15：分支 `codex/feat/bid-project-permanent-delete` 已重新实现项目列表的受确认永久删除。删除将物理移除项目及项目专属的匹配、推荐、PPT、导出、附件和事件数据；不删除商品主数据、供应商或可复用投标模板。列表不再展示“需求总数”“匹配处理数”。无 Migration，API 仍复用既有 `bid:void` 权限；待提交 PR 及浏览器人工验收。
 
 
 
