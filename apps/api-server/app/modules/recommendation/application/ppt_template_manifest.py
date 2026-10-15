@@ -113,6 +113,16 @@ PPTX_VERSIONED_MANIFESTS: dict[tuple[str, str], PptxSlotManifest] = {
         (1, 8, 10, 9),
         image_fit_modes=("contain",) * 4,
     ),
+    ("CATALOG_MINIMAL", "5"): PptxSlotManifest(
+        "模版3.pptx",
+        "CATALOG_MINIMAL_OFFICIAL_CLEAN_v5.pptx",
+        "5",
+        None,
+        0,
+        {"SCM_FIELD_CATALOG_CONTENT": 1},
+        (0,),
+        image_fit_modes=("contain",),
+    ),
     ("JD_DETAIL_RED", "4"): PptxSlotManifest(
         "JD_DETAIL_RED.pptx",
         "JD_DETAIL_RED_CLEAN_v4-text-fix.pptx",
