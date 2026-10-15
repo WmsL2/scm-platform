@@ -65,6 +65,14 @@ _IMAGE_SLOT_GEOMETRY = {
     "SCM_SLOT_IMAGE_SUPPLEMENT_02": (7.983, 5.010, 1.811, 1.733),
     "SCM_SLOT_IMAGE_SUPPLEMENT_03": (9.912, 5.010, 1.811, 1.733),
 }
+_SUPPLEMENT_IMAGE_SLOT_NAMES = tuple(
+    name for name in _IMAGE_SLOT_GEOMETRY if name != "SCM_SLOT_IMAGE_MAIN"
+)
+# The reviewed template gives each supplementary image 124.8pt of height.  A
+# small, bounded reduction can absorb an otherwise harmless final text line;
+# pictures are still rendered with ``contain`` and therefore never stretched
+# or cropped.  Do not use this as a general text-overflow escape hatch.
+_MIN_SUPPLEMENT_IMAGE_HEIGHT_PT = 100.0
 _REFERENCE_TEXT = (
     "市场参考价：             京东大客户价：           折扣率：   \v"
     "SKU：                    市场参考价不要虚高，客户会查！",
@@ -613,6 +621,49 @@ def _move_shapes_after(
                 offsets[name] = offsets.get(name, 0) + delta
 
 
+def _compact_supplement_image_area(slots: Mapping[str, Any], required_delta: int) -> int:
+    """Recover only the approved spare height in the supplementary-image row.
+
+    The row stays in its original order and at its already-linked top position.
+    Reducing all three containers equally retains their alignment; ``_fill_image``
+    subsequently uses contain sizing, so the actual image aspect ratios remain
+    unchanged.  Returning the applied reduction makes residual overflow remain
+    a controlled capacity error.
+    """
+    if required_delta <= 0:
+        return 0
+    minimum_height = int(_MIN_SUPPLEMENT_IMAGE_HEIGHT_PT * _EMU_PER_POINT)
+    image_slots = [slots[name] for name in _SUPPLEMENT_IMAGE_SLOT_NAMES]
+    image_left = min(slot.left for slot in image_slots)
+    image_right = max(slot.left + slot.width for slot in image_slots)
+    image_top = min(slot.top for slot in image_slots)
+    image_bottom = max(slot.top + slot.height for slot in image_slots)
+    # The approved asset's unnamed coloured panel is the visual background for
+    # the three supplementary slots.  It deliberately remains an original
+    # customer shape (and therefore has no new public-asset name).  Locate it
+    # from its enclosing geometry rather than changing the frozen PPTX.
+    backgrounds = [
+        shape
+        for name, shape in slots.items()
+        if name not in _SUPPLEMENT_IMAGE_SLOT_NAMES
+        and shape.shape_type != MSO_SHAPE_TYPE.PICTURE
+        and shape.left <= image_left
+        and shape.left + shape.width >= image_right
+        and shape.top <= image_top
+        and shape.top + shape.height >= image_bottom
+    ]
+    background = max(backgrounds, key=lambda shape: shape.top, default=None)
+    available_delta = min(max(0, slot.height - minimum_height) for slot in image_slots)
+    applied_delta = min(required_delta, available_delta)
+    if not applied_delta:
+        return 0
+    for slot in image_slots:
+        slot.height -= applied_delta
+    if background is not None:
+        background.height -= applied_delta
+    return int(applied_delta)
+
+
 def _append_selling_points(shape: Any, items: list[str]) -> None:
     """Extend the customer bullet sequence while preserving its exact style."""
     if len(items) <= 4:
@@ -650,6 +701,7 @@ def _layout_diagnostic(
     title_lines: int,
     line_counts: Mapping[str, int],
     selling_lines: int,
+    supplement_compaction_pt: float,
 ) -> str:
     geometry_names = (
         "SCM_FIELD_TITLE",
@@ -679,6 +731,7 @@ def _layout_diagnostic(
         f"{required_bottom / _EMU_PER_POINT:.1f}pt，初始余量 "
         f"{(slide_height - initial_bottom) / _EMU_PER_POINT:.1f}pt；"
         f"商品名称={title_lines}行，属性值行数[{field_lines}]，卖点总行数={selling_lines}；"
+        f"补图区安全自适应收回 {supplement_compaction_pt:.1f}pt；"
         f"{geometry}"
     )
 
@@ -786,6 +839,13 @@ def _layout_dynamic_text(
         if original_tops[name] >= original_tops["SCM_FIELD_TITLE"]
     ]
     required_bottom = max(shape.top + shape.height for shape in managed)
+    supplement_compaction = 0
+    if required_bottom > slide_height:
+        supplement_compaction = _compact_supplement_image_area(
+            slots, required_bottom - slide_height
+        )
+        if supplement_compaction:
+            required_bottom = max(shape.top + shape.height for shape in managed)
     if required_bottom > slide_height:
         field = ", ".join(dict.fromkeys(expanded_fields)) or "dynamic_fields"
         diagnostic = _layout_diagnostic(
@@ -798,6 +858,7 @@ def _layout_dynamic_text(
             title_lines=title_lines,
             line_counts=reference_line_counts,
             selling_lines=selling_lines,
+            supplement_compaction_pt=supplement_compaction / _EMU_PER_POINT,
         )
         if not allow_overflow:
             raise _capacity_error(

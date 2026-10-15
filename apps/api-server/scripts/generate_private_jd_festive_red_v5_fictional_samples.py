@@ -136,6 +136,12 @@ def main() -> None:
         f"虚构卖点 {index}" for index in range(1, 7)
     )
     cases["six-selling-points"] = ({"single_products": [six_points]}, {})
+    seven_points = deepcopy(_item(11))
+    seven_points["product"].update(  # type: ignore[index]
+        product_name="宽" * 35,
+        selling_points="\n".join(f"虚构卖点 {index}" for index in range(1, 8)),
+    )
+    cases["seven-selling-points-adapted"] = ({"single_products": [seven_points]}, {})
     evidence: dict[str, object] = {
         "original_path": str(original),
         "original_sha256": sha256(original.read_bytes()).hexdigest(),
@@ -219,7 +225,7 @@ def main() -> None:
             for field, value in (
                 ("product_name", "宽" * 300),
                 ("sku", "W" * 100),
-                ("selling_points", "\n".join([f"虚构卖点 {i}" for i in range(1, 8)])),
+                ("selling_points", "\n".join(["宽" * 140 for _ in range(7)])),
             ):
                 item = deepcopy(_item(9))
                 item["product"][field] = value  # type: ignore[index]
