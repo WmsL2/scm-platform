@@ -654,6 +654,10 @@ async def test_type1_export_uses_original_workbook_and_only_fills_blank_result_c
     sheet.append(["物料名称", "规格参数", "供应商报价", "商品编码（sku）", "备注"])
     sheet.append(["硒鼓", "黑色，打印量3000页", None, None, None])
     sheet.append(["复印纸", "A4 80g", "客户原值", None, "客户已有备注"])
+    sheet.column_dimensions["C"].width = 18
+    sheet.column_dimensions["D"].width = 24
+    sheet.column_dimensions["E"].width = 30
+    sheet["C2"].number_format = "0.0000"
     source = BytesIO()
     workbook.save(source)
     workbook.close()
@@ -711,6 +715,22 @@ async def test_type1_export_uses_original_workbook_and_only_fills_blank_result_c
         ),
         (
             SimpleNamespace(
+                source_row_number=2,
+                unit="支",
+                buyer_item_code=None,
+                brand=None,
+                model=None,
+            ),
+            SimpleNamespace(
+                selected_unit_price=Decimal("90.0000"),
+                product_snapshot={"sku": "SKU-001-C"},
+                supplier_snapshot={},
+                price_snapshot={},
+                note="第三个规格匹配商品",
+            ),
+        ),
+        (
+            SimpleNamespace(
                 source_row_number=3,
                 unit="包",
                 buyer_item_code=None,
@@ -731,7 +751,7 @@ async def test_type1_export_uses_original_workbook_and_only_fills_blank_result_c
         result = BidProjectService(
             session, LocalFileStorage(tmp_path)
         )._build_export(
-            source.getvalue(), template, selections, expand_multiple_rows=True
+            source.getvalue(), template, selections, expand_type1_columns=True
         )
 
     exported = load_workbook(BytesIO(result), data_only=False)
@@ -742,14 +762,34 @@ async def test_type1_export_uses_original_workbook_and_only_fills_blank_result_c
         assert result_sheet["C2"].value == 88
         assert result_sheet["D2"].value == "SKU-001"
         assert result_sheet["E2"].value == "规格参数匹配"
-        assert result_sheet["A3"].value == "硒鼓"
-        assert result_sheet["B3"].value == "黑色，打印量3000页"
-        assert result_sheet["C3"].value == 89
-        assert result_sheet["D3"].value == "SKU-001-B"
-        assert result_sheet["E3"].value == "第二个规格匹配商品"
-        assert result_sheet["C4"].value == "客户原值"
-        assert result_sheet["D4"].value == "SKU-002"
-        assert result_sheet["E4"].value == "客户已有备注"
+        assert result_sheet["A3"].value == "复印纸"
+        assert result_sheet["B3"].value == "A4 80g"
+        assert result_sheet["C3"].value == "客户原值"
+        assert result_sheet["D3"].value == "SKU-002"
+        assert result_sheet["E3"].value == "客户已有备注"
+        assert result_sheet["F1"].value == "供应商报价"
+        assert result_sheet["G1"].value == "商品编码（sku）"
+        assert result_sheet["H1"].value == "备注"
+        assert result_sheet["F2"].value == 89
+        assert result_sheet["G2"].value == "SKU-001-B"
+        assert result_sheet["H2"].value == "第二个规格匹配商品"
+        assert result_sheet["F3"].value is None
+        assert result_sheet["G3"].value is None
+        assert result_sheet["H3"].value is None
+        assert result_sheet.max_row == 3
+        assert result_sheet["I1"].value == "供应商报价"
+        assert result_sheet["J1"].value == "商品编码（sku）"
+        assert result_sheet["K1"].value == "备注"
+        assert result_sheet["I2"].value == 90
+        assert result_sheet["J2"].value == "SKU-001-C"
+        assert result_sheet["K2"].value == "第三个规格匹配商品"
+        assert result_sheet["I3"].value is None
+        assert result_sheet["J3"].value is None
+        assert result_sheet["K3"].value is None
+        assert result_sheet.column_dimensions["F"].width == 18
+        assert result_sheet.column_dimensions["G"].width == 24
+        assert result_sheet.column_dimensions["H"].width == 30
+        assert result_sheet["F2"].number_format == "0.0000"
     finally:
         exported.close()
 

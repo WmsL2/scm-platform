@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-16
 
+> 2026-10-16：分支 `fix/type1-excel-fill-format` 将类型 1 多商品导出由纵向复制需求行改为同一行横向展开。第一件商品写原回填列，后续商品在右侧按当前项目人工确认的动态输出映射追加完整字段组；字段名称和数量不写死，只复制映射列的表头、列宽、列属性和单元格样式，客户原行数、需求顺序和已有内容保持不变。类型 2、AI 匹配、协议价限价、API、权限和数据库不变；自动化回归已覆盖，真实客户表浏览器下载及 Excel/WPS 视觉验收待完成。见 ADR-0069。
+
 > 2026-10-16：分支 `codex/fix/type5-shortfall-show-matched-only` 修正类型 5 单品价格档短缺处理：此前短缺路径绕过 AI 并显示完整冻结池，会让不在价格档内的商品也出现在人工确认表。现在每个有候选的价格档仍由 AI 执行匹配；目标数量高于可用数时只匹配该档实际可用数，并仅持久化 AI 匹配结果，同时保留短缺警告。全部价格档均无候选时仍失败。无 Migration、API 或权限变化；后端定向 28 passed、Ruff/Mypy 通过，前端 Vitest 2 passed、类型检查与生产构建通过；服务器浏览器验收待完成。见 ADR-0068。
 
 > 2026-10-16：分支 `codex/fix/type5-show-partial-candidates` 调整类型 5 单品价格档短缺的结果处理：某档合格商品少于目标时保留警告，但不再把 Run 标记失败或隐藏全部候选。服务端不调用 AI 排序，持久化本 Run 全部冻结合格商品并转入 `WAITING_CONFIRMATION`；前端在警告下展示候选表，运营可人工确认现有商品并继续生成 PPT。零候选、提供方及合同失败路径不变。无 Migration、API 或权限变化；后端定向 29 passed、Ruff/Mypy 通过，前端 Vitest 2 passed、类型检查与生产构建通过；服务器浏览器验收待完成。见 ADR-0067。

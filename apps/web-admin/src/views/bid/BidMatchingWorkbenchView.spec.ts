@@ -40,7 +40,8 @@ describe("BidMatchingWorkbenchView", () => {
   it("waits for explicit user confirmation before starting like Type 4", () => {
     expect(source).toContain("project?.status === 'IMPORTED'")
     expect(source).toContain('["SELECTING", "READY"].includes(status)')
-    expect(source).toContain("全部命中商品将逐行导出")
+    expect(source).toContain("全部命中商品将横向回填导出")
+    expect(source).toContain("在同一需求行右侧按回填字段组展开全部命中商品")
     expect(source).toContain("客户需求和回填字段已确认。请点击")
     expect(source).toContain('@click="startMatching"')
     expect(source).not.toContain("onMounted(() => void startMatching())")
