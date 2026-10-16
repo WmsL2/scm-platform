@@ -291,7 +291,7 @@ class PptSolutionService:
     async def retain_ai_matched_candidates(
         self, run_id: uuid.UUID, provider: StructuredProvider
     ) -> int:
-        """Keep one exact AI-matched product list per configured price band.
+        """Keep AI-matched products, or retain a short price band for manual review.
 
         The former Type-5 flow persisted several alternative plan cards.  Direct
         selection keeps just the one AI-selected list for each band, so the normal
@@ -308,17 +308,14 @@ class PptSolutionService:
             candidates = await context_service.repository.candidates(run_id)
             scene_context = self._direct_selection_scene_context(run)
 
+        shortfalls = self._direct_selection_shortfalls(config, candidates)
+        if shortfalls:
+            return await self._retain_partial_direct_candidates(run_id, shortfalls)
+
         runner = PptPlanAgentRunner(provider)
         selected_ids: list[uuid.UUID] = []
         selected_scores: dict[uuid.UUID, int] = {}
         for band_index, band in enumerate(config.price_bands, start=1):
-            permitted = runner.band_candidates(band, candidates)
-            if len(permitted) < band.item_count:
-                raise AppError(
-                    "PPT_DIRECT_SELECTION_POOL_INSUFFICIENT",
-                    f"第 {band_index} 个价格档候选商品不足，无法匹配 {band.item_count} 件商品",
-                    422,
-                )
             selected = await runner.select_direct_candidates(
                 band_index,
                 band,
@@ -378,6 +375,66 @@ class PptSolutionService:
                 )
                 run_for_update.status = RecommendationRunStatus.WAITING_CONFIRMATION.value
         return len(selected_ids)
+
+    async def _retain_partial_direct_candidates(
+        self, run_id: uuid.UUID, shortfalls: Sequence[tuple[int, int, int]]
+    ) -> int:
+        """Keep the frozen direct-selection pool when a band misses its target.
+
+        A configured item count is a target, not a reason to hide otherwise
+        eligible products. Unlike a provider failure, this is a usable manual
+        selection state: no AI ranking occurs and every frozen candidate remains
+        visible with a shortfall warning.
+        """
+        async with SessionLocal() as persist_session:
+            service = PptSolutionService(persist_session)
+            async with persist_session.begin():
+                run = await service.repository.run_for_update(run_id)
+                if run is None:
+                    raise AppError("RECOMMENDATION_RUN_NOT_FOUND", "推品任务不存在", 404)
+                if run.status != RecommendationRunStatus.RANKING.value:
+                    raise AppError(
+                        "PPT_DIRECT_SELECTION_STATE_INVALID",
+                        "当前类型 5 任务不处于 AI 匹配阶段"
+                        f"（当前状态：{run.status}）",
+                        409,
+                    )
+                candidates = await service.repository.candidates(run_id)
+                for candidate in candidates:
+                    candidate.score = None
+                    candidate.reason = "价格档候选不足，已保留全部合格商品供人工确认"
+                run.error = self._direct_selection_shortfall_message(shortfalls)
+                ensure_recommendation_transition(
+                    run.status, RecommendationRunStatus.CANDIDATES_READY
+                )
+                run.status = RecommendationRunStatus.CANDIDATES_READY.value
+                ensure_recommendation_transition(
+                    run.status, RecommendationRunStatus.WAITING_CONFIRMATION
+                )
+                run.status = RecommendationRunStatus.WAITING_CONFIRMATION.value
+        return len(candidates)
+
+    @classmethod
+    def _direct_selection_shortfalls(
+        cls,
+        config: PptFrozenRecommendationConfig,
+        candidates: Sequence[RecommendationCandidate],
+    ) -> list[tuple[int, int, int]]:
+        """Return ``(band index, eligible count, requested count)`` shortfalls."""
+        shortfalls: list[tuple[int, int, int]] = []
+        for index, band in enumerate(config.price_bands, start=1):
+            available = len(cls._band_candidates(candidates, band.min_price, band.max_price))
+            if available < band.item_count:
+                shortfalls.append((index, available, band.item_count))
+        return shortfalls
+
+    @staticmethod
+    def _direct_selection_shortfall_message(shortfalls: Sequence[tuple[int, int, int]]) -> str:
+        details = "；".join(
+            f"第 {index} 个价格档合格商品仅 {available} 件，少于目标 {requested} 件"
+            for index, available, requested in shortfalls
+        )
+        return f"{details}；已保留全部合格商品供人工确认。"
 
     async def retain_ai_matched_combinations(
         self, run_id: uuid.UUID, provider: StructuredProvider

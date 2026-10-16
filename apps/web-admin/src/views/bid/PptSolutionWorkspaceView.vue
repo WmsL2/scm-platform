@@ -58,6 +58,8 @@ const requestedCombinationCount = computed(() => recommendationConfig.price_band
 const combinationShortfall = computed(() => Math.max(0, requestedCombinationCount.value - plans.value.length))
 const selectionEditable = computed(() => project.value?.status === "SELECTING" && auth.hasPermission("recommendation:review"))
 const isRunProcessing = computed(() => ["QUEUED", "ANALYZING", "RETRIEVING", "RANKING"].includes(run.value?.status ?? ""))
+const directCandidateSelectionAvailable = computed(() => ["CANDIDATES_READY", "WAITING_CONFIRMATION", "CONFIRMED", "EXPORTED"].includes(run.value?.status ?? ""))
+const partialDirectCandidateResult = computed(() => !isCombinationMode.value && directCandidateSelectionAvailable.value && candidateTotal.value > 0 && Boolean(run.value?.error))
 const canComplete = computed(() => selectionEditable.value && (run.value?.candidate_page?.confirmed_total ?? 0) > 0)
 const canGenerate = computed(() => Boolean(
   run.value
@@ -174,10 +176,10 @@ onBeforeUnmount(stopRunPolling)
       <div class="combination-grid"><article v-for="plan in paginatedPlans" :key="plan.id" class="combination-card"><div class="combination-title"><div class="combination-title-main"><el-checkbox :model-value="isPlanSelected(plan)" :disabled="!selectionEditable || plan.is_selected" @change="(value: string | number | boolean) => setPlanSelected(plan, Boolean(value))" /><div><b>{{ plan.name }}</b><span>{{ plan.summary }}</span></div></div><el-tag :type="plan.is_selected ? 'success' : 'info'">{{ plan.is_selected ? '已确认' : '待确认' }}</el-tag></div><el-table :data="plan.items" size="small"><el-table-column type="index" width="52" /><el-table-column label="商品名称" min-width="220" show-overflow-tooltip><template #default="{ row }">{{ row.product_snapshot.product_name ?? '-' }}</template></el-table-column><el-table-column label="三级类目" min-width="140"><template #default="{ row }">{{ row.product_snapshot.category_level3_name ?? '-' }}</template></el-table-column><el-table-column label="协议价" width="120"><template #default="{ row }">{{ formatMoney(row.price_snapshot.agreement_price) }}</template></el-table-column><el-table-column label="操作" width="100" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openProductDetail(row)">查看详情</el-button></template></el-table-column></el-table><div class="combination-actions"><el-button type="primary" :disabled="!selectionEditable || plan.is_selected" :loading="acting" @click="confirmCombination(plan)">{{ plan.is_selected ? '已确认该组合' : '确认该组合' }}</el-button></div></article><el-empty v-if="plans.length === 0" description="暂无可确认的组合" /></div>
       <el-pagination v-model:current-page="planPage" v-model:page-size="planPageSize" :page-sizes="[10, 20, 50]" :total="plans.length" layout="total, sizes, prev, pager, next, jumper" @current-change="changePlanPage" @size-change="changePlanPageSize" />
     </el-card>
-    <el-card v-if="run && !run.error && !isRunProcessing && !isCombinationMode">
+    <el-card v-if="run && directCandidateSelectionAvailable && !isRunProcessing && !isCombinationMode">
       <template #header>
         <div class="card-header">
-          <div><strong>AI 匹配商品与人工确认</strong><span class="muted">AI 已按每档数量匹配商品；最终商品由人工勾选确认。</span></div>
+          <div><strong>{{ partialDirectCandidateResult ? '价格档候选不足，已保留合格商品' : 'AI 匹配商品与人工确认' }}</strong><span class="muted">{{ partialDirectCandidateResult ? '未达到目标数量，但当前价格档全部合格商品均可人工确认。' : 'AI 已按每档数量匹配商品；最终商品由人工勾选确认。' }}</span></div>
           <div class="selection-actions">
             <el-button :disabled="!selectionEditable || unconfirmedTotal === 0" @click="selectAllUnconfirmedCandidates">全选所有待确认（{{ unconfirmedTotal }}）</el-button>
             <el-button :disabled="!selectionEditable" @click="resetCandidateSelection">清空选择</el-button>
@@ -189,7 +191,7 @@ onBeforeUnmount(stopRunPolling)
           </div>
         </div>
       </template>
-      <div class="band-tags"><el-tag v-for="(_, index) in recommendationConfig.price_bands" :key="index" type="success">{{ bandLabel(index) }}<template v-if="frozenBandCount(index) !== null"> · 冻结候选 {{ frozenBandCount(index) }} 件</template></el-tag><span class="muted">本次冻结候选池 {{ frozenPoolStatistics?.frozen_candidate_count ?? "-" }} 件；AI 最终匹配 {{ candidateTotal }} 件，已确认 {{ run.candidate_page?.confirmed_total ?? 0 }} 件</span></div>
+      <div class="band-tags"><el-tag v-for="(_, index) in recommendationConfig.price_bands" :key="index" type="success">{{ bandLabel(index) }}<template v-if="frozenBandCount(index) !== null"> · 冻结候选 {{ frozenBandCount(index) }} 件</template></el-tag><span class="muted">本次冻结候选池 {{ frozenPoolStatistics?.frozen_candidate_count ?? "-" }} 件；{{ partialDirectCandidateResult ? `已保留 ${candidateTotal} 件合格商品` : `AI 最终匹配 ${candidateTotal} 件` }}，已确认 {{ run.candidate_page?.confirmed_total ?? 0 }} 件</span></div>
       <el-collapse v-model="directCandidatePanels" class="candidate-collapse">
         <el-collapse-item name="candidates">
           <template #title><strong>匹配商品</strong><span class="muted candidate-collapse-summary">共 {{ candidateTotal }} 件，已确认 {{ run.candidate_page?.confirmed_total ?? 0 }} 件</span></template>

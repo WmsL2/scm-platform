@@ -2,6 +2,8 @@
 
 状态：B_CORE_C_AGENT_WEB_INTEGRATED / EXPORT_IMPLEMENTED
 
+> 2026-10-16：类型 5 `SINGLE` 价格档候选不足时不再把 Run 标记为失败或隐藏已冻结商品。若任一价格档少于目标数量，后端不调用 AI 排序，保留本 Run 全部合格候选并进入 `WAITING_CONFIRMATION`；Run 警告逐档说明可用数与目标数，前端仍显示候选表、人工确认和后续 PPT 生成。候选为零以及提供方/合同失败保持既有终态。无 Migration、API 或权限变化；后端定向 29 passed、Ruff/Mypy 通过，前端 Vitest 2 passed、类型检查与生产构建通过；服务器浏览器验收待完成。见 ADR-0067。
+
 > 2026-10-16：类型 5 单品协议价硬筛现仅由工作台保存的页面价格档控制。客户备注中的费用档位、慰问标准、方案预算及其中的协议价文字不再映射为 `agreement_price_min/max`，避免与页面价格档相交后清空候选池；即使提供方仍返回预算或协议价范围，Type-5 专用适配层也会确定性忽略。明确京东价、毛利率、折扣率、强制品牌及受控类目保持硬筛，库存、履约、数量和反馈时间不参与硬筛。AI 评分与最终选择同样不得将费用档位重解释为淘汰门槛。无 Migration、API、UI 或权限变化；历史 Run 不回写，需重新生成。类型 5 定向回归 28 passed，Ruff 与 Mypy 通过；服务器浏览器验收待完成。见 ADR-0066。
 
 > 2026-10-15：模板 4 `UNION_QUOTE_WHITE` v5 的审核后 CLEAN 运行资产改为随仓库分发，并删除 `.gitignore` 中仅针对该文件的忽略规则。部署和 CI 现在可直接从 `assets/ppt-templates/UNION_QUOTE_WHITE_OFFICIAL_CLEAN_v5.pptx` 加载模板，不再依赖开发机本地资产；客户原始 PPT/TXT 仍不入库。资产大小 373,111 bytes，SHA-256 为 `701F5FA13A7F533B26E56207CD49ED5995A8528CE1C3637D23017BBE757C8BEF`。未修改模板渲染、推荐、报价、数据库、API、UI 或权限逻辑。
