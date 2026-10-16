@@ -333,7 +333,7 @@ onMounted(() => void load())
     <el-alert v-else-if="outputMapping && !outputMapping.confirmed" title="AI 已预填客户原表的回填列。请人工核对并确认；这里只决定结果写回哪些列，不参与商品匹配判断。" type="warning" :closable="false" />
     <el-alert v-else-if="project?.status === 'IMPORTED'" :title="isType2 ? '客户需求和回填字段已确认。请点击“执行 AI 同品比价”。' : '客户需求和回填字段已确认。请点击“开始规格匹配”。'" type="info" :closable="false" />
     <el-alert v-else-if="isType2" title="系统先按 SKU 或品牌+型号召回，再由 AI 复核重要附加条件；完全同品取合规最低协议价，只有需求明确允许且无合规同品时才推荐带差异备注的替代品。" type="success" :closable="false" />
-    <el-alert v-else-if="isType1" title="系统会保留全部满足规格参数且价格合规的商品；页面优先显示有匹配结果的需求行，导出仍按客户原表顺序，并在原需求行下逐行展开全部命中商品。" type="info" :closable="false" />
+    <el-alert v-else-if="isType1" title="系统会保留全部满足规格参数且价格合规的商品；页面优先显示有匹配结果的需求行，导出仍按客户原表顺序，并在同一需求行右侧按回填字段组展开全部命中商品。" type="info" :closable="false" />
     <el-alert v-else title="该工作台仅用于类型 1、2。" type="warning" :closable="false" />
 
     <el-card v-if="inputMapping" class="mapping-card">
@@ -394,7 +394,7 @@ onMounted(() => void load())
         <el-table-column prop="specification" label="规格" min-width="160" />
         <el-table-column prop="max_price" label="最高限价" />
         <el-table-column label="匹配状态"><template #default="{ row }"><el-tag>{{ ITEM_STATUS_LABELS[row.status] }}</el-tag></template></el-table-column>
-        <el-table-column label="匹配商品" min-width="190"><template #default="{ row }"><template v-if="row.current_selection"><div>{{ snapshot(row.current_selection, "product_snapshot").product_name }}</div><small>{{ snapshot(row.current_selection, "product_snapshot").brand }} {{ snapshot(row.current_selection, "product_snapshot").model }}</small><small v-if="isType1" class="match-hint">全部命中商品将逐行导出</small></template><span v-else>—</span></template></el-table-column>
+        <el-table-column label="匹配商品" min-width="190"><template #default="{ row }"><template v-if="row.current_selection"><div>{{ snapshot(row.current_selection, "product_snapshot").product_name }}</div><small>{{ snapshot(row.current_selection, "product_snapshot").brand }} {{ snapshot(row.current_selection, "product_snapshot").model }}</small><small v-if="isType1" class="match-hint">全部命中商品将横向回填导出</small></template><span v-else>—</span></template></el-table-column>
         <el-table-column label="供应商" min-width="170"><template #default="{ row }"><template v-if="row.current_selection">{{ snapshot(row.current_selection, "supplier_snapshot").supplier_name }}</template><span v-else>—</span></template></el-table-column>
         <el-table-column :label="isType2 ? '最低协议价' : '协议价'"><template #default="{ row }">{{ row.current_selection?.selected_unit_price ?? "—" }}</template></el-table-column>
         <el-table-column v-if="isType2" label="推荐类型" width="110"><template #default="{ row }"><el-tag v-if="row.current_selection" :type="snapshot(row.current_selection, 'product_snapshot').type2_match_type === 'TYPE2_AI_SUBSTITUTE' ? 'warning' : 'success'">{{ snapshot(row.current_selection, "product_snapshot").type2_match_type === "TYPE2_AI_SUBSTITUTE" ? "同类型替代" : "完全同品" }}</el-tag><span v-else>—</span></template></el-table-column>
