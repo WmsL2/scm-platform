@@ -3,7 +3,9 @@
 项目：众诚智链商品管理平台
 Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
-日期：2026-10-15
+日期：2026-10-16
+
+> 2026-10-16：分支 `codex/fix/type5-fee-tier-not-single-price` 修复类型 5 将客户备注中的费用档位、慰问标准或方案预算错误映射为单品协议价硬筛的问题。新 Run 的单品协议价只由工作台价格档决定；需求解析提示词与服务端适配层双重禁止将预算或协议价文本写入 `agreement_price_min/max`，因此页面 `0--50` 档不会再与“100/200/300/500 元费用档位”相交而清空候选池。明确京东价、毛利率、折扣率、强制品牌和受控类目保持原硬筛；AI 评分及最终选择也不把费用档位重新视作淘汰门槛。无 Migration、API、UI 或权限变化；历史 Run 不回写，需重新生成。类型 5 定向回归 28 passed、Ruff 与 Mypy 通过；服务器浏览器验收待完成；见 ADR-0066。
 
 > 2026-10-15：分支 `codex/feat/product-price-inflation-filter` 为商品主数据列表和全选导出范围增加价格虚高比例闭区间筛选。页面与折扣率一致采用百分数输入（如 `30` 表示正式值 `0.3`），服务端在列表和 selection-ids 端点同时校验及执行范围条件。Revision `20261015_0057` 为该筛选增加索引；无权限、商品字段语义、导入、匹配或推荐规则变化。
 

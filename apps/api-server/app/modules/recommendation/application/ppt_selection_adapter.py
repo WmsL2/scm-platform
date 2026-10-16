@@ -35,13 +35,22 @@ class PptSelectionServiceTools(PptCatalogTools):
         self.model = model
         self.prompt_version = prompt_version
 
-    async def prepare(self, analysis: RequirementAnalysis) -> CategoryCatalogSnapshot:
-        requirement = ParsedRequirement(
+    @staticmethod
+    def _parsed_requirement(analysis: RequirementAnalysis) -> ParsedRequirement:
+        """Build the deterministic Type-5 catalogue filters.
+
+        The configured Type-5 price bands are the sole authority for a single
+        product's agreement-price range. Welfare fee tiers and proposal budgets
+        in the requirement describe the proposal context, not a second
+        per-product agreement-price condition.
+        """
+        return ParsedRequirement(
             requirement_version="ppt-v8",
             gross_margin_min=analysis.gross_margin_min,
             gross_margin_max=analysis.gross_margin_max,
-            agreement_price_min=analysis.agreement_price_min or analysis.budget_min,
-            agreement_price_max=analysis.agreement_price_max or analysis.budget_max,
+            # Never map requirement budget or agreement-price values here. The
+            # saved Type-5 bands control product agreement price, and intersecting
+            # an inferred welfare budget with those bands can empty a valid pool.
             jd_price_min=analysis.jd_price_min,
             jd_price_max=analysis.jd_price_max,
             discount_rate_min=analysis.discount_rate_min,
@@ -50,6 +59,9 @@ class PptSelectionServiceTools(PptCatalogTools):
             explicit_category_keywords=analysis.explicit_category_keywords,
             category_intents=[],
         )
+
+    async def prepare(self, analysis: RequirementAnalysis) -> CategoryCatalogSnapshot:
+        requirement = self._parsed_requirement(analysis)
         async with SessionLocal() as session:
             await PptCatalogService(session).config_for_run(self.run_id)
         async with SessionLocal() as session:

@@ -22,9 +22,11 @@ class FakeProvider:
     def __init__(self, outputs: list[Any]) -> None:
         self.outputs = outputs
         self.response_models: list[str] = []
+        self.system_prompts: list[str] = []
 
     async def structured_completion(self, **kwargs: Any) -> Any:
         self.response_models.append(kwargs["response_model"].__name__)
+        self.system_prompts.append(kwargs["system_prompt"])
         return self.outputs.pop(0)
 
 
@@ -73,3 +75,26 @@ async def test_type5_runner_selects_categories_but_does_not_rank_products() -> N
     assert tools.category_keys == ["c1"]
     assert result.candidates == []
     assert provider.response_models == ["RequirementAnalysis", "CategoryCatalogMatch"]
+
+
+@pytest.mark.asyncio
+async def test_type5_runner_does_not_treat_welfare_fee_tiers_as_single_product_prices() -> None:
+    analysis = RequirementAnalysis(
+        summary="员工慰问品",
+        keywords=["慰问品"],
+        budget_min=100,
+        budget_max=500,
+        agreement_price_min=100,
+        agreement_price_max=500,
+    )
+    provider = FakeProvider([analysis])
+    tools = FakePptTools()
+
+    await PptSelectionAgentRunner(provider, tools).run(
+        "会员慰问品费用档位为 100 元、200 元、300 元和 500 元，需要食品方案。"
+    )
+
+    prompt = provider.system_prompts[0]
+    assert "页面价格档唯一控制" in prompt
+    assert "费用档位、慰问标准、方案预算" in prompt
+    assert "agreement_price_min/max 或 budget_min/max" in prompt
