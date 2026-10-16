@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-16
 
+> 2026-10-16：分支 `codex/fix/type5-shortfall-show-matched-only` 修正类型 5 单品价格档短缺处理：此前短缺路径绕过 AI 并显示完整冻结池，会让不在价格档内的商品也出现在人工确认表。现在每个有候选的价格档仍由 AI 执行匹配；目标数量高于可用数时只匹配该档实际可用数，并仅持久化 AI 匹配结果，同时保留短缺警告。全部价格档均无候选时仍失败。无 Migration、API 或权限变化；后端定向 28 passed、Ruff/Mypy 通过，前端 Vitest 2 passed、类型检查与生产构建通过；服务器浏览器验收待完成。见 ADR-0068。
+
 > 2026-10-16：分支 `codex/fix/type5-show-partial-candidates` 调整类型 5 单品价格档短缺的结果处理：某档合格商品少于目标时保留警告，但不再把 Run 标记失败或隐藏全部候选。服务端不调用 AI 排序，持久化本 Run 全部冻结合格商品并转入 `WAITING_CONFIRMATION`；前端在警告下展示候选表，运营可人工确认现有商品并继续生成 PPT。零候选、提供方及合同失败路径不变。无 Migration、API 或权限变化；后端定向 29 passed、Ruff/Mypy 通过，前端 Vitest 2 passed、类型检查与生产构建通过；服务器浏览器验收待完成。见 ADR-0067。
 
 > 2026-10-16：分支 `codex/fix/type5-fee-tier-not-single-price` 修复类型 5 将客户备注中的费用档位、慰问标准或方案预算错误映射为单品协议价硬筛的问题。新 Run 的单品协议价只由工作台价格档决定；需求解析提示词与服务端适配层双重禁止将预算或协议价文本写入 `agreement_price_min/max`，因此页面 `0--50` 档不会再与“100/200/300/500 元费用档位”相交而清空候选池。明确京东价、毛利率、折扣率、强制品牌和受控类目保持原硬筛；AI 评分及最终选择也不把费用档位重新视作淘汰门槛。无 Migration、API、UI 或权限变化；历史 Run 不回写，需重新生成。类型 5 定向回归 28 passed、Ruff 与 Mypy 通过；服务器浏览器验收待完成；见 ADR-0066。

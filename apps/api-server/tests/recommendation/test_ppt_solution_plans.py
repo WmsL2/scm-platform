@@ -80,7 +80,7 @@ def test_plan_is_not_created_when_the_price_band_has_too_few_products() -> None:
     assert plans == []
 
 
-def test_direct_selection_shortfall_keeps_all_available_candidates_for_manual_review() -> None:
+def test_direct_selection_shortfall_keeps_only_ai_matched_candidates_for_manual_review() -> None:
     config = PptFrozenRecommendationConfig(
         recommendation_mode="SINGLE",
         price_bands=[{"min_price": "0", "max_price": "50", "item_count": 8}],
@@ -91,8 +91,8 @@ def test_direct_selection_shortfall_keeps_all_available_candidates_for_manual_re
     shortfalls = PptSolutionService._direct_selection_shortfalls(config, candidates)
 
     assert shortfalls == [(1, 3, 8)]
-    assert PptSolutionService._direct_selection_shortfall_message(shortfalls) == (
-        "第 1 个价格档合格商品仅 3 件，少于目标 8 件；已保留全部合格商品供人工确认。"
+    assert PptSolutionService._direct_selection_shortfall_message(shortfalls, 3) == (
+        "第 1 个价格档合格商品仅 3 件，少于目标 8 件；已 AI 匹配 3 件商品供人工确认。"
     )
 
 

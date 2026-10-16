@@ -88,7 +88,7 @@ function candidateImageUrl(candidate: RecommendationCandidate): string | undefin
 function productDetailImageUrl(item: PptSolutionPlanItem | RecommendationCandidate): string | undefined { const reference = item.product_snapshot.image_reference; if (typeof reference !== "string" || !reference) return undefined; if (/^https?:\/\//i.test(reference)) return reference; return `${(import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")}/${reference.replace(/^\//, "")}` }
 function productDetailValue(item: PptSolutionPlanItem | RecommendationCandidate, key: string): string { const value = item.product_snapshot[key] ?? item.price_snapshot[key]; return value === null || value === undefined || value === "" ? "-" : String(value) }
 function candidateColumnValue(candidate: RecommendationCandidate, column: RecommendationCandidateOptionalColumn): string { const value = column.key === "supplier_name" ? candidate.supplier_snapshot.supplier_name : candidate.product_snapshot[column.key] ?? candidate.price_snapshot[column.key]; if (value === null || value === undefined || value === "") return "-"; if (column.format === "money") return formatMoney(value); if (column.format === "percent") { const ratio = Number(value); return Number.isFinite(ratio) ? `${(ratio * 100).toFixed(2)}%` : String(value) }; return String(value) }
-function bandLabel(index: number): string { const band = recommendationConfig.price_bands[index]; return isCombinationMode.value ? `${band.min_price ?? 0}–${band.max_price} 元 · AI 生成 ${band.item_count} 组组合` : `${band.min_price ?? 0}–${band.max_price} 元 · AI 匹配 ${band.item_count} 件` }
+function bandLabel(index: number): string { const band = recommendationConfig.price_bands[index]; return isCombinationMode.value ? `${band.min_price ?? 0}–${band.max_price} 元 · AI 生成 ${band.item_count} 组组合` : `${band.min_price ?? 0}–${band.max_price} 元 · 匹配目标 ${band.item_count} 件` }
 function frozenBandCount(index: number): number | null { return frozenPoolStatistics.value?.price_bands.find((item) => item.price_band_index === index + 1)?.frozen_candidate_count ?? null }
 
 async function load(): Promise<void> {
@@ -179,7 +179,7 @@ onBeforeUnmount(stopRunPolling)
     <el-card v-if="run && directCandidateSelectionAvailable && !isRunProcessing && !isCombinationMode">
       <template #header>
         <div class="card-header">
-          <div><strong>{{ partialDirectCandidateResult ? '价格档候选不足，已保留合格商品' : 'AI 匹配商品与人工确认' }}</strong><span class="muted">{{ partialDirectCandidateResult ? '未达到目标数量，但当前价格档全部合格商品均可人工确认。' : 'AI 已按每档数量匹配商品；最终商品由人工勾选确认。' }}</span></div>
+          <div><strong>{{ partialDirectCandidateResult ? '价格档候选不足，已保留 AI 匹配商品' : 'AI 匹配商品与人工确认' }}</strong><span class="muted">{{ partialDirectCandidateResult ? '未达到目标数量，但仅展示 AI 在各价格档实际匹配出的商品，可人工确认。' : 'AI 已按每档数量匹配商品；最终商品由人工勾选确认。' }}</span></div>
           <div class="selection-actions">
             <el-button :disabled="!selectionEditable || unconfirmedTotal === 0" @click="selectAllUnconfirmedCandidates">全选所有待确认（{{ unconfirmedTotal }}）</el-button>
             <el-button :disabled="!selectionEditable" @click="resetCandidateSelection">清空选择</el-button>
@@ -191,7 +191,7 @@ onBeforeUnmount(stopRunPolling)
           </div>
         </div>
       </template>
-      <div class="band-tags"><el-tag v-for="(_, index) in recommendationConfig.price_bands" :key="index" type="success">{{ bandLabel(index) }}<template v-if="frozenBandCount(index) !== null"> · 冻结候选 {{ frozenBandCount(index) }} 件</template></el-tag><span class="muted">本次冻结候选池 {{ frozenPoolStatistics?.frozen_candidate_count ?? "-" }} 件；{{ partialDirectCandidateResult ? `已保留 ${candidateTotal} 件合格商品` : `AI 最终匹配 ${candidateTotal} 件` }}，已确认 {{ run.candidate_page?.confirmed_total ?? 0 }} 件</span></div>
+      <div class="band-tags"><el-tag v-for="(_, index) in recommendationConfig.price_bands" :key="index" type="success">{{ bandLabel(index) }}<template v-if="frozenBandCount(index) !== null"> · 冻结候选 {{ frozenBandCount(index) }} 件</template></el-tag><span class="muted">本次冻结候选池 {{ frozenPoolStatistics?.frozen_candidate_count ?? "-" }} 件；{{ partialDirectCandidateResult ? `AI 实际匹配 ${candidateTotal} 件` : `AI 最终匹配 ${candidateTotal} 件` }}，已确认 {{ run.candidate_page?.confirmed_total ?? 0 }} 件</span></div>
       <el-collapse v-model="directCandidatePanels" class="candidate-collapse">
         <el-collapse-item name="candidates">
           <template #title><strong>匹配商品</strong><span class="muted candidate-collapse-summary">共 {{ candidateTotal }} 件，已确认 {{ run.candidate_page?.confirmed_total ?? 0 }} 件</span></template>
