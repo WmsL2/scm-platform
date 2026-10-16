@@ -78,4 +78,10 @@ describe("PptSolutionWorkspaceView", () => {
     expect(source).toContain("priceBandErrors[index]")
     expect(source).toContain("if (!validatePriceBands())")
   })
+
+  it("keeps the newest no-candidate run visible instead of falling back to history", () => {
+    expect(source).toContain("const preferred = history[0]")
+    expect(source).toContain("run?.status === 'NO_CANDIDATES'")
+    expect(source).toContain("历史候选不会混入")
+  })
 })

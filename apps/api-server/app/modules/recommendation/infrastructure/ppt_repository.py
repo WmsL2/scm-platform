@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.modules.bid.domain.lifecycle import BidFileType, BidProjectType
+from app.modules.bid.domain.product_scope import ProductSelectionScope
 from app.modules.bid.infrastructure.models import BidProject, BidProjectFile
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Product
@@ -83,7 +84,12 @@ class PptSolutionRepository:
             ),
         )
 
-    async def category_pool(self, requirement: ParsedRequirement) -> list[tuple[CategoryPath, int]]:
+    async def category_pool(
+        self,
+        requirement: ParsedRequirement,
+        *,
+        product_scope: ProductSelectionScope = ProductSelectionScope(),
+    ) -> list[tuple[CategoryPath, int]]:
         """Type-5-owned V8 catalogue source; do not call the Type-4 repository."""
         statement = (
             select(
@@ -94,7 +100,7 @@ class PptSolutionRepository:
             )
             .select_from(Product)
             .join(Supplier, Product.source_supplier_id == Supplier.id)
-            .where(*self._eligibility_filters(requirement))
+            .where(*self._eligibility_filters(requirement, product_scope=product_scope))
             .where(Product.category_level3_name.is_not(None))
             .group_by(
                 Product.category_level1_name,
@@ -131,12 +137,16 @@ class PptSolutionRepository:
         )
 
     async def all_eligible_products(
-        self, requirement: ParsedRequirement, category_paths: Sequence[CategoryPath]
+        self,
+        requirement: ParsedRequirement,
+        category_paths: Sequence[CategoryPath],
+        *,
+        product_scope: ProductSelectionScope = ProductSelectionScope(),
     ) -> list[tuple[Product, Supplier]]:
         statement = (
             select(Product, Supplier)
             .join(Supplier, Product.source_supplier_id == Supplier.id)
-            .where(*self._eligibility_filters(requirement))
+            .where(*self._eligibility_filters(requirement, product_scope=product_scope))
             .order_by(Product.positive_rating.desc(), Product.id)
         )
         if category_paths:
@@ -163,7 +173,11 @@ class PptSolutionRepository:
         return bool(value)
 
     @staticmethod
-    def _eligibility_filters(requirement: ParsedRequirement) -> list[ColumnElement[bool]]:
+    def _eligibility_filters(
+        requirement: ParsedRequirement,
+        *,
+        product_scope: ProductSelectionScope = ProductSelectionScope(),
+    ) -> list[ColumnElement[bool]]:
         """Keep Type-5 V8 hard filtering local to this repository."""
         filters: list[ColumnElement[bool]] = [
             Product.status == ProductStatus.ACTIVE,
@@ -171,6 +185,10 @@ class PptSolutionRepository:
             Supplier.cooperation_status == CooperationStatus.NORMAL,
             Supplier.is_deleted.is_(False),
         ]
+        if product_scope.company_names:
+            filters.append(Product.company_name.in_(product_scope.company_names))
+        if product_scope.purchasing_agents:
+            filters.append(Product.purchasing_agent.in_(product_scope.purchasing_agents))
         for field, column, comparison in (
             ("gross_margin_min", Product.gross_margin, "min"),
             ("gross_margin_max", Product.gross_margin, "max"),

@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
+import { Setting } from "@element-plus/icons-vue"
 import { useRoute } from "vue-router"
+import { bidApi } from "../../api/bid"
 import {
   type3RecommendationApi,
   type Type3Candidate,
@@ -17,10 +19,20 @@ import {
 } from "../../api/type3Recommendation"
 import { HttpError } from "../../shared/http"
 import { useAuthStore } from "../../stores/auth"
+import type { BidProjectDetail } from "../../types/bid"
+import {
+  RECOMMENDATION_CANDIDATE_OPTIONAL_COLUMNS,
+  restoreRecommendationCandidateOptionalColumns,
+  updateRecommendationCandidateOptionalColumns,
+  type RecommendationCandidateOptionalColumn,
+  type RecommendationCandidateOptionalColumnKey,
+} from "./recommendationCandidateColumns"
+import RecommendationProductScopeForm from "./RecommendationProductScopeForm.vue"
 
 const route = useRoute()
 const auth = useAuthStore()
 const projectId = String(route.params.id)
+const project = ref<BidProjectDetail>()
 const preview = ref<Type3Preview>()
 const selected = ref<Record<string, string[]>>({})
 const activeSheetName = ref("")
@@ -40,6 +52,10 @@ const candidateSheetSummaries = ref<Type3CandidateSheetSummary[]>([])
 const resultSheetName = ref<string>()
 const resultPage = ref(1)
 const resultPageSize = ref(50)
+const candidateColumnStorageKey = "scm.type3-candidates.visible-columns.v1"
+const selectedCandidateOptionalColumns = ref<RecommendationCandidateOptionalColumnKey[]>(
+  restoreRecommendationCandidateOptionalColumns(localStorage.getItem(candidateColumnStorageKey)),
+)
 const selectedCandidateIds = ref<Set<string>>(new Set())
 const excludedCandidateIds = ref<Set<string>>(new Set())
 const selectAllUnconfirmed = ref(false)
@@ -78,6 +94,9 @@ const selectableCandidates = computed(() => candidateRows.value.filter((candidat
 const confirmedCandidates = computed(() => candidateRows.value.filter((candidate) => candidate.confirmed_at))
 const pageAllSelected = computed(() => selectableCandidates.value.length > 0 && selectableCandidates.value.every(isCandidateSelected))
 const pagePartiallySelected = computed(() => selectableCandidates.value.some(isCandidateSelected) && !pageAllSelected.value)
+const visibleCandidateColumns = computed(() => selectedCandidateOptionalColumns.value
+  .map((key) => RECOMMENDATION_CANDIDATE_OPTIONAL_COLUMNS.find((column) => column.key === key))
+  .filter((column): column is RecommendationCandidateOptionalColumn => column !== undefined))
 const selectionEditable = computed(() => projectStatus.value === "SELECTING" && auth.hasPermission("recommendation:review"))
 const selectionRecoveryAvailable = computed(() => Boolean(active.value) && projectStatus.value === "MATCHING" && active.value?.status === "WAITING_CONFIRMATION" && auth.hasPermission("recommendation:review"))
 const resultSheetLabel = computed(() => resultSheetName.value ?? "全部来源 Sheet")
@@ -197,8 +216,20 @@ async function selectAllConfirmedCandidates(): Promise<void> {
   excludedConfirmedCandidateIds.value = new Set()
 }
 function productValue(candidate: Type3Candidate, key: string): string { const value = candidate.product_snapshot[key] ?? candidate.price_snapshot[key]; return value === null || value === undefined || value === "" ? "-" : String(value) }
+function isCandidateColumnSelected(key: RecommendationCandidateOptionalColumnKey): boolean { return selectedCandidateOptionalColumns.value.includes(key) }
+function updateCandidateColumnSelection(key: RecommendationCandidateOptionalColumnKey, checked: unknown): void {
+  selectedCandidateOptionalColumns.value = updateRecommendationCandidateOptionalColumns(selectedCandidateOptionalColumns.value, key, Boolean(checked))
+  localStorage.setItem(candidateColumnStorageKey, JSON.stringify(selectedCandidateOptionalColumns.value))
+}
 function moneyValue(value: unknown): string { if (value === null || value === undefined || value === "") return "-"; const numeric = Number(value); return Number.isFinite(numeric) ? `¥ ${numeric.toFixed(2)}` : String(value) }
 function ratioValue(value: unknown): string { if (value === null || value === undefined || value === "") return "-"; const numeric = Number(value); return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(2)}%` : String(value) }
+function candidateColumnValue(candidate: Type3Candidate, column: RecommendationCandidateOptionalColumn): string {
+  const value = candidate.product_snapshot[column.key] ?? candidate.price_snapshot[column.key]
+  if (value === null || value === undefined || value === "") return "-"
+  if (column.format === "money") return moneyValue(value)
+  if (column.format === "percent") return ratioValue(value)
+  return String(value)
+}
 function candidateImageUrl(candidate: Type3Candidate): string | undefined { const reference = candidate.product_snapshot.image_reference; if (typeof reference !== "string" || !reference) return undefined; if (/^https?:\/\//i.test(reference)) return reference; return `${(import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")}/${reference.replace(/^\//, "")}` }
 function openDetail(candidate: Type3Candidate): void { detailCandidate.value = candidate; detailVisible.value = true }
 async function loadCandidateSheets(): Promise<void> { if (!active.value) { candidateSheetSummaries.value = []; return }; candidateSheetSummaries.value = await type3RecommendationApi.candidateSheets(active.value.id) }
@@ -221,7 +252,8 @@ async function changeResultSheet(sheetName?: string): Promise<void> { resultShee
 async function changeResultPage(page: number): Promise<void> { resultPage.value = page; await loadCandidates() }
 async function changeResultPageSize(pageSize: number): Promise<void> { resultPageSize.value = pageSize; resultPage.value = 1; await loadCandidates() }
 async function load(): Promise<void> {
-  const [workbookPreview, savedSheets, fields] = await Promise.all([type3RecommendationApi.preview(projectId), type3RecommendationApi.savedSelections(projectId), type3RecommendationApi.exportFields(projectId)])
+  const [projectDetail, workbookPreview, savedSheets, fields] = await Promise.all([bidApi.get(projectId), type3RecommendationApi.preview(projectId), type3RecommendationApi.savedSelections(projectId), type3RecommendationApi.exportFields(projectId)])
+  project.value = projectDetail
   preview.value = workbookPreview; restoreSavedSelections(savedSheets); savedSelectionSignature.value = sheetSignature(savedSheets); activeSheetName.value ||= workbookPreview.sheets[0]?.sheet_name ?? ""
   exportFields.value = fields; await loadOutputStructure(); runs.value = await type3RecommendationApi.runs(projectId); active.value = runs.value[0]; resultSheetName.value = undefined; resultPage.value = 1; resetCandidateSelection(); await refreshResults()
 }
@@ -243,7 +275,7 @@ async function start(): Promise<void> {
   if (!Object.values(selected.value).some((nodes) => nodes.length > 0)) { ElMessage.error("请先选择 Sheet，并勾选至少一个类目"); return }
   if (selectedSheetsMissingMapping.value.length) { ElMessage.error(`请先配置导出字段映射：${selectedSheetsMissingMapping.value.map((sheet) => sheet.sheet_name).join("、")}`); return }
   busy.value = true
-  try { const startedRun = await type3RecommendationApi.start(projectId, selectedSheets()); savedSelectionSignature.value = currentSelectionSignature.value; runs.value = await type3RecommendationApi.runs(projectId); active.value = runs.value.find((run) => run.id === startedRun.id) ?? startedRun; resultSheetName.value = undefined; resultPage.value = 1; resetCandidateSelection(); await refreshResults(); if (active.value.status === "FAILED") ElMessage.error(active.value.error ?? "类型 3 解析失败") } catch (error) { ElMessage({ message: message(error, "生成候选失败"), type: "error", grouping: true }) } finally { busy.value = false }
+  try { const startedRun = await type3RecommendationApi.start(projectId, selectedSheets()); savedSelectionSignature.value = currentSelectionSignature.value; runs.value = await type3RecommendationApi.runs(projectId); active.value = runs.value.find((run) => run.id === startedRun.id) ?? startedRun; resultSheetName.value = undefined; resultPage.value = 1; resetCandidateSelection(); await refreshResults(); if (active.value.status === "FAILED") ElMessage.error(active.value.error ?? "类型 3 解析失败"); else if (active.value.status === "NO_CANDIDATES") ElMessage.warning("当前商品范围和所选 Sheet/类目下没有候选商品") } catch (error) { ElMessage({ message: message(error, "生成候选失败"), type: "error", grouping: true }) } finally { busy.value = false }
 }
 async function confirmCandidates(): Promise<void> {
   if (!active.value || selectedCandidateCount.value === 0) { ElMessage.warning("请先勾选需要确认的候选商品"); return }
@@ -283,6 +315,7 @@ onMounted(() => { void load().catch((error) => ElMessage.error(message(error, "�
 <template>
   <div class="workspace">
     <header><p>TYPE 3 · SHEET CATEGORY SELECTION</p><h1>指定类目推品</h1><span>先选择 Sheet，再勾选一级、二级或三级类目。备注独立由 AI 分析；泛类目可映射多个用途相关的真实三级类目，但不会扩展为无关类目。</span></header>
+    <el-card class="scope-card"><RecommendationProductScopeForm :project="project" :disabled="busy || !auth.hasPermission('bid:update')" @updated="project = $event" /></el-card>
     <el-card class="selector-card">
       <template #header><div class="selector-title"><strong>1. 选择 Sheet 与类目</strong><span>当前选择 {{ selectedSheets().length }} 个 Sheet、{{ Object.values(selected).flat().length }} 个类目 <el-tag :type="selectionDirty ? 'warning' : 'success'" size="small">{{ selectionDirty ? '未保存' : '已确认保存' }}</el-tag></span></div></template>
       <div class="selector-layout">
@@ -311,14 +344,15 @@ onMounted(() => { void load().catch((error) => ElMessage.error(message(error, "�
     <el-card v-if="active">
       <template #header><div class="result-header"><div><strong>候选商品与人工确认</strong><span class="muted">当前仅展示 {{ resultSheetLabel }} 的候选；候选按来源 Sheet 隔离，确认和导出也不会串到其他 Sheet。</span></div><el-tag :type="active.status === 'FAILED' ? 'danger' : 'info'">{{ active.status }}</el-tag></div></template>
       <el-alert v-if="active.error" :title="active.error" type="error" :closable="false" class="run-error" />
+      <el-alert v-else-if="active.status === 'NO_CANDIDATES'" title="本次商品范围和所选 Sheet/类目下没有候选商品" description="当前显示的是最新一次生成结果，可调整所属公司、采销员或 Sheet/类目后重新生成。" type="warning" :closable="false" class="run-error" />
       <el-alert v-if="runIsOutdated" :title="`当前页面已保存/选择 ${scopeSignature(currentSelectionSummary)}；但下方是历史 Run，只按 ${scopeSignature(runSelectionSummary)} 生成。请点击“保存并重新生成候选”，旧结果不会自动混入新 Sheet。`" type="warning" :closable="false" class="run-error" />
       <div v-else class="run-scope"><span>本次 Run 实际范围：</span><el-tag v-for="sheet in runSelectionSummary" :key="sheet.sheet_name" type="success">{{ sheet.sheet_name }} · {{ sheet.selected_node_count }} 类目</el-tag></div>
       <div class="result-sheet-tabs"><el-button :type="resultSheetName ? 'default' : 'primary'" @click="changeResultSheet()">全部来源 Sheet（{{ candidateSheetSummaries.reduce((total, item) => total + item.total, 0) }}）</el-button><el-button v-for="sheet in candidateSheetSummaries" :key="sheet.sheet_name" :type="resultSheetName === sheet.sheet_name ? 'primary' : 'default'" @click="changeResultSheet(sheet.sheet_name)">{{ sheet.sheet_name }}（{{ sheet.total }}）</el-button></div>
-      <div v-if="candidateTotal" class="candidate-toolbar"><div><el-checkbox :model-value="pageAllSelected" :indeterminate="pagePartiallySelected" :disabled="!selectionEditable || selectableCandidates.length === 0" @change="(value: string | number | boolean) => setCurrentPageSelected(Boolean(value))">全选本页待确认</el-checkbox><span class="muted"> {{ candidateTotal }} 件候选，{{ candidatePage?.confirmed_total ?? 0 }} 件已确认</span></div><div class="selection-actions"><el-button :disabled="!selectionEditable" @click="setCurrentPageSelected(true)">全选本页待确认</el-button><el-button :disabled="!selectionEditable" @click="selectAllPendingCandidates">全选{{ resultSheetName ? '当前 Sheet' : '全部 Sheet' }}待确认商品</el-button><el-button :disabled="!selectionEditable" @click="setCurrentPageConfirmedSelected(true)">全选本页已确认</el-button><el-button :disabled="!selectionEditable" @click="selectAllConfirmedCandidates">全选{{ resultSheetName ? '当前 Sheet' : '全部 Sheet' }}已确认商品</el-button><el-button :disabled="!selectionEditable" @click="resetCandidateSelection">清空选择</el-button><el-button v-if="auth.hasPermission('recommendation:review')" type="primary" :loading="busy" :disabled="!selectionEditable || selectedCandidateCount === 0" @click="confirmCandidates">批量确认选中（{{ selectedCandidateCount }}）</el-button><el-button v-if="auth.hasPermission('recommendation:review')" type="danger" plain :loading="busy" :disabled="!selectionEditable || selectedConfirmedCandidateCount === 0" @click="unconfirmCandidates">批量撤销确认（{{ selectedConfirmedCandidateCount }}）</el-button></div></div>
+      <div v-if="candidateTotal" class="candidate-toolbar"><div><el-checkbox :model-value="pageAllSelected" :indeterminate="pagePartiallySelected" :disabled="!selectionEditable || selectableCandidates.length === 0" @change="(value: string | number | boolean) => setCurrentPageSelected(Boolean(value))">全选本页待确认</el-checkbox><span class="muted"> {{ candidateTotal }} 件候选，{{ candidatePage?.confirmed_total ?? 0 }} 件已确认</span></div><div class="selection-actions"><el-button :disabled="!selectionEditable" @click="setCurrentPageSelected(true)">全选本页待确认</el-button><el-button :disabled="!selectionEditable" @click="selectAllPendingCandidates">全选{{ resultSheetName ? '当前 Sheet' : '全部 Sheet' }}待确认商品</el-button><el-button :disabled="!selectionEditable" @click="setCurrentPageConfirmedSelected(true)">全选本页已确认</el-button><el-button :disabled="!selectionEditable" @click="selectAllConfirmedCandidates">全选{{ resultSheetName ? '当前 Sheet' : '全部 Sheet' }}已确认商品</el-button><el-button :disabled="!selectionEditable" @click="resetCandidateSelection">清空选择</el-button><el-popover placement="bottom-end" :width="340" trigger="click"><template #reference><el-button :icon="Setting">自定义显示列</el-button></template><p class="column-picker-hint">商品图片、SKU、商品名称和来源 Sheet 固定显示；其余列按勾选先后依次显示。</p><div class="column-picker"><el-checkbox v-for="option in RECOMMENDATION_CANDIDATE_OPTIONAL_COLUMNS" :key="option.key" :model-value="isCandidateColumnSelected(option.key)" @change="(checked: unknown) => updateCandidateColumnSelection(option.key, checked)">{{ option.label }}</el-checkbox></div></el-popover><el-button v-if="auth.hasPermission('recommendation:review')" type="primary" :loading="busy" :disabled="!selectionEditable || selectedCandidateCount === 0" @click="confirmCandidates">批量确认选中（{{ selectedCandidateCount }}）</el-button><el-button v-if="auth.hasPermission('recommendation:review')" type="danger" plain :loading="busy" :disabled="!selectionEditable || selectedConfirmedCandidateCount === 0" @click="unconfirmCandidates">批量撤销确认（{{ selectedConfirmedCandidateCount }}）</el-button></div></div>
       <el-table v-if="candidateTotal" :data="candidateRows" row-key="id" max-height="640">
         <el-table-column width="52" fixed="left"><template #default="{ row }"><el-checkbox :model-value="row.confirmed_at ? isConfirmedCandidateSelected(row) : isCandidateSelected(row)" :disabled="!selectionEditable" @change="(value: string | number | boolean) => row.confirmed_at ? setConfirmedCandidateSelected(row, Boolean(value)) : setCandidateSelected(row, Boolean(value))" /></template></el-table-column><el-table-column prop="rank" label="序号" width="70" fixed="left" />
         <el-table-column label="商品图片" width="108" fixed="left"><template #default="{ row }"><el-image v-if="candidateImageUrl(row)" class="candidate-image" :src="candidateImageUrl(row)" fit="contain" :preview-src-list="[candidateImageUrl(row)!]" preview-teleported /><div v-else class="image-placeholder">暂无图片</div></template></el-table-column><el-table-column label="SKU" min-width="140" fixed="left"><template #default="{ row }">{{ productValue(row, 'sku') }}</template></el-table-column><el-table-column label="商品名称" min-width="240" show-overflow-tooltip fixed="left"><template #default="{ row }">{{ productValue(row, 'product_name') }}</template></el-table-column>
-        <el-table-column label="来源 Sheet" min-width="140" show-overflow-tooltip><template #default="{ row }">{{ row.sheet_name }}</template></el-table-column><el-table-column label="京东价" min-width="115"><template #default="{ row }">{{ moneyValue(row.price_snapshot.jd_price ?? row.product_snapshot.jd_price) }}</template></el-table-column><el-table-column label="折扣率" min-width="105"><template #default="{ row }">{{ ratioValue(row.price_snapshot.discount_rate ?? row.product_snapshot.discount_rate) }}</template></el-table-column><el-table-column label="一级类目" min-width="130"><template #default="{ row }">{{ productValue(row, 'category_level1_name') }}</template></el-table-column><el-table-column label="二级类目" min-width="130"><template #default="{ row }">{{ productValue(row, 'category_level2_name') }}</template></el-table-column><el-table-column label="三级类目" min-width="130"><template #default="{ row }">{{ productValue(row, 'category_level3_name') }}</template></el-table-column>
+        <el-table-column label="来源 Sheet" min-width="140" show-overflow-tooltip><template #default="{ row }">{{ row.sheet_name }}</template></el-table-column><el-table-column v-for="column in visibleCandidateColumns" :key="column.key" :label="column.label" :min-width="column.minWidth" show-overflow-tooltip><template #default="{ row }">{{ candidateColumnValue(row, column) }}</template></el-table-column>
         <el-table-column label="确认状态" width="110" fixed="right"><template #default="{ row }"><el-tag :type="row.confirmed_at ? 'success' : 'info'">{{ row.confirmed_at ? '已确认' : '待确认' }}</el-tag></template></el-table-column><el-table-column label="操作" width="180" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openDetail(row)">查看详情</el-button><el-button v-if="!row.confirmed_at && selectionEditable" link type="primary" :loading="busy" @click="confirmOne(row)">确认选品</el-button><el-button v-else-if="row.confirmed_at && selectionEditable" link type="danger" :loading="busy" @click="unconfirmOne(row)">撤销确认</el-button></template></el-table-column>
       </el-table>
       <el-empty v-else description="当前范围暂无候选商品" /><el-pagination v-if="candidateTotal" v-model:current-page="resultPage" v-model:page-size="resultPageSize" :page-sizes="[20, 50, 100, 200]" :total="candidateTotal" layout="total, sizes, prev, pager, next" @current-change="changeResultPage" @size-change="changeResultPageSize" />
@@ -331,4 +365,5 @@ onMounted(() => { void load().catch((error) => ElMessage.error(message(error, "�
 
 <style scoped>
 .workspace{display:grid;gap:18px}.workspace>header{padding:24px 28px;border-radius:14px;background:linear-gradient(135deg,#edf5ff,#f2f8f5)}h1{margin:4px 0}header p{margin:0;color:#2670ca;font-weight:700}.selector-title,.node-toolbar,.node-actions,.actions,.manual-add,.manual-nodes,.result-header,.candidate-toolbar,.selection-actions,.result-sheet-tabs,.mapping-meta,.snapshot-detail{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.selector-title,.result-header,.candidate-toolbar{justify-content:space-between}.selector-title span,.node-toolbar span,.node-actions span,.muted,.snapshot-note{color:#909399;font-size:13px}.selector-layout{display:grid;grid-template-columns:250px minmax(0,1fr);min-height:470px;border:1px solid #ebeef5;border-radius:10px;overflow:hidden}.sheet-list{background:#fafcff;border-right:1px solid #ebeef5;padding:12px;display:grid;align-content:start;gap:8px}.sheet-list-title{padding:4px 8px;color:#909399;font-size:13px}.sheet-list button{display:flex;align-items:center;justify-content:space-between;gap:8px;border:0;border-radius:7px;background:transparent;padding:11px 10px;text-align:left;color:#303133;cursor:pointer}.sheet-list button:hover,.sheet-list button.active{background:#ecf5ff;color:#1677d2}.node-panel{padding:20px;min-width:0}.node-toolbar{justify-content:space-between}.node-toolbar>div{display:grid;gap:4px}.search-input{max-width:360px}.manual-add{margin-top:14px;padding:12px;background:#f8fbff;border:1px dashed #b3d8ff;border-radius:7px}.manual-add .el-input{max-width:320px}.manual-level{width:120px}.manual-nodes{width:100%;padding-top:4px;color:#606266;font-size:13px}.node-actions{justify-content:space-between;margin:16px 0 10px;padding:9px 12px;background:#fafafa;border-radius:6px}.node-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px;min-height:260px;align-content:start}.node-option{display:flex;margin:0!important;padding:9px 10px;border:1px solid #ebeef5;border-radius:7px;white-space:normal}.node-option:hover{border-color:#a0cfff;background:#f5faff}.node-option span{margin-left:6px}.node-option small{margin-left:auto;color:#a8abb2}.mapping-tip{margin-bottom:16px}.mapping-meta{margin-bottom:16px}.mapping-table{overflow:hidden;border:1px solid #e4e7ed;border-radius:8px;max-height:620px;overflow-y:auto}.mapping-table-head,.mapping-row{display:grid;grid-template-columns:minmax(240px,1fr) minmax(280px,1fr);gap:16px;align-items:center;padding:10px 14px}.mapping-table-head{position:sticky;top:0;background:#f5f7fa;color:#606266;font-weight:600;z-index:1}.mapping-row+.mapping-row{border-top:1px solid #ebeef5}.template-column{display:flex;align-items:center;gap:10px;min-width:0}.column-index{display:inline-grid;place-items:center;width:26px;height:26px;flex:0 0 auto;border-radius:50%;background:#ecf5ff;color:#409eff;font-size:12px}.result-sheet-tabs{padding:0 0 14px;border-bottom:1px solid #ebeef5}.candidate-toolbar{margin:16px 0}.run-error{margin-bottom:14px}.candidate-image,.detail-image{width:72px;height:72px}.detail-image{flex:0 0 auto}.image-placeholder{display:grid;place-items:center;width:72px;height:72px;color:#909399;background:#f5f7fa;border-radius:4px;font-size:12px}.snapshot-detail .el-descriptions{flex:1;min-width:min(560px,100%)}.snapshot-note{margin:12px 0 0}.el-pagination{justify-content:flex-end;margin-top:18px}@media(max-width:760px){.selector-layout{grid-template-columns:1fr}.sheet-list{border-right:0;border-bottom:1px solid #ebeef5;grid-template-columns:repeat(2,minmax(0,1fr))}.sheet-list-title{grid-column:1/-1}.node-toolbar{align-items:stretch}.search-input{max-width:none;width:100%}.node-grid{grid-template-columns:1fr}.candidate-toolbar,.result-header{align-items:flex-start}.mapping-table-head{display:none}.mapping-row{grid-template-columns:1fr;gap:8px}}
+.column-picker{display:grid;grid-template-columns:1fr 1fr}.column-picker-hint{margin:0 0 10px;color:var(--text-secondary);font-size:12px;line-height:1.5}
 </style>

@@ -90,6 +90,7 @@ class Product(Base):
         Index("ix_scm_product_status_jd_price", "status", "jd_price"),
         Index("ix_scm_product_status_profit", "status", "profit"),
         Index("ix_scm_product_status_company_name", "status", "company_name"),
+        Index("ix_scm_product_status_purchasing_agent", "status", "purchasing_agent"),
         Index("ix_scm_product_status_is_featured", "status", "is_featured"),
         Index("ix_scm_product_discount_rate", "discount_rate"),
         Index("ix_scm_product_price_inflation_rate", "price_inflation_rate"),

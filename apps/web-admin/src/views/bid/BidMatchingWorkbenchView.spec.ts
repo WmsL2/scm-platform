@@ -55,6 +55,8 @@ describe("BidMatchingWorkbenchView", () => {
     expect(source).toContain('label="2. 结果回填字段"')
     expect(source).toContain('name="output" :disabled="!outputMapping"')
     expect(source).toContain('mappingTab.value = "output"')
+    expect(source).toContain("candidate_product_count === 0")
+    expect(source).toContain("当前商品范围内没有可用于匹配的合格商品")
   })
 
   it("reviews AI-prefilled output columns without changing matching inputs", () => {

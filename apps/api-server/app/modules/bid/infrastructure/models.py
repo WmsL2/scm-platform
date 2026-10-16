@@ -104,6 +104,8 @@ class BidProject(Base):
         String(32), nullable=False, default="FILTER_RECOMMENDATION"
     )
     recommendation_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    recommendation_company_names: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    recommendation_purchasing_agents: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     import_status: Mapped[str] = mapped_column(String(32), nullable=False)
     import_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_mapping: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
@@ -252,6 +254,7 @@ class MatchTask(Base):
     total_item_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     processed_item_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    product_scope_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(UUIDChar36(), nullable=False)

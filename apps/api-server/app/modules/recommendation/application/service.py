@@ -17,6 +17,7 @@ from app.modules.bid.domain.lifecycle import (
 from app.modules.bid.domain.lifecycle import (
     ensure_transition as ensure_bid_project_transition,
 )
+from app.modules.bid.domain.product_scope import ProductSelectionScope
 from app.modules.bid.infrastructure.models import BidProject, BidProjectEvent
 from app.modules.bid.schemas import BidProjectStatusResponse
 from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMN_KEYS
@@ -146,6 +147,10 @@ class RecommendationService:
                 project_id=project.id,
                 status=RecommendationRunStatus.QUEUED.value,
                 raw_requirement_snapshot=requirement,
+                product_scope_snapshot=ProductSelectionScope.from_values(
+                    project.recommendation_company_names,
+                    project.recommendation_purchasing_agents,
+                ).snapshot(),
                 created_by=actor_id,
                 ppt_config_snapshot=ppt_config_snapshot,
             )
@@ -254,7 +259,9 @@ class RecommendationService:
                 candidate_count=count,
             )
             for path, count in await self.repository.category_pool(
-                requirement, requirement.search_keywords or requirement.category_intents
+                requirement,
+                requirement.search_keywords or requirement.category_intents,
+                product_scope=self._product_scope(run),
             )
         ]
 
@@ -266,6 +273,7 @@ class RecommendationService:
             paths = await self.repository.category_pool(
                 requirement,
                 include_category_terms=False,
+                product_scope=self._product_scope(run),
             )
             category_nodes: dict[tuple[str | None, str | None, str | None, str], int] = {}
             for path, count in paths:
@@ -396,6 +404,7 @@ class RecommendationService:
                 category_paths,
                 keywords=keywords or requirement.search_keywords,
                 preferred_brands=preferred_brands or requirement.preferred_brands,
+                product_scope=self._product_scope(run),
             )
         return [self._product_candidate_row(product, supplier) for product, supplier in rows]
 
@@ -415,7 +424,9 @@ class RecommendationService:
                 )
             requirement = self._parsed_requirement(run)
             ids = [item.product_id for item in payload.candidates]
-            eligible = await self.repository.eligible_products_by_ids(requirement, ids)
+            eligible = await self.repository.eligible_products_by_ids(
+                requirement, ids, product_scope=self._product_scope(run)
+            )
             product_rows = {product.id: (product, supplier) for product, supplier in eligible}
             rejected = [str(product_id) for product_id in ids if product_id not in product_rows]
             if rejected:
@@ -477,7 +488,9 @@ class RecommendationService:
                         run, "RECOMMENDATION_NO_MATCHED_CATEGORY"
                     )
                     return 0
-            rows = await self.repository.all_eligible_products(requirement, category_paths)
+            rows = await self.repository.all_eligible_products(
+                requirement, category_paths, product_scope=self._product_scope(run)
+            )
             if not rows:
                 self._transition(run, RecommendationRunStatus.NO_CANDIDATES)
                 await self._restore_project_after_terminal_run(run, "RECOMMENDATION_NO_CANDIDATES")
@@ -549,7 +562,7 @@ class RecommendationService:
             rows = [
                 (product, supplier)
                 for product, supplier in await self.repository.all_eligible_products(
-                    requirement, category_paths
+                    requirement, category_paths, product_scope=self._product_scope(run)
                 )
                 if self._matches_ppt_price_bands(product.agreement_price, config.price_bands)
             ]
@@ -692,7 +705,9 @@ class RecommendationService:
                 )
             requirement = self._parsed_requirement(run)
             eligible = await self.repository.eligible_products_by_ids(
-                requirement, [candidate.product_id]
+                requirement,
+                [candidate.product_id],
+                product_scope=self._product_scope(run),
             )
             if len(eligible) != 1:
                 raise AppError(
@@ -790,7 +805,9 @@ class RecommendationService:
                 )
             requirement = self._parsed_requirement(run)
             product_ids = [candidate.product_id for candidate, _ in rows]
-            eligible = await self.repository.eligible_products_by_ids(requirement, product_ids)
+            eligible = await self.repository.eligible_products_by_ids(
+                requirement, product_ids, product_scope=self._product_scope(run)
+            )
             if len(eligible) != len(product_ids):
                 raise AppError(
                     "RECOMMENDATION_CANDIDATE_INELIGIBLE",
@@ -1037,6 +1054,10 @@ class RecommendationService:
         if run.parsed_requirement is None:
             raise AppError("RECOMMENDATION_REQUIREMENT_NOT_PARSED", "推品需求尚未完成解析", 409)
         return ParsedRequirement.model_validate(run.parsed_requirement)
+
+    @staticmethod
+    def _product_scope(run: RecommendationRun) -> ProductSelectionScope:
+        return ProductSelectionScope.from_snapshot(run.product_scope_snapshot)
 
     @staticmethod
     def _category_catalog_snapshot(run: RecommendationRun) -> CategoryCatalogSnapshot:

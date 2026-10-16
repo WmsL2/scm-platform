@@ -47,9 +47,18 @@ class BidProjectListItem(BaseModel):
     import_status: BidImportStatus
     project_type: BidProjectType
     recommendation_type: BidRecommendationType | None = None
+    recommendation_company_names: list[str] = Field(default_factory=list)
+    recommendation_purchasing_agents: list[str] = Field(default_factory=list)
     total_item_count: int
     processed_item_count: int
     created_at: datetime
+
+    @field_validator(
+        "recommendation_company_names", "recommendation_purchasing_agents", mode="before"
+    )
+    @classmethod
+    def empty_scope_values(cls, value: object) -> object:
+        return value or []
 
 
 class BidProjectDetailResponse(BidProjectListItem):
@@ -183,6 +192,13 @@ class BidProjectUpdateRequest(BaseModel):
     start_at: datetime | None = None
     deadline_at: datetime | None = None
     remark: str | None = Field(default=None, max_length=5000)
+
+
+class BidProjectRecommendationScopeUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    company_names: list[str] = Field(default_factory=list, max_length=100)
+    purchasing_agents: list[str] = Field(default_factory=list, max_length=100)
 
 
 class BidVoidRequest(BaseModel):

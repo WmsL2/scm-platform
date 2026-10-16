@@ -36,6 +36,7 @@ from app.modules.bid.domain.lifecycle import (
     ensure_transition,
     project_type_for_recommendation_type,
 )
+from app.modules.bid.domain.product_scope import ProductSelectionScope
 from app.modules.bid.infrastructure.models import (
     BidItemSelection,
     BidProject,
@@ -62,6 +63,7 @@ from app.modules.bid.schemas import (
     BidProjectItemResponse,
     BidProjectListItem,
     BidProjectPurgeResponse,
+    BidProjectRecommendationScopeUpdateRequest,
     BidProjectStatusResponse,
 )
 from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMNS
@@ -1274,6 +1276,48 @@ class BidProjectService:
                 project.status,
                 project.status,
                 "更新项目基本信息",
+            )
+        return await self.get(project_id)
+
+    async def update_recommendation_scope(
+        self,
+        project_id: uuid.UUID,
+        payload: BidProjectRecommendationScopeUpdateRequest,
+        actor_id: uuid.UUID,
+    ) -> BidProjectDetailResponse:
+        scope = ProductSelectionScope.from_values(
+            payload.company_names, payload.purchasing_agents
+        )
+        if len(scope.company_names) > 100 or len(scope.purchasing_agents) > 100:
+            raise AppError("BID_RECOMMENDATION_SCOPE_TOO_LARGE", "每个选品范围最多选择 100 项", 422)
+        if any(len(value) > 255 for value in scope.company_names) or any(
+            len(value) > 128 for value in scope.purchasing_agents
+        ):
+            raise AppError(
+                "BID_RECOMMENDATION_SCOPE_INVALID",
+                "选品范围包含过长的所属公司或采销员",
+                422,
+            )
+        async with transaction_scope(self.session):
+            project = await self._project_or_404(project_id, lock=True)
+            if project.status == BidProjectStatus.MATCHING.value:
+                raise AppError(
+                    "BID_RECOMMENDATION_SCOPE_LOCKED",
+                    "当前正在选品，不能修改本次商品范围；请等待任务结束后重新生成",
+                    409,
+                )
+            project.recommendation_company_names = list(scope.company_names)
+            project.recommendation_purchasing_agents = list(scope.purchasing_agents)
+            project.updated_by = actor_id
+            self._add_event(
+                project_id,
+                actor_id,
+                "RECOMMENDATION_SCOPE_UPDATED",
+                project.status,
+                project.status,
+                "更新商品范围："
+                f"所属公司 {len(scope.company_names)} 项，"
+                f"采销员 {len(scope.purchasing_agents)} 项",
             )
         return await self.get(project_id)
 

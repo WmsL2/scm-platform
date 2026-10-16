@@ -22,6 +22,7 @@ Last Updated：2026-10-15
 - [x] `20260921_0037` 为按状态查询的所属公司多选新增组合索引；不改变商品业务字段或价格计算规则
 - [x] `20261012_0054` 增加 `scm_product.is_featured BOOLEAN NOT NULL DEFAULT false` 与 `(status, is_featured)` 组合索引；仅用于商品管理人工展示/筛选，不进入匹配或推荐
 - [x] `20261015_0057` 为商品列表的价格虚高比例区间筛选增加 `price_inflation_rate` 索引
+- [x] `20261016_0058` 为类型 1--5 按采销员限定候选池新增 `(status, purchasing_agent)` 组合索引；所属公司继续复用既有 `(status, company_name)` 索引。范围只影响推荐/匹配候选查询，不改变 Product Master 字段、商品列表或导入规则
 - [x] `discount_rate` 取消 `0..1` 业务范围限制，仍为可空 `DECIMAL(9,4)`；好评率和 Category 扣点率范围保持不变（ADR-0032）
 - [x] 未创建独立 Supplier Product Quote 表或报价历史表
 

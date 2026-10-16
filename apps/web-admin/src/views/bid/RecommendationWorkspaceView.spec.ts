@@ -115,6 +115,12 @@ describe("RecommendationWorkspaceView", () => {
     expect(source).toContain("confirmMany")
   })
 
+  it("keeps the latest no-candidate result visible after a page reload", () => {
+    expect(source).toContain("const preferred = runHistory.value[0]")
+    expect(source).toContain("run?.status === 'NO_CANDIDATES'")
+    expect(source).toContain("历史候选。可调整所属公司")
+  })
+
   it("allows duplicate template headers and repeated product source fields", () => {
     expect(source).toContain('version: 2')
     expect(source).toContain('column_index: column.column_index')

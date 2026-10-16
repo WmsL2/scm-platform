@@ -54,6 +54,7 @@ class RecommendationRun(Base):
     )
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     raw_requirement_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    product_scope_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     parsed_requirement: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     category_catalog_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     ppt_config_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)

@@ -9,6 +9,7 @@ def test_bid_project_core_routes_are_registered() -> None:
     assert "get" in paths["/api/v1/bid-projects/{project_id}/items"]
     assert "get" in paths["/api/v1/bid-projects/{project_id}/files/{file_id}/download"]
     assert "post" in paths["/api/v1/bid-projects/{project_id}/exports"]
+    assert "put" in paths["/api/v1/bid-projects/{project_id}/recommendation-scope"]
 
 
 def test_bid_export_commits_its_session_before_sending_the_response() -> None:

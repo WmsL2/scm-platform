@@ -22,6 +22,7 @@ from app.modules.bid.domain.lifecycle import (
 from app.modules.bid.domain.lifecycle import (
     ensure_transition as ensure_bid_transition,
 )
+from app.modules.bid.domain.product_scope import ProductSelectionScope
 from app.modules.bid.infrastructure.models import BidProject, BidProjectEvent
 from app.modules.catalog.application.product_export_columns import PRODUCT_EXPORT_COLUMN_KEYS
 from app.modules.catalog.infrastructure.models import Product
@@ -124,7 +125,9 @@ class PptCatalogService:
         async with transaction_scope(self.session):
             run = await self._run_or_404_for_update(run_id)
             requirement = self._parsed_requirement(run)
-            paths = await self.repository.category_pool(requirement)
+            paths = await self.repository.category_pool(
+                requirement, product_scope=self._product_scope(run)
+            )
             nodes: dict[tuple[str | None, str | None, str | None, str], int] = {}
             for path, count in paths:
                 for raw_level, node_path in (
@@ -225,7 +228,9 @@ class PptCatalogService:
                 )
                 for item in choices
             ]
-            rows = await self.repository.all_eligible_products(requirement, paths)
+            rows = await self.repository.all_eligible_products(
+                requirement, paths, product_scope=self._product_scope(run)
+            )
             if not rows:
                 self._transition(run, RecommendationRunStatus.NO_CANDIDATES)
                 await self._restore_project(run, "PPT_RECOMMENDATION_NO_CANDIDATES")
@@ -392,6 +397,10 @@ class PptCatalogService:
         if run.parsed_requirement is None:
             raise AppError("PPT_RECOMMENDATION_REQUIREMENT_NOT_PARSED", "类型 5 需求尚未解析", 409)
         return ParsedRequirement.model_validate(run.parsed_requirement)
+
+    @staticmethod
+    def _product_scope(run: RecommendationRun) -> ProductSelectionScope:
+        return ProductSelectionScope.from_snapshot(run.product_scope_snapshot)
 
     @staticmethod
     def _catalog_snapshot(run: RecommendationRun) -> CategoryCatalogSnapshot:
