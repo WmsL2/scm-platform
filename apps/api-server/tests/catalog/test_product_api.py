@@ -302,6 +302,7 @@ async def create_product_fixture(
                 cost_price=Decimal("100.0000"),
                 agreement_price=Decimal("160.0000"),
                 discount_rate=Decimal("0.8000"),
+                price_inflation_rate=Decimal("0.3000"),
                 sales_volume=88,
                 positive_rating=Decimal("0.9500"),
                 purchasing_agent="张三",
@@ -360,6 +361,7 @@ async def test_product_api_lists_details_and_updates_cost_independently() -> Non
                 "&cost_price_min=99&cost_price_max=101&agreement_price_min=160"
                 "&jd_price_min=200&jd_price_max=200&profit_min=30&profit_max=30"
                 "&discount_rate_min=0.8&discount_rate_max=0.8"
+                "&price_inflation_rate_min=0.3&price_inflation_rate_max=0.3"
                 "&sales_volume_min=88&sales_volume_max=88",
                 headers=headers,
             )
@@ -422,6 +424,14 @@ async def test_product_api_lists_details_and_updates_cost_independently() -> Non
                 "total": 1,
             }
 
+            price_inflation_selection = await client.get(
+                "/api/v1/products/selection-ids?price_inflation_rate_min=0.3"
+                "&price_inflation_rate_max=0.3",
+                headers=headers,
+            )
+            assert price_inflation_selection.status_code == 200
+            assert str(product_id) in price_inflation_selection.json()["data"]["ids"]
+
             company_options = await client.get(
                 "/api/v1/products/filter-options?field=COMPANY&keyword=众诚",
                 headers=headers,
@@ -473,6 +483,13 @@ async def test_product_api_lists_details_and_updates_cost_independently() -> Non
             )
             assert invalid_discount_range.status_code == 422
             assert invalid_discount_range.json()["code"] == "PRODUCT_FILTER_RANGE_INVALID"
+
+            invalid_price_inflation_range = await client.get(
+                "/api/v1/products?price_inflation_rate_min=0.4&price_inflation_rate_max=0.3",
+                headers=headers,
+            )
+            assert invalid_price_inflation_range.status_code == 422
+            assert invalid_price_inflation_range.json()["code"] == "PRODUCT_FILTER_RANGE_INVALID"
 
             supplier_products = await client.get(
                 f"/api/v1/products?source_supplier_id={supplier_id}", headers=headers

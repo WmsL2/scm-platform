@@ -91,6 +91,8 @@ export interface ProductListParams {
   profit_max?: string
   discount_rate_min?: string
   discount_rate_max?: string
+  price_inflation_rate_min?: string
+  price_inflation_rate_max?: string
   sales_volume_min?: string
   sales_volume_max?: string
   is_featured?: boolean
