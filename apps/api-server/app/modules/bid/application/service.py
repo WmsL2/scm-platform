@@ -1151,7 +1151,7 @@ class BidProjectService:
                 await self.storage.read(original.storage_key),
                 template,
                 selections,
-                expand_multiple_rows=is_type1,
+                expand_type1_columns=is_type1,
                 export_mapping=self._normalize_output_mapping(
                     project.output_mapping or template.export_mapping
                 ),
@@ -1937,7 +1937,7 @@ class BidProjectService:
         template: BidTemplate,
         selections: list[tuple[BidProjectItem, Any]],
         *,
-        expand_multiple_rows: bool = False,
+        expand_type1_columns: bool = False,
         export_mapping: dict[str, str] | None = None,
     ) -> bytes:
         configured_mapping = self._normalize_output_mapping(
@@ -1956,12 +1956,26 @@ class BidProjectService:
             }
             if any(header is None for header in resolved_export_mapping.values()):
                 raise AppError("BID_EXPORT_COLUMN_MISSING", "原始文件缺少已配置的结果写入列", 409)
+            field_columns = {
+                field: header_columns[resolved_header]
+                for field, resolved_header in resolved_export_mapping.items()
+                if resolved_header is not None
+            }
             export_rows = (
-                self._expand_type1_export_rows(sheet, selections)
-                if expand_multiple_rows
-                else [(item.source_row_number, item, selection) for item, selection in selections]
+                self._expand_type1_export_columns(
+                    sheet,
+                    selections,
+                    field_columns,
+                    header_row=template.header_row,
+                    data_start_row=template.data_start_row,
+                )
+                if expand_type1_columns
+                else [
+                    (item.source_row_number, item, selection, field_columns)
+                    for item, selection in selections
+                ]
             )
-            for target_row_number, item, selection in export_rows:
+            for target_row_number, item, selection, target_columns in export_rows:
                 product = selection.product_snapshot or {}
                 supplier = selection.supplier_snapshot or {}
                 values = {
@@ -1988,10 +2002,8 @@ class BidProjectService:
                         "price_valid_until"
                     ),
                 }
-                for field, resolved_header in resolved_export_mapping.items():
-                    assert resolved_header is not None
-                    header = resolved_header
-                    target = sheet.cell(target_row_number, header_columns[header])
+                for field, target_column in target_columns.items():
+                    target = sheet.cell(target_row_number, target_column)
                     if target.value is None or not str(target.value).strip():
                         target.value = values.get(field)
             output = BytesIO()
@@ -2001,56 +2013,96 @@ class BidProjectService:
             workbook.close()
 
     @staticmethod
-    def _expand_type1_export_rows(
+    def _expand_type1_export_columns(
         sheet: Any,
         selections: list[tuple[BidProjectItem, Any]],
-    ) -> list[tuple[int, BidProjectItem, Any]]:
+        field_columns: dict[str, int],
+        *,
+        header_row: int,
+        data_start_row: int,
+    ) -> list[tuple[int, BidProjectItem, Any, dict[str, int]]]:
         grouped: dict[int, list[tuple[BidProjectItem, Any]]] = {}
         for item, selection in selections:
             grouped.setdefault(item.source_row_number, []).append((item, selection))
 
-        for source_row_number in sorted(grouped, reverse=True):
-            extra_count = len(grouped[source_row_number]) - 1
-            if extra_count <= 0:
-                continue
-            sheet.insert_rows(source_row_number + 1, amount=extra_count)
-            source_dimension = sheet.row_dimensions[source_row_number]
-            for offset in range(1, extra_count + 1):
-                target_row_number = source_row_number + offset
-                target_dimension = sheet.row_dimensions[target_row_number]
-                target_dimension.height = source_dimension.height
-                target_dimension.hidden = source_dimension.hidden
-                target_dimension.outlineLevel = source_dimension.outlineLevel
-                for column in range(1, sheet.max_column + 1):
-                    source_cell = sheet.cell(source_row_number, column)
-                    target_cell = sheet.cell(target_row_number, column)
-                    value = source_cell.value
-                    if isinstance(value, str) and value.startswith("="):
-                        try:
-                            value = Translator(
-                                value, origin=source_cell.coordinate
-                            ).translate_formula(target_cell.coordinate)
-                        except ValueError:
-                            pass
-                    target_cell.value = value
-                    if source_cell.has_style:
-                        target_cell._style = copy(source_cell._style)
-                    if source_cell.hyperlink:
-                        target_cell._hyperlink = copy(source_cell.hyperlink)
-                    if source_cell.comment:
-                        target_cell.comment = copy(source_cell.comment)
+        ordered_source_columns = sorted(set(field_columns.values()))
+        source_column_offsets = {
+            source_column: offset
+            for offset, source_column in enumerate(ordered_source_columns)
+        }
+        maximum_match_count = max(
+            (len(matches) for matches in grouped.values()),
+            default=0,
+        )
+        original_max_column = sheet.max_column
+        group_columns: list[dict[str, int]] = [field_columns]
+        for group_index in range(1, maximum_match_count):
+            group_start = original_max_column + (group_index - 1) * len(
+                ordered_source_columns
+            ) + 1
+            target_columns = {
+                field: group_start + source_column_offsets[source_column]
+                for field, source_column in field_columns.items()
+            }
+            for source_column in ordered_source_columns:
+                target_column = group_start + source_column_offsets[source_column]
+                BidProjectService._copy_type1_export_column(
+                    sheet,
+                    source_column,
+                    target_column,
+                    header_row=header_row,
+                    data_start_row=data_start_row,
+                )
+            group_columns.append(target_columns)
 
-        expanded: list[tuple[int, BidProjectItem, Any]] = []
-        inserted_before = 0
+        expanded: list[
+            tuple[int, BidProjectItem, Any, dict[str, int]]
+        ] = []
         for source_row_number in sorted(grouped):
-            matches = grouped[source_row_number]
-            target_start = source_row_number + inserted_before
             expanded.extend(
-                (target_start + offset, item, selection)
-                for offset, (item, selection) in enumerate(matches)
+                (source_row_number, item, selection, group_columns[index])
+                for index, (item, selection) in enumerate(grouped[source_row_number])
             )
-            inserted_before += len(matches) - 1
         return expanded
+
+    @staticmethod
+    def _copy_type1_export_column(
+        sheet: Any,
+        source_column: int,
+        target_column: int,
+        *,
+        header_row: int,
+        data_start_row: int,
+    ) -> None:
+        source_letter = sheet.cell(header_row, source_column).column_letter
+        target_letter = sheet.cell(header_row, target_column).column_letter
+        source_dimension = sheet.column_dimensions[source_letter]
+        target_dimension = sheet.column_dimensions[target_letter]
+        target_dimension.width = source_dimension.width
+        target_dimension.hidden = source_dimension.hidden
+        target_dimension.bestFit = source_dimension.bestFit
+        target_dimension.outlineLevel = source_dimension.outlineLevel
+        target_dimension.collapsed = source_dimension.collapsed
+
+        for row_number in range(1, sheet.max_row + 1):
+            source_cell = sheet.cell(row_number, source_column)
+            target_cell = sheet.cell(row_number, target_column)
+            if row_number < data_start_row:
+                value = source_cell.value
+                if isinstance(value, str) and value.startswith("="):
+                    try:
+                        value = Translator(
+                            value, origin=source_cell.coordinate
+                        ).translate_formula(target_cell.coordinate)
+                    except ValueError:
+                        pass
+                target_cell.value = value
+                if source_cell.hyperlink:
+                    target_cell._hyperlink = copy(source_cell.hyperlink)
+                if source_cell.comment:
+                    target_cell.comment = copy(source_cell.comment)
+            if source_cell.has_style:
+                target_cell._style = copy(source_cell._style)
 
     async def _project_or_404(self, project_id: uuid.UUID, *, lock: bool = False) -> BidProject:
         project = await self.repository.project_by_id(project_id, lock=lock)
