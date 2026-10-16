@@ -194,6 +194,7 @@ class MatchingService:
                     {
                         BidProjectStatus.SELECTING.value,
                         BidProjectStatus.READY.value,
+                        BidProjectStatus.EXPORTED.value,
                     }
                 )
             if project.status not in allowed_statuses:
@@ -378,6 +379,7 @@ class MatchingService:
                 BidProjectStatus.IMPORTED.value,
                 BidProjectStatus.SELECTING.value,
                 BidProjectStatus.READY.value,
+                BidProjectStatus.EXPORTED.value,
             }:
                 raise AppError("BID_MATCHING_NOT_ALLOWED", "当前项目状态不能开始匹配", 409)
             previous_status = project.status
@@ -678,6 +680,7 @@ class MatchingService:
                 BidProjectStatus.IMPORTED.value,
                 BidProjectStatus.SELECTING.value,
                 BidProjectStatus.READY.value,
+                BidProjectStatus.EXPORTED.value,
             }:
                 raise AppError("BID_MATCHING_NOT_ALLOWED", "当前项目状态不能开始匹配", 409)
             previous_status = project.status

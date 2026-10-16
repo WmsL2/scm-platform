@@ -493,6 +493,40 @@ async def test_type1_ai_keeps_all_quotable_matches_and_allows_unmatched() -> Non
         assert unmatched_item.status == BidItemStatus.NO_MATCH.value
         assert refreshed_project.status == BidProjectStatus.READY.value
 
+        first_selection_ids = {selection.id for selection in selections}
+        refreshed_project.status = BidProjectStatus.EXPORTED.value
+        await session.commit()
+
+        async with session.begin():
+            await MatchingService(session, type1_agent=agent).start(  # type: ignore[arg-type]
+                project_id, actor_id
+            )
+        session.expire_all()
+        matched_item = await session.get(BidProjectItem, matched_item_id)
+        refreshed_project = await session.get(BidProject, project_id)
+        rerun_selections = list(
+            (
+                await session.scalars(
+                    select(BidItemSelection).where(
+                        BidItemSelection.project_item_id == matched_item_id
+                    )
+                )
+            ).all()
+        )
+        match_tasks = list(
+            (
+                await session.scalars(
+                    select(MatchTask).where(MatchTask.project_id == project_id)
+                )
+            ).all()
+        )
+        assert matched_item is not None
+        assert refreshed_project is not None
+        assert refreshed_project.status == BidProjectStatus.READY.value
+        assert matched_item.current_selection_id not in first_selection_ids
+        assert len(rerun_selections) == 4
+        assert len(match_tasks) == 2
+
         await session.execute(
             update(BidProjectItem)
             .where(BidProjectItem.id.in_(project_item_ids))
@@ -708,7 +742,54 @@ async def test_type2_ai_prefers_exact_product_and_marks_substitute_with_note() -
         assert len(agent.received) == 2
         assert simple_selection is not None
         assert simple_selection.product_id == exact_product_id
+        first_selection_ids = {
+            exact_selection.id,
+            substitute_selection.id,
+            simple_selection.id,
+        }
         await session.commit()
+
+        rerun_project = await session.get(BidProject, project_id)
+        assert rerun_project is not None
+        rerun_project.status = BidProjectStatus.EXPORTED.value
+        await session.commit()
+        async with session.begin():
+            await MatchingService(session, type2_agent=agent).start(  # type: ignore[arg-type]
+                project_id, actor_id
+            )
+        session.expire_all()
+        rerun_project = await session.get(BidProject, project_id)
+        exact_item = await session.get(BidProjectItem, exact_item_id)
+        substitute_item = await session.get(BidProjectItem, substitute_item_id)
+        simple_item = await session.get(BidProjectItem, simple_item_id)
+        rerun_selections = list(
+            (
+                await session.scalars(
+                    select(BidItemSelection).where(
+                        BidItemSelection.project_item_id.in_(
+                            [exact_item_id, substitute_item_id, simple_item_id]
+                        )
+                    )
+                )
+            ).all()
+        )
+        match_tasks = list(
+            (
+                await session.scalars(
+                    select(MatchTask).where(MatchTask.project_id == project_id)
+                )
+            ).all()
+        )
+        assert rerun_project is not None
+        assert rerun_project.status == BidProjectStatus.READY.value
+        assert exact_item is not None
+        assert substitute_item is not None
+        assert simple_item is not None
+        assert exact_item.current_selection_id not in first_selection_ids
+        assert substitute_item.current_selection_id not in first_selection_ids
+        assert simple_item.current_selection_id not in first_selection_ids
+        assert len(rerun_selections) == 6
+        assert len(match_tasks) == 2
 
         item_ids = [exact_item_id, substitute_item_id, simple_item_id]
         await session.execute(

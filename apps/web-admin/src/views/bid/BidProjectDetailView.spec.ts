@@ -14,7 +14,9 @@ describe("BidProjectDetailView", () => {
   it("allows old Type 1 and Type 2 review-state projects to rerun matching", () => {
     expect(source).toContain('project.value?.recommendation_type === "TYPE_1_SPECIFICATION"')
     expect(source).toContain('project.value?.recommendation_type === "TYPE_2_IDENTIFIED_PRODUCT"')
-    expect(source).toContain('(isType1.value || isType2.value) && ["SELECTING", "READY"].includes(status)')
+    expect(source).toContain('(isType1.value || isType2.value) && ["SELECTING", "READY", "EXPORTED"].includes(status)')
+    expect(source).toContain("已有导出文件和历史匹配记录仍会保留")
+    expect(source).toContain("重新生成推荐")
     expect(source).toContain('"执行 AI 同品比价"')
   })
 
