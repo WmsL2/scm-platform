@@ -130,6 +130,8 @@ const filters = reactive({
   profit_max: "",
   discount_rate_min: "",
   discount_rate_max: "",
+  price_inflation_rate_min: "",
+  price_inflation_rate_max: "",
   sales_volume_min: "",
   sales_volume_max: "",
   is_featured: undefined as boolean | undefined,
@@ -241,6 +243,8 @@ function productListParams(targetPage?: number): ProductListParams {
     profit_max: filters.profit_max,
     discount_rate_min: percentQuery(filters.discount_rate_min),
     discount_rate_max: percentQuery(filters.discount_rate_max),
+    price_inflation_rate_min: percentQuery(filters.price_inflation_rate_min),
+    price_inflation_rate_max: percentQuery(filters.price_inflation_rate_max),
     sales_volume_min: filters.sales_volume_min,
     sales_volume_max: filters.sales_volume_max,
     is_featured: filters.is_featured,
@@ -348,7 +352,7 @@ function reset(): void {
   selectedProductIds.value.clear()
   Object.assign(filters, {
     keyword: "", skus: "", source_supplier_id: "", cost_price_min: "", cost_price_max: "", agreement_price_min: "",
-    agreement_price_max: "", jd_price_min: "", jd_price_max: "", profit_min: "", profit_max: "", discount_rate_min: "", discount_rate_max: "", sales_volume_min: "",
+    agreement_price_max: "", jd_price_min: "", jd_price_max: "", profit_min: "", profit_max: "", discount_rate_min: "", discount_rate_max: "", price_inflation_rate_min: "", price_inflation_rate_max: "", sales_volume_min: "",
     sales_volume_max: "", is_featured: undefined, status: "ACTIVE",
   })
   productFilterSelections.COMPANY = []
@@ -1017,6 +1021,7 @@ onMounted(async () => {
           <el-form-item label="京东价区间"><div class="range-input"><el-input v-model="filters.jd_price_min" inputmode="decimal" placeholder="大于等于" /><span>—</span><el-input v-model="filters.jd_price_max" inputmode="decimal" placeholder="小于等于" /></div></el-form-item>
           <el-form-item label="利润区间"><div class="range-input"><el-input v-model="filters.profit_min" inputmode="decimal" placeholder="大于等于" /><span>—</span><el-input v-model="filters.profit_max" inputmode="decimal" placeholder="小于等于" /></div></el-form-item>
           <el-form-item label="折扣率区间（%）"><div class="range-input"><el-input v-model="filters.discount_rate_min" inputmode="decimal" placeholder="例如 80" /><span>—</span><el-input v-model="filters.discount_rate_max" inputmode="decimal" placeholder="例如 95" /></div></el-form-item>
+          <el-form-item label="价格虚高比例区间（%）"><div class="range-input"><el-input v-model="filters.price_inflation_rate_min" inputmode="decimal" placeholder="例如 10" /><span>—</span><el-input v-model="filters.price_inflation_rate_max" inputmode="decimal" placeholder="例如 30" /></div></el-form-item>
           <el-form-item label="销量区间"><div class="range-input"><el-input v-model="filters.sales_volume_min" inputmode="numeric" placeholder="大于等于" /><span>—</span><el-input v-model="filters.sales_volume_max" inputmode="numeric" placeholder="小于等于" /></div></el-form-item>
         </div>
       </el-form>

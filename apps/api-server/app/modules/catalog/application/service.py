@@ -79,6 +79,8 @@ class ProductService:
         profit_max: Decimal | None,
         discount_rate_min: Decimal | None,
         discount_rate_max: Decimal | None,
+        price_inflation_rate_min: Decimal | None,
+        price_inflation_rate_max: Decimal | None,
         sales_volume_min: int | None,
         sales_volume_max: int | None,
         is_featured: bool | None,
@@ -89,6 +91,9 @@ class ProductService:
         self._validate_range("jd_price", jd_price_min, jd_price_max)
         self._validate_range("profit", profit_min, profit_max)
         self._validate_range("discount_rate", discount_rate_min, discount_rate_max)
+        self._validate_range(
+            "price_inflation_rate", price_inflation_rate_min, price_inflation_rate_max
+        )
         self._validate_range("sales_volume", sales_volume_min, sales_volume_max)
         level1_names, level2_paths, level3_paths = self._resolve_category_selections(
             category_selections
@@ -121,6 +126,8 @@ class ProductService:
             profit_max=profit_max,
             discount_rate_min=discount_rate_min,
             discount_rate_max=discount_rate_max,
+            price_inflation_rate_min=price_inflation_rate_min,
+            price_inflation_rate_max=price_inflation_rate_max,
             sales_volume_min=sales_volume_min,
             sales_volume_max=sales_volume_max,
             is_featured=is_featured,
@@ -169,6 +176,8 @@ class ProductService:
         profit_max: Decimal | None,
         discount_rate_min: Decimal | None,
         discount_rate_max: Decimal | None,
+        price_inflation_rate_min: Decimal | None,
+        price_inflation_rate_max: Decimal | None,
         sales_volume_min: int | None,
         sales_volume_max: int | None,
         is_featured: bool | None,
@@ -179,6 +188,9 @@ class ProductService:
         self._validate_range("jd_price", jd_price_min, jd_price_max)
         self._validate_range("profit", profit_min, profit_max)
         self._validate_range("discount_rate", discount_rate_min, discount_rate_max)
+        self._validate_range(
+            "price_inflation_rate", price_inflation_rate_min, price_inflation_rate_max
+        )
         self._validate_range("sales_volume", sales_volume_min, sales_volume_max)
         level1_names, level2_paths, level3_paths = self._resolve_category_selections(
             category_selections
@@ -210,6 +222,8 @@ class ProductService:
             profit_max=profit_max,
             discount_rate_min=discount_rate_min,
             discount_rate_max=discount_rate_max,
+            price_inflation_rate_min=price_inflation_rate_min,
+            price_inflation_rate_max=price_inflation_rate_max,
             sales_volume_min=sales_volume_min,
             sales_volume_max=sales_volume_max,
             is_featured=is_featured,

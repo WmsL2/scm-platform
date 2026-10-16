@@ -500,6 +500,8 @@ class ProductRepository:
         profit_max: Decimal | None,
         discount_rate_min: Decimal | None,
         discount_rate_max: Decimal | None,
+        price_inflation_rate_min: Decimal | None,
+        price_inflation_rate_max: Decimal | None,
         sales_volume_min: int | None,
         sales_volume_max: int | None,
         is_featured: bool | None,
@@ -635,6 +637,10 @@ class ProductRepository:
             range_criteria.append(Product.discount_rate >= discount_rate_min)
         if discount_rate_max is not None:
             range_criteria.append(Product.discount_rate <= discount_rate_max)
+        if price_inflation_rate_min is not None:
+            range_criteria.append(Product.price_inflation_rate >= price_inflation_rate_min)
+        if price_inflation_rate_max is not None:
+            range_criteria.append(Product.price_inflation_rate <= price_inflation_rate_max)
         if sales_volume_min is not None:
             range_criteria.append(Product.sales_volume >= sales_volume_min)
         if sales_volume_max is not None:
@@ -680,6 +686,8 @@ class ProductRepository:
         profit_max: Decimal | None,
         discount_rate_min: Decimal | None,
         discount_rate_max: Decimal | None,
+        price_inflation_rate_min: Decimal | None,
+        price_inflation_rate_max: Decimal | None,
         sales_volume_min: int | None,
         sales_volume_max: int | None,
         is_featured: bool | None,
@@ -712,6 +720,8 @@ class ProductRepository:
             profit_max=profit_max,
             discount_rate_min=discount_rate_min,
             discount_rate_max=discount_rate_max,
+            price_inflation_rate_min=price_inflation_rate_min,
+            price_inflation_rate_max=price_inflation_rate_max,
             sales_volume_min=sales_volume_min,
             sales_volume_max=sales_volume_max,
             is_featured=is_featured,
@@ -760,6 +770,8 @@ class ProductRepository:
         profit_max: Decimal | None,
         discount_rate_min: Decimal | None,
         discount_rate_max: Decimal | None,
+        price_inflation_rate_min: Decimal | None,
+        price_inflation_rate_max: Decimal | None,
         sales_volume_min: int | None,
         sales_volume_max: int | None,
         is_featured: bool | None,
@@ -793,6 +805,8 @@ class ProductRepository:
             profit_max=profit_max,
             discount_rate_min=discount_rate_min,
             discount_rate_max=discount_rate_max,
+            price_inflation_rate_min=price_inflation_rate_min,
+            price_inflation_rate_max=price_inflation_rate_max,
             sales_volume_min=sales_volume_min,
             sales_volume_max=sales_volume_max,
             is_featured=is_featured,
