@@ -319,6 +319,36 @@ async def test_type5_direct_runner_scores_every_frozen_candidate_then_selects_ex
 
 
 @pytest.mark.asyncio
+async def test_type5_direct_runner_keeps_only_price_band_matches_when_target_is_short() -> None:
+    candidates = [
+        *[_candidate("45", rank=index) for index in range(1, 4)],
+        *[_candidate("90", rank=index) for index in range(4, 7)],
+    ]
+    provider = DirectProvider()
+    band = PptFrozenRecommendationConfig.model_validate(
+        {
+            "recommendation_mode": "SINGLE",
+            "price_bands": [{"min_price": "0", "max_price": "50", "item_count": 8}],
+            "selection_mode": "DIRECT",
+        }
+    ).price_bands[0]
+
+    selected = await PptPlanAgentRunner(provider).select_direct_candidates(
+        1,
+        band,
+        candidates,
+        item_count=3,
+        scene_context="客户原始需求：节日慰问品",
+    )
+
+    assert len(selected) == 3
+    assert {item.candidate.id for item in selected} == {
+        candidate.id for candidate in candidates[:3]
+    }
+    assert json.loads(provider.calls[1]["user_prompt"])["required_item_count"] == 3
+
+
+@pytest.mark.asyncio
 async def test_type5_combination_runner_selects_exact_price_valid_two_to_four_item_groups() -> None:
     candidates = [
         _candidate("60", rank=1, category="保温杯"),
