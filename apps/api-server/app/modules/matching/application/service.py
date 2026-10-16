@@ -26,6 +26,7 @@ from app.modules.bid.domain.lifecycle import (
     BidProjectStatus,
     BidRecommendationType,
 )
+from app.modules.bid.domain.product_scope import ProductSelectionScope
 from app.modules.bid.infrastructure.models import (
     BidItemSelection,
     BidProject,
@@ -203,6 +204,7 @@ class MatchingService:
                 status="RUNNING",
                 total_item_count=project.total_item_count,
                 processed_item_count=0,
+                product_scope_snapshot=self._project_product_scope(project).snapshot(),
                 created_by=actor_id,
             )
             project.status = BidProjectStatus.MATCHING.value
@@ -219,7 +221,9 @@ class MatchingService:
             await self.session.flush()
 
             items = await self.repository.items(project_id)
-            product_rows = await self.repository.eligible_products()
+            product_rows = await self.repository.eligible_products(
+                self._task_product_scope(task)
+            )
             candidates = [self._matchable(product, supplier) for product, supplier in product_rows]
             brand_catalog = build_brand_catalog(candidates)
             allow_brand_substitution = (
@@ -352,6 +356,8 @@ class MatchingService:
             status=task.status,
             total_item_count=task.total_item_count,
             processed_item_count=task.processed_item_count,
+            candidate_product_count=len(product_rows),
+            matched_item_count=auto_selected_count,
         )
 
     async def _run_type1_ai_matching(
@@ -381,6 +387,7 @@ class MatchingService:
                 status="RUNNING",
                 total_item_count=project.total_item_count,
                 processed_item_count=0,
+                product_scope_snapshot=self._project_product_scope(project).snapshot(),
                 created_by=actor_id,
             )
             project.status = BidProjectStatus.MATCHING.value
@@ -398,7 +405,9 @@ class MatchingService:
         async with transaction_scope(self.session):
             project = await self._project_or_404(project_id)
             items = await self.repository.items(project_id)
-            product_rows = await self.repository.eligible_products()
+            product_rows = await self.repository.eligible_products(
+                self._task_product_scope(task)
+            )
             project_remark = project.remark
             context_rounds, candidate_pools, deterministic_decisions = self._type1_agent_contexts(
                 items, product_rows
@@ -488,7 +497,9 @@ class MatchingService:
             current_items = {item.id: item for item in await self.repository.items(project_id)}
             products_by_id = {
                 product.id: (product, supplier)
-                for product, supplier in await self.repository.eligible_products()
+                for product, supplier in await self.repository.eligible_products(
+                    self._task_product_scope(task)
+                )
             }
             matched_count = 0
             auto_selected_count = 0
@@ -619,6 +630,8 @@ class MatchingService:
             status="COMPLETED",
             total_item_count=len(items),
             processed_item_count=len(items),
+            candidate_product_count=len(product_rows),
+            matched_item_count=matched_count,
         )
 
     async def _fail_type1_ai_matching(
@@ -674,6 +687,7 @@ class MatchingService:
                 status="RUNNING",
                 total_item_count=project.total_item_count,
                 processed_item_count=0,
+                product_scope_snapshot=self._project_product_scope(project).snapshot(),
                 created_by=actor_id,
             )
             project.status = BidProjectStatus.MATCHING.value
@@ -691,7 +705,9 @@ class MatchingService:
         async with transaction_scope(self.session):
             project = await self._project_or_404(project_id)
             items = await self.repository.items(project_id)
-            product_rows = await self.repository.eligible_products()
+            product_rows = await self.repository.eligible_products(
+                self._task_product_scope(task)
+            )
             project_remark = project.remark
             contexts, candidate_pools, deterministic_decisions = self._type2_agent_contexts(
                 items, product_rows, project_remark=project_remark
@@ -750,7 +766,9 @@ class MatchingService:
             task = loaded_task
 
             current_items = {item.id: item for item in await self.repository.items(project_id)}
-            current_product_rows = await self.repository.eligible_products()
+            current_product_rows = await self.repository.eligible_products(
+                self._task_product_scope(task)
+            )
             products_by_id = {
                 product.id: (product, supplier)
                 for product, supplier in current_product_rows
@@ -944,6 +962,8 @@ class MatchingService:
             status="COMPLETED",
             total_item_count=len(items),
             processed_item_count=len(items),
+            candidate_product_count=len(product_rows),
+            matched_item_count=auto_selected_count,
         )
 
     async def _fail_type2_ai_matching(
@@ -1752,6 +1772,17 @@ class MatchingService:
         return price is not None and price > 0 and (
             max_price is None or price <= max_price
         )
+
+    @staticmethod
+    def _project_product_scope(project: BidProject) -> ProductSelectionScope:
+        return ProductSelectionScope.from_values(
+            project.recommendation_company_names,
+            project.recommendation_purchasing_agents,
+        )
+
+    @staticmethod
+    def _task_product_scope(task: MatchTask) -> ProductSelectionScope:
+        return ProductSelectionScope.from_snapshot(task.product_scope_snapshot)
 
     def _event(
         self,

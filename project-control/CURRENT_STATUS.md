@@ -5,6 +5,12 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-16
 
+> 2026-10-16：分支 `codex/feat/recommendation-company-purchaser-scope` 为类型 1--5 的详情工作台增加所属公司、采销员多选范围。一个字段内多选为 OR、两个字段同时设置为 AND、全部留空则保持完整合格商品池。配置保存于项目，但每次类型 1/2、3、4/5 执行分别冻结至 `MatchTask`、`Type3Run`、`RecommendationRun`，后续项目范围变更不会改写历史候选；商品查询及确认重校验均由后端 SQL 执行，AI 不能绕过。Revision `20261016_0058` 新增范围/快照列及 Product `(status, purchasing_agent)` 索引。Ruff、Mypy、后端定向 17 passed、前端类型检查与生产构建通过；本机开发库已升级至该 Revision，浏览器验收待完成。见 ADR-0069。
+
+> 2026-10-16：同一分支补齐“范围无候选”反馈：类型 4、5 不再在最新 Run 为 `NO_CANDIDATES` 时回退并展示旧成功 Run；类型 3--5 页面会持续说明当前范围无候选。类型 1/2 匹配启动响应新增候选商品数、命中需求行数，前端会区分“范围内没有合格商品”和“范围内有商品但需求无匹配”。后端 Matching 定向 5 passed；前端工作台 Vitest 21 passed、类型检查和生产构建通过；浏览器验收待完成。
+
+> 2026-10-16：同一分支为类型 3 候选商品表加入与类型 4、5 一致的“自定义显示列”。商品图片、SKU、商品名称和来源 Sheet 固定；其余冻结商品/价格快照字段按本浏览器勾选顺序显示。仅前端 `localStorage` 设置，不新增 Migration、API 或权限；类型 3 / 4 / 5 工作台 Vitest 15 passed、前端类型检查和生产构建通过，本机 Vite 已启动验证，浏览器验收待完成。
+
 > 2026-10-16：分支 `fix/type1-excel-fill-format` 将类型 1 多商品导出由纵向复制需求行改为同一行横向展开。第一件商品写原回填列，后续商品在右侧按当前项目人工确认的动态输出映射追加完整字段组；字段名称和数量不写死，只复制映射列的表头、列宽、列属性和单元格样式，客户原行数、需求顺序和已有内容保持不变。类型 2、AI 匹配、协议价限价、API、权限和数据库不变；自动化回归已覆盖，真实客户表浏览器下载及 Excel/WPS 视觉验收待完成。见 ADR-0069。
 
 > 2026-10-16：分支 `codex/fix/type5-shortfall-show-matched-only` 修正类型 5 单品价格档短缺处理：此前短缺路径绕过 AI 并显示完整冻结池，会让不在价格档内的商品也出现在人工确认表。现在每个有候选的价格档仍由 AI 执行匹配；目标数量高于可用数时只匹配该档实际可用数，并仅持久化 AI 匹配结果，同时保留短缺警告。全部价格档均无候选时仍失败。无 Migration、API 或权限变化；后端定向 28 passed、Ruff/Mypy 通过，前端 Vitest 2 passed、类型检查与生产构建通过；服务器浏览器验收待完成。见 ADR-0068。

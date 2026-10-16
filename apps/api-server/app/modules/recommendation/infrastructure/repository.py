@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.modules.bid.domain.lifecycle import BidProjectType
+from app.modules.bid.domain.product_scope import ProductSelectionScope
 from app.modules.bid.infrastructure.models import BidProject, BidProjectFile
 from app.modules.catalog.domain.lifecycle import ProductStatus
 from app.modules.catalog.infrastructure.models import Product
@@ -135,6 +136,7 @@ class RecommendationRepository:
         keywords: Sequence[str] = (),
         *,
         include_category_terms: bool = True,
+        product_scope: ProductSelectionScope = ProductSelectionScope(),
     ) -> list[tuple[CategoryPath, int]]:
         statement = (
             select(
@@ -147,7 +149,9 @@ class RecommendationRepository:
             .join(Supplier, Product.source_supplier_id == Supplier.id)
             .where(
                 *self._eligibility_filters(
-                    requirement, include_category_terms=include_category_terms
+                    requirement,
+                    include_category_terms=include_category_terms,
+                    product_scope=product_scope,
                 )
             )
             .where(Product.category_level3_name.is_not(None))
@@ -180,11 +184,12 @@ class RecommendationRepository:
         *,
         keywords: Sequence[str] = (),
         preferred_brands: Sequence[str] = (),
+        product_scope: ProductSelectionScope = ProductSelectionScope(),
     ) -> list[tuple[Product, Supplier]]:
         statement = (
             select(Product, Supplier)
             .join(Supplier, Product.source_supplier_id == Supplier.id)
-            .where(*self._eligibility_filters(requirement))
+            .where(*self._eligibility_filters(requirement, product_scope=product_scope))
             # Do not let a qualifying margin dominate all candidate recall.  The
             # service applies stable, explainable recall buckets below.
             .order_by(Product.id)
@@ -251,25 +256,36 @@ class RecommendationRepository:
         return prioritized
 
     async def eligible_products_by_ids(
-        self, requirement: ParsedRequirement, product_ids: Sequence[uuid.UUID]
+        self,
+        requirement: ParsedRequirement,
+        product_ids: Sequence[uuid.UUID],
+        *,
+        product_scope: ProductSelectionScope = ProductSelectionScope(),
     ) -> list[tuple[Product, Supplier]]:
         if not product_ids:
             return []
         rows = await self.session.execute(
             select(Product, Supplier)
             .join(Supplier, Product.source_supplier_id == Supplier.id)
-            .where(Product.id.in_(product_ids), *self._eligibility_filters(requirement))
+            .where(
+                Product.id.in_(product_ids),
+                *self._eligibility_filters(requirement, product_scope=product_scope),
+            )
         )
         return [(row[0], row[1]) for row in rows]
 
     async def all_eligible_products(
-        self, requirement: ParsedRequirement, category_paths: Sequence[CategoryPath] = ()
+        self,
+        requirement: ParsedRequirement,
+        category_paths: Sequence[CategoryPath] = (),
+        *,
+        product_scope: ProductSelectionScope = ProductSelectionScope(),
     ) -> list[tuple[Product, Supplier]]:
         """Return the complete Type-4 hard-condition result set in a stable order."""
         statement = (
             select(Product, Supplier)
             .join(Supplier, Product.source_supplier_id == Supplier.id)
-            .where(*self._eligibility_filters(requirement))
+            .where(*self._eligibility_filters(requirement, product_scope=product_scope))
             .order_by(Product.positive_rating.desc(), Product.id)
         )
         if category_paths:
@@ -477,7 +493,10 @@ class RecommendationRepository:
 
     @staticmethod
     def _eligibility_filters(
-        requirement: ParsedRequirement, *, include_category_terms: bool = True
+        requirement: ParsedRequirement,
+        *,
+        include_category_terms: bool = True,
+        product_scope: ProductSelectionScope = ProductSelectionScope(),
     ) -> list[ColumnElement[bool]]:
         filters: list[ColumnElement[bool]] = [
             Product.status == ProductStatus.ACTIVE,
@@ -485,6 +504,10 @@ class RecommendationRepository:
             Supplier.cooperation_status == CooperationStatus.NORMAL,
             Supplier.is_deleted.is_(False),
         ]
+        if product_scope.company_names:
+            filters.append(Product.company_name.in_(product_scope.company_names))
+        if product_scope.purchasing_agents:
+            filters.append(Product.purchasing_agent.in_(product_scope.purchasing_agents))
         if requirement.gross_margin_min is not None:
             filters.append(Product.gross_margin >= requirement.gross_margin_min)
         if requirement.gross_margin_max is not None:

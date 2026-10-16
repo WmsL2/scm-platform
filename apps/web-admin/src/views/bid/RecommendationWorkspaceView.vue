@@ -27,6 +27,7 @@ import {
   type RecommendationCandidateOptionalColumn,
   type RecommendationCandidateOptionalColumnKey,
 } from "./recommendationCandidateColumns"
+import RecommendationProductScopeForm from "./RecommendationProductScopeForm.vue"
 
 const route = useRoute()
 const router = useRouter()
@@ -79,7 +80,6 @@ const canExport = computed(() => Boolean(
   && (run.value.candidate_page?.confirmed_total ?? 0) > 0
   && auth.hasPermission("recommendation:export"),
 ))
-const resultStatuses = new Set(["CANDIDATES_READY", "WAITING_CONFIRMATION", "CONFIRMED", "EXPORTED"])
 const candidateTotal = computed(() => run.value?.candidate_page?.total ?? 0)
 const unconfirmedTotal = computed(() => run.value?.candidate_page?.unconfirmed_total ?? 0)
 const confirmedTotal = computed(() => run.value?.candidate_page?.confirmed_total ?? 0)
@@ -119,9 +119,7 @@ async function load() {
     }
     try {
       runHistory.value = await recommendationApi.runs(projectId)
-      const preferred = runHistory.value.find((item) =>
-        resultStatuses.has(item.status) || ["QUEUED", "ANALYZING", "RETRIEVING", "RANKING"].includes(item.status),
-      ) ?? runHistory.value[0]
+      const preferred = runHistory.value[0]
       run.value = preferred ? await recommendationApi.run(preferred.id, candidatePage.value, candidatePageSize.value) : null
     } catch (error) {
       if (!(error instanceof HttpError && error.status === 404)) throw error
@@ -673,6 +671,9 @@ onBeforeUnmount(() => {
       <div class="actions"><el-button @click="router.push('/bid-projects')">返回项目</el-button><el-button v-if="['IMPORTED', 'MATCHING', 'SELECTING'].includes(project?.status ?? '')" type="primary" :disabled="!canStart" :loading="acting" @click="startRun">{{ run ? "重新生成推荐" : "开始生成推荐" }}</el-button><el-button v-if="project?.status === 'SELECTING'" type="success" :disabled="!canCompleteSelection" :loading="acting" @click="completeSelection">完成选品</el-button><el-button v-if="['READY', 'EXPORTED'].includes(project?.status ?? '')" :disabled="!canReopenSelection" :loading="acting" @click="reopenSelection">返回调整选品</el-button></div>
     </header>
 
+    <el-card v-if="['IMPORTED', 'SELECTING'].includes(project?.status ?? '')" class="scope-card"><RecommendationProductScopeForm :project="project" :disabled="acting || !auth.hasPermission('bid:update')" @updated="project = $event" /></el-card>
+
+    <el-alert v-if="run?.status === 'NO_CANDIDATES'" title="本次商品范围内没有符合当前需求的候选商品" description="当前显示的是最新一次生成结果，不会回退展示历史候选。可调整所属公司、采销员或需求条件后重新生成。" type="warning" :closable="false" />
     <el-alert v-if="selectionEditable && (run?.candidate_page?.confirmed_total ?? 0) > 0" title="当前处于待选品状态：可继续确认候选，或撤销已确认商品；历史导出文件仍会保留。" type="info" :closable="false" />
     <el-alert v-if="!mappingConfirmed" title="开始推荐前必须人工确认本项目模板的字段映射。毛利、厂直和物流等歧义字段不会由系统自动猜测。" type="warning" :closable="false" />
     <el-card v-if="mapping">

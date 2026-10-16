@@ -21,6 +21,8 @@ class StartMatchingResponse(BaseModel):
     status: str
     total_item_count: int
     processed_item_count: int
+    candidate_product_count: int
+    matched_item_count: int
 
 
 class BidItemCandidateResponse(BaseModel):

@@ -8,6 +8,7 @@ from app.modules.matching.schemas import (
     BidItemSelectionCreateRequest,
     NoQuoteCreateRequest,
     NoQuoteReason,
+    StartMatchingResponse,
 )
 
 
@@ -42,3 +43,17 @@ def test_other_no_quote_reason_requires_human_explanation() -> None:
     )
 
     assert request.reason_detail == "客户指定的交期无法满足"
+
+
+def test_matching_start_response_exposes_candidate_and_match_counts() -> None:
+    response = StartMatchingResponse(
+        task_id=uuid.uuid4(),
+        status="COMPLETED",
+        total_item_count=3,
+        processed_item_count=3,
+        candidate_product_count=0,
+        matched_item_count=0,
+    )
+
+    assert response.candidate_product_count == 0
+    assert response.matched_item_count == 0

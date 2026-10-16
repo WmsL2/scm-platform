@@ -32,6 +32,7 @@ from app.modules.bid.schemas import (
     BidProjectListItem,
     BidProjectPurgeRequest,
     BidProjectPurgeResponse,
+    BidProjectRecommendationScopeUpdateRequest,
     BidProjectStatusResponse,
     BidProjectUpdateRequest,
     BidResultRequest,
@@ -281,6 +282,23 @@ async def update_bid_project(
     session: SessionDep,
 ) -> ApiResponse[BidProjectDetailResponse]:
     return success(await BidProjectService(session).update(project_id, payload, current.user_id))
+
+
+@router.put(
+    "/{project_id}/recommendation-scope",
+    response_model=ApiResponse[BidProjectDetailResponse],
+)
+async def update_bid_project_recommendation_scope(
+    project_id: uuid.UUID,
+    payload: BidProjectRecommendationScopeUpdateRequest,
+    current: Annotated[CurrentUser, Depends(require_permission("bid:update"))],
+    session: SessionDep,
+) -> ApiResponse[BidProjectDetailResponse]:
+    return success(
+        await BidProjectService(session).update_recommendation_scope(
+            project_id, payload, current.user_id
+        )
+    )
 
 
 @router.get("/{project_id}/items", response_model=ApiResponse[PageResult[BidProjectItemResponse]])

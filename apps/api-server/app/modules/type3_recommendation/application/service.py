@@ -22,6 +22,7 @@ from app.modules.bid.domain.lifecycle import (
     BidRecommendationType,
     ensure_transition,
 )
+from app.modules.bid.domain.product_scope import ProductSelectionScope
 from app.modules.bid.infrastructure.models import BidProject, BidProjectEvent, BidProjectFile
 from app.modules.bid.schemas import BidProjectFileResponse
 from app.modules.catalog.application.product_export_columns import (
@@ -283,6 +284,10 @@ class Type3RecommendationService:
             run = Type3Run(
                 project_id=project.id,
                 raw_remark_snapshot=(project.remark or "").strip(),
+                product_scope_snapshot=ProductSelectionScope.from_values(
+                    project.recommendation_company_names,
+                    project.recommendation_purchasing_agents,
+                ).snapshot(),
                 sheet_snapshot=[self._sheet_snapshot(item) for item in configs],
                 status="QUEUED",
                 created_by=actor_id,
@@ -335,7 +340,7 @@ class Type3RecommendationService:
             run.status = "ANALYZING"
             run.parsed_remark = analysis.model_dump(mode="json")
             run.provider, run.model, run.prompt_version = provider, model, prompt_version
-            catalog = await self._catalog(analysis)
+            catalog = await self._catalog(analysis, self._product_scope(run))
             run.category_catalog_snapshot = {
                 "generated_at": datetime.now(UTC).isoformat(),
                 "items": catalog,
@@ -359,7 +364,7 @@ class Type3RecommendationService:
             run.provider, run.model, run.prompt_version = provider, model, prompt_version
             catalog_raw = (run.category_catalog_snapshot or {}).get("items")
             if not isinstance(catalog_raw, list):
-                catalog_raw = await self._catalog(analysis)
+                catalog_raw = await self._catalog(analysis, self._product_scope(run))
                 run.category_catalog_snapshot = {
                     "generated_at": datetime.now(UTC).isoformat(),
                     "items": catalog_raw,
@@ -395,7 +400,7 @@ class Type3RecommendationService:
                     for node in cast(list[dict[str, object]], sheet["selected_nodes"])
                     for key in category_matches[str(node["node_id"])]
                 ]
-                rows = await self._eligible(analysis, paths)
+                rows = await self._eligible(analysis, paths, self._product_scope(run))
                 for rank, (product, supplier) in enumerate(rows, start=1):
                     self.session.add(
                         self._candidate(run.id, str(sheet["sheet_name"]), rank, product, supplier)
@@ -1011,8 +1016,10 @@ class Type3RecommendationService:
                 raise AppError("TYPE3_EXPORT_MAPPING_INVALID", "导出字段映射包含无效列或字段", 422)
             indexes.add(column)
 
-    async def _catalog(self, analysis: Type3RemarkAnalysis) -> list[dict[str, object]]:
-        rows = await self._eligible(analysis, [])
+    async def _catalog(
+        self, analysis: Type3RemarkAnalysis, product_scope: ProductSelectionScope
+    ) -> list[dict[str, object]]:
+        rows = await self._eligible(analysis, [], product_scope)
         nodes: dict[tuple[str | None, str | None, str | None, str], int] = {}
         for product, _supplier in rows:
             for level, path in (
@@ -1053,7 +1060,10 @@ class Type3RecommendationService:
         ]
 
     async def _eligible(
-        self, analysis: Type3RemarkAnalysis, paths: list[dict[str, object]]
+        self,
+        analysis: Type3RemarkAnalysis,
+        paths: list[dict[str, object]],
+        product_scope: ProductSelectionScope,
     ) -> list[tuple[Product, Supplier]]:
         filters: list[Any] = [
             Product.status == ProductStatus.ACTIVE,
@@ -1061,6 +1071,10 @@ class Type3RecommendationService:
             Supplier.cooperation_status == CooperationStatus.NORMAL,
             Supplier.is_deleted.is_(False),
         ]
+        if product_scope.company_names:
+            filters.append(Product.company_name.in_(product_scope.company_names))
+        if product_scope.purchasing_agents:
+            filters.append(Product.purchasing_agent.in_(product_scope.purchasing_agents))
         for field in ("gross_margin", "agreement_price", "jd_price", "discount_rate"):
             lower, upper = getattr(analysis, f"{field}_min"), getattr(analysis, f"{field}_max")
             if lower is not None:
@@ -1107,6 +1121,10 @@ class Type3RecommendationService:
             .tuples()
             .all()
         )
+
+    @staticmethod
+    def _product_scope(run: Type3Run) -> ProductSelectionScope:
+        return ProductSelectionScope.from_snapshot(run.product_scope_snapshot)
 
     @staticmethod
     def _sheet_snapshot(row: Type3SheetConfig) -> dict[str, object]:

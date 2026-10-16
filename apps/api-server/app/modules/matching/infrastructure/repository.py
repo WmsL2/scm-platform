@@ -6,6 +6,7 @@ from typing import cast
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.bid.domain.product_scope import ProductSelectionScope
 from app.modules.bid.infrastructure.models import (
     BidProject,
     BidProjectItem,
@@ -53,9 +54,11 @@ class MatchingRepository:
             ),
         )
 
-    async def eligible_products(self) -> list[tuple[Product, Supplier]]:
+    async def eligible_products(
+        self, product_scope: ProductSelectionScope = ProductSelectionScope()
+    ) -> list[tuple[Product, Supplier]]:
         """One Product/Supplier query for a matching batch; never query per requirement row."""
-        rows = await self.session.execute(
+        statement = (
             select(Product, Supplier)
             .join(Supplier, Product.source_supplier_id == Supplier.id)
             .where(
@@ -65,6 +68,13 @@ class MatchingRepository:
                 Supplier.is_deleted.is_(False),
             )
         )
+        if product_scope.company_names:
+            statement = statement.where(Product.company_name.in_(product_scope.company_names))
+        if product_scope.purchasing_agents:
+            statement = statement.where(
+                Product.purchasing_agent.in_(product_scope.purchasing_agents)
+            )
+        rows = await self.session.execute(statement)
         return [(row[0], row[1]) for row in rows.all()]
 
     async def latest_candidates(

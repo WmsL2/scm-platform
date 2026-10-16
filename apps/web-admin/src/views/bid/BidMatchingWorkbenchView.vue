@@ -7,6 +7,7 @@ import { HttpError } from "../../shared/http"
 import { useAuthStore } from "../../stores/auth"
 import { useWorkspaceStore } from "../../stores/workspace"
 import { ITEM_STATUS_LABELS, NO_QUOTE_REASON_LABELS, PROJECT_STATUS_LABELS, type BidCandidate, type BidInputMapping, type BidItemStatus, type BidOutputMapping, type BidProjectDetail, type BidProjectItem, type NoQuoteReason } from "../../types/bid"
+import RecommendationProductScopeForm from "./RecommendationProductScopeForm.vue"
 
 const route = useRoute()
 const router = useRouter()
@@ -216,8 +217,10 @@ async function startMatching(): Promise<void> {
       isType2.value ? "执行指定商品比价" : "执行规格参数匹配",
     )
     acting.value = true
-    await bidApi.startMatching(id)
-    ElMessage.success(isType2.value ? "指定商品比价完成" : "规格参数匹配完成")
+    const result = await bidApi.startMatching(id)
+    if (result.candidate_product_count === 0) ElMessage.warning("当前商品范围内没有可用于匹配的合格商品")
+    else if (result.matched_item_count === 0) ElMessage.warning("当前商品范围内有合格商品，但没有与本次客户需求匹配的结果")
+    else ElMessage.success(isType2.value ? "指定商品比价完成" : "规格参数匹配完成")
     await load()
   } catch (error) {
     if (error !== "cancel" && error !== "close") ElMessage.error(messageFor(error, "自动匹配失败"))
@@ -328,6 +331,8 @@ onMounted(() => void load())
         <el-button v-if="canExport" type="success" :loading="acting" @click="exportResult">导出回填表</el-button>
       </div>
     </header>
+
+    <el-card v-if="['IMPORTED', 'SELECTING', 'READY'].includes(project?.status ?? '')" class="scope-card"><RecommendationProductScopeForm :project="project" :disabled="acting || !auth.hasPermission('bid:update')" @updated="project = $event" /></el-card>
 
     <el-alert v-if="project && project.import_status !== 'PARSED'" :title="project.import_error ?? '请先人工确认 AI 预识别的客户需求字段。'" type="warning" :closable="false" />
     <el-alert v-else-if="outputMapping && !outputMapping.confirmed" title="AI 已预填客户原表的回填列。请人工核对并确认；这里只决定结果写回哪些列，不参与商品匹配判断。" type="warning" :closable="false" />

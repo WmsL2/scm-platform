@@ -70,6 +70,7 @@ class Type3Run(Base):
         UUIDChar36(), ForeignKey("scm_bid_project.id", ondelete="RESTRICT"), nullable=False
     )
     raw_remark_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    product_scope_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     parsed_remark: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     category_catalog_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     sheet_snapshot: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False)
