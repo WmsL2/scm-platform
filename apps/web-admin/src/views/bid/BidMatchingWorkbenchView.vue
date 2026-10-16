@@ -52,12 +52,17 @@ const isType2 = computed(() => project.value?.recommendation_type === "TYPE_2_ID
 const workspaceTitle = computed(() => isType2.value ? "指定商品比价" : "规格参数匹配")
 const workspaceCode = computed(() => isType2.value ? "IDENTIFIED PRODUCT" : "SPECIFICATION MATCHING")
 const terminal = computed(() => ["WON", "LOST", "VOIDED"].includes(project.value?.status ?? ""))
+const isRematching = computed(() => ["SELECTING", "READY", "EXPORTED"].includes(project.value?.status ?? ""))
+const matchingButtonLabel = computed(() => {
+  if (isRematching.value) return "重新生成推荐"
+  return isType2.value ? "执行 AI 同品比价" : "开始规格匹配"
+})
 const canStartMatching = computed(() => {
   const status = project.value?.status ?? ""
   return project.value?.import_status === "PARSED"
     && outputMapping.value?.confirmed === true
     && auth.hasPermission("bid:match")
-    && (status === "IMPORTED" || ((isType1.value || isType2.value) && ["SELECTING", "READY"].includes(status)))
+    && (status === "IMPORTED" || ((isType1.value || isType2.value) && ["SELECTING", "READY", "EXPORTED"].includes(status)))
 })
 const canExport = computed(() => outputMapping.value?.confirmed === true && auth.hasPermission("bid:export") && ["READY", "EXPORTED"].includes(project.value?.status ?? ""))
 
@@ -212,9 +217,12 @@ async function confirmOutputMapping(): Promise<void> {
 
 async function startMatching(): Promise<void> {
   try {
+    const confirmation = isRematching.value
+      ? "重新生成会创建新的匹配任务并刷新当前推荐结果；已有导出文件和历史匹配记录仍会保留。是否继续？"
+      : (isType2.value ? "系统先按客户 SKU 或品牌+型号匹配，再由 AI 复核颜色、适用机型、容量、包装和备注等附加条件。" : "将按需求规格和限价生成商品候选。")
     await ElMessageBox.confirm(
-      isType2.value ? "系统先按客户 SKU 或品牌+型号匹配，再由 AI 复核颜色、适用机型、容量、包装和备注等附加条件。" : "将按需求规格和限价生成商品候选。",
-      isType2.value ? "执行指定商品比价" : "执行规格参数匹配",
+      confirmation,
+      isRematching.value ? "确认重新生成" : (isType2.value ? "执行指定商品比价" : "执行规格参数匹配"),
     )
     acting.value = true
     const result = await bidApi.startMatching(id)
@@ -327,7 +335,7 @@ onMounted(() => void load())
       <div><p>{{ workspaceCode }}</p><h1>{{ project?.project_name ?? workspaceTitle }}</h1><span v-if="project">{{ project.project_code }} · {{ workspaceTitle }} · {{ PROJECT_STATUS_LABELS[project.status] }}</span></div>
       <div class="header-actions">
         <el-button @click="router.push('/bid-projects')">返回项目列表</el-button>
-        <el-button v-if="canStartMatching" type="primary" :loading="acting" @click="startMatching">{{ isType2 ? "执行 AI 同品比价" : "开始规格匹配" }}</el-button>
+        <el-button v-if="canStartMatching" type="primary" :loading="acting" @click="startMatching">{{ matchingButtonLabel }}</el-button>
         <el-button v-if="canExport" type="success" :loading="acting" @click="exportResult">导出回填表</el-button>
       </div>
     </header>

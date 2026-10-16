@@ -5,6 +5,8 @@ Repository：zhongcheng-scm-platform
 Baseline：Sprint 1 Auth Kernel / Web Admin Auth Real API Integration merged; Supplier Delete & Import and Account / Registration / Profile verified; post-merge P1 hardening verified
 日期：2026-10-16
 
+> 2026-10-16：分支 `fix/type1-type2-matching` 补齐类型 1/2 导出后的重新生成流程。工作台与旧详情入口在 `SELECTING / READY / EXPORTED` 显示“重新生成推荐”，操作前提示当前结果会刷新但历史匹配及已有导出文件保留；后端允许 `EXPORTED -> MATCHING` 启动新的独立 MatchTask，成功后以新 Selection 更新当前结果并回到 `READY`，失败恢复原状态。无 Migration、API 路径或权限变化；Matching 51 passed、前端 11 passed、Ruff、Mypy 与前端类型检查通过，真实 DeepSeek 与浏览器下载后重跑待验收。见 ADR-0070。
+
 > 2026-10-16：分支 `codex/feat/recommendation-company-purchaser-scope` 为类型 1--5 的详情工作台增加所属公司、采销员多选范围。一个字段内多选为 OR、两个字段同时设置为 AND、全部留空则保持完整合格商品池。配置保存于项目，但每次类型 1/2、3、4/5 执行分别冻结至 `MatchTask`、`Type3Run`、`RecommendationRun`，后续项目范围变更不会改写历史候选；商品查询及确认重校验均由后端 SQL 执行，AI 不能绕过。Revision `20261016_0058` 新增范围/快照列及 Product `(status, purchasing_agent)` 索引。Ruff、Mypy、后端定向 17 passed、前端类型检查与生产构建通过；本机开发库已升级至该 Revision，浏览器验收待完成。见 ADR-0069。
 
 > 2026-10-16：同一分支补齐“范围无候选”反馈：类型 4、5 不再在最新 Run 为 `NO_CANDIDATES` 时回退并展示旧成功 Run；类型 3--5 页面会持续说明当前范围无候选。类型 1/2 匹配启动响应新增候选商品数、命中需求行数，前端会区分“范围内没有合格商品”和“范围内有商品但需求无匹配”。后端 Matching 定向 5 passed；前端工作台 Vitest 21 passed、类型检查和生产构建通过；浏览器验收待完成。
